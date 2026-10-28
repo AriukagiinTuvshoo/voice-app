@@ -83,6 +83,7 @@ function createFlowBarWindow() {
     skipTaskbar: true,
     resizable: false,
     focusable: false,
+    type: "toolbar",
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,

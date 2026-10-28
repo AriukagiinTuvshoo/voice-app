@@ -896,4 +896,38 @@ kbd {
     background: var(--subtle);
     color: var(--text);
   }
+  
+  /* Mobile touch & typography enhancements */
+  .heading h1 {
+    font-size: 26px;
+    line-height: 1.25;
+  }
+  .stage {
+    padding: 30px 16px;
+  }
+  .mic {
+    width: 88px;
+    height: 88px;
+  }
+  .halo {
+    width: 124px;
+    height: 124px;
+  }
+  .transcript footer {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .transcript footer button {
+    flex: 1 1 calc(50% - 8px);
+    justify-content: center;
+    padding: 10px 12px;
+  }
+  .transcript footer button.btn-danger {
+    flex: 1 1 100%;
+  }
+  .transcript-content {
+    font-size: 16px;
+    min-height: 120px;
+  }
 }

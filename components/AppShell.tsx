@@ -44,6 +44,7 @@ import {
   EditIcon,
   TrashIcon,
   FlowBarIcon,
+  ShareIcon,
 } from "@/components/Icons";
 
 // Global Shared Context for Settings & Active Workspace Text
@@ -770,6 +771,23 @@ export function Workspace() {
             {copied ? <CheckIcon width={15} height={15} /> : <CopyIcon width={15} height={15} />}
             <span>{copied ? "Хуулагдлаа!" : "Хуулах"}</span>
           </button>
+          {typeof navigator !== "undefined" && typeof navigator.share === "function" && (
+            <button
+              className="btn-secondary"
+              onClick={() => {
+                if (!rawText) return;
+                navigator.share({
+                  title: "VOICE Текст",
+                  text: rawText,
+                }).catch(() => {});
+              }}
+              disabled={!rawText}
+              title="Утсаараа Facebook, Messenger, Telegram руу шууд хуваалцах"
+            >
+              <ShareIcon width={15} height={15} />
+              <span>Хуваалцах</span>
+            </button>
+          )}
           <button
             className="btn-danger"
             onClick={() => {
@@ -884,6 +902,21 @@ export function SettingsPanel() {
             label="Auto-insert text"
             description="Яриаг таньмагц идэвхтэй цонхонд автоматаар буулгах."
           />
+        </div>
+      </section>
+
+      {/* Mobile Connect */}
+      <section className="settings">
+        <h2>📱 Утсан дээрээ ашиглах (Mobile PWA)</h2>
+        <p>Өөрийн iPhone эсвэл Android утаснаасаа ярьж, текстээ хуулж авах боломжтой.</p>
+        <div style={{ background: "var(--subtle)", padding: "14px 16px", borderRadius: "14px", border: "1px solid var(--border)", margin: "12px 0" }}>
+          <div style={{ fontSize: "12px", color: "var(--muted)", marginBottom: "6px" }}>Таны компьютерын сүлжээний хаяг:</div>
+          <code style={{ fontSize: "15px", fontWeight: 700, color: "var(--accent)", display: "inline-block" }}>http://192.168.3.4:3000</code>
+          <div style={{ margin: "10px 0 0", fontSize: "12px", color: "var(--muted)", lineHeight: 1.6 }}>
+            1. Компьютер ба утас нэг Wi-Fi сүлжээнд холбогдсон байна.<br />
+            2. Утасныхаа браузераар (Safari/Chrome) дээрх хаягийг нээнэ.<br />
+            3. Браузерын цэснээс &ldquo;Add to Home Screen&rdquo; (Дэлгэцэнд нэмэх) сонгоход бие даасан утасны апп шиг сууна.
+          </div>
         </div>
       </section>
 
