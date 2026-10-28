@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { HistoryStore } from "@/lib/history-store";
 import type { TranscriptionRecord } from "@/lib/types";
@@ -8,10 +8,46 @@ import { useSettings } from "@/components/AppShell";
 
 export default function HistoryPage() {
   const router = useRouter();
-  const { setWorkspaceText } = useSettings();
+  const { settings, setWorkspaceText } = useSettings();
   const [records, setRecords] = useState<TranscriptionRecord[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [playingId, setPlayingId] = useState<string | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  const handlePlayTTS = async (id: string, text: string) => {
+    if (!text.trim()) return;
+    setPlayingId(id);
+
+    try {
+      const res = await fetch("/api/chimege/tts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          text: text.trim(),
+          voiceId: settings.defaultVoiceId || "FEMALE3v2",
+          token: settings.chimegeToken,
+        }),
+      });
+
+      if (!res.ok) {
+        throw new Error("TTS алдаа");
+      }
+
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+
+      if (!audioRef.current) {
+        audioRef.current = new Audio();
+      }
+      audioRef.current.src = url;
+      await audioRef.current.play();
+    } catch {
+      alert("TTS тоглуулахад алдаа гарлаа. Settings дээр Token шалгана уу.");
+    } finally {
+      setPlayingId(null);
+    }
+  };
 
   useEffect(() => {
     const update = () => setRecords(HistoryStore.getAll());
@@ -138,6 +174,13 @@ export default function HistoryPage() {
                 <p className="history-card-text">{record.text}</p>
 
                 <footer className="history-card-footer">
+                  <button
+                    className="btn-secondary"
+                    onClick={() => handlePlayTTS(record.id, record.text)}
+                    disabled={playingId === record.id}
+                  >
+                    {playingId === record.id ? "🔊 Уншиж байна..." : "🔊 Сонсох"}
+                  </button>
                   <button
                     className="btn-secondary"
                     onClick={() => handleOpenInWorkspace(record.text)}

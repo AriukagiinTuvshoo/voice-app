@@ -20,6 +20,7 @@ import {
   themes,
   sttEngines,
   defaultSettings,
+  chimegeVoices,
 } from "@/lib/constants";
 import type {
   Language,
@@ -100,6 +101,7 @@ function Provider({ children }: { children: ReactNode }) {
 
 const nav = [
   ["/dashboard", "＋", "New"],
+  ["/tts", "🔊", "TTS Studio"],
   ["/history", "◷", "History"],
   ["/settings", "⚙", "Settings"],
 ];
@@ -149,10 +151,21 @@ function Shell({ children }: { children: ReactNode }) {
       <main className="main">
         <header className="topbar">
           <b className="mobile-brand">VOICE</b>
-          <LanguageSelect
-            value={settings.language}
-            onChange={(v) => update("language", v)}
-          />
+          <div style={{ display: "flex", gap: "10px", alignItems: "center" }}>
+            <Link
+              href="/flowbar"
+              target="_blank"
+              className="btn-secondary"
+              style={{ fontSize: "11px", padding: "6px 12px", textDecoration: "none" }}
+              title="Дэлгэц дээр хөвөх FlowBar цонх нээх"
+            >
+              ◫ FlowBar
+            </Link>
+            <LanguageSelect
+              value={settings.language}
+              onChange={(v) => update("language", v)}
+            />
+          </div>
         </header>
         {children}
       </main>
@@ -215,6 +228,10 @@ export function Workspace() {
   }>({ misspelled: [], suggestions: {} });
   const [showSpellPanel, setShowSpellPanel] = useState(false);
 
+  // In-line TTS state
+  const [ttsLoading, setTtsLoading] = useState(false);
+  const ttsAudioRef = useRef<HTMLAudioElement | null>(null);
+
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const audioRecorderRef = useRef<AudioRecorder | null>(null);
   const browserRecognizerRef = useRef<BrowserSpeechRecognizer | null>(null);
@@ -256,7 +273,6 @@ export function Workspace() {
         let usedEngine = "browser";
 
         if (preferChimege) {
-          // Use Chimege API with audio recorder
           if (!audioRecorderRef.current) {
             throw new Error("Аудио бичигч идэвхжээгүй байна.");
           }
@@ -280,11 +296,9 @@ export function Workspace() {
           }
           transcript = data.text || "";
         } else if (browserRecognizerRef.current) {
-          // Use Browser Web Speech
           usedEngine = "Browser Web Speech";
           transcript = await browserRecognizerRef.current.stop();
         } else if (audioRecorderRef.current) {
-          // Fallback if browser recognizer was not initialized
           await audioRecorderRef.current.stop();
           if (isMongolian && !settings.chimegeToken) {
             throw new Error(
@@ -297,7 +311,6 @@ export function Workspace() {
           throw new Error("Яриа илрээгүй эсвэл дуу авиа танигдсангүй. Дахин оролдоно уу.");
         }
 
-        // Post-process text
         const processed = processTranscriptText(transcript, {
           mode: settings.processingMode,
           autoPunctuation: settings.autoPunctuation,
@@ -309,7 +322,6 @@ export function Workspace() {
         setWorkspaceText(processed);
         setState("success");
 
-        // Save to History
         if (settings.saveTranscripts) {
           const stats = getTextStats(processed);
           HistoryStore.add({
@@ -323,7 +335,6 @@ export function Workspace() {
           });
         }
 
-        // Auto Spellcheck if enabled and Mongolian language
         if (settings.autoCorrection && isMongolian) {
           setSpellChecking(true);
           SpellCheckClient.check(processed).then((res) => {
@@ -346,7 +357,6 @@ export function Workspace() {
     [settings, setWorkspaceText]
   );
 
-  // Start Recording
   const startRecording = useCallback(async () => {
     setErrorMessage("");
     setSeconds(0);
@@ -359,7 +369,6 @@ export function Workspace() {
 
     try {
       if (preferChimege || !isBrowserSpeechSupported()) {
-        // Record audio via AudioRecorder (for Chimege API)
         const recorder = new AudioRecorder({
           deviceId: settings.selectedAudioDevice,
           autoStop: settings.autoStop,
@@ -377,7 +386,6 @@ export function Workspace() {
         audioRecorderRef.current = recorder;
         await recorder.start();
       } else {
-        // Browser Speech Recognizer
         const recognizer = new BrowserSpeechRecognizer({
           language: settings.language,
           onInterim: (interim) => {
@@ -402,7 +410,6 @@ export function Workspace() {
     }
   }, [settings, seconds, stopAndTranscribe]);
 
-  // Toggle Recording
   const toggleRecording = useCallback(() => {
     if (state === "idle" || state === "error" || state === "success") {
       startRecording();
@@ -470,7 +477,7 @@ export function Workspace() {
     };
   }, [settings.shortcut, settings.recordingMode, state, seconds, startRecording, stopAndTranscribe, toggleRecording]);
 
-  // Run manual Spellcheck
+  // Manual Spellcheck
   const handleRunSpellCheck = async () => {
     if (!rawText.trim()) return;
     setSpellChecking(true);
@@ -488,21 +495,18 @@ export function Workspace() {
     }
   };
 
-  // Replace a misspelled word with a suggestion
   const applySuggestion = (misspelledWord: string, candidate: string) => {
     const regex = new RegExp(`(?<=[^\\p{L}]|^)${misspelledWord}(?=[^\\p{L}]|$)`, "gu");
     const updated = rawText.replace(regex, candidate);
     setRawText(updated);
     setWorkspaceText(updated);
 
-    // Update misspelled list
     setSpellCheckResults((prev) => ({
       misspelled: prev.misspelled.filter((w) => w !== misspelledWord),
       suggestions: prev.suggestions,
     }));
   };
 
-  // Auto-correct all
   const applyAllCorrections = () => {
     let updated = rawText;
     for (const word of spellCheckResults.misspelled) {
@@ -517,7 +521,44 @@ export function Workspace() {
     setSpellCheckResults({ misspelled: [], suggestions: {} });
   };
 
-  // Copy transcript
+  // Play text in TTS
+  const playTextToSpeech = async (textToSpeak: string) => {
+    if (!textToSpeak.trim()) return;
+    setTtsLoading(true);
+
+    try {
+      const res = await fetch("/api/chimege/tts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          text: textToSpeak.trim(),
+          voiceId: settings.defaultVoiceId || "FEMALE3v2",
+          speed: settings.ttsSpeed || 1.0,
+          pitch: settings.ttsPitch || 1.0,
+          token: settings.chimegeToken,
+        }),
+      });
+
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || "TTS үүсгэхэд алдаа гарлаа.");
+      }
+
+      const blob = await res.blob();
+      const audioUrl = URL.createObjectURL(blob);
+
+      if (!ttsAudioRef.current) {
+        ttsAudioRef.current = new Audio();
+      }
+      ttsAudioRef.current.src = audioUrl;
+      await ttsAudioRef.current.play();
+    } catch (err: unknown) {
+      alert(err instanceof Error ? err.message : "TTS алдаа гарлаа");
+    } finally {
+      setTtsLoading(false);
+    }
+  };
+
   const copyToClipboard = () => {
     if (!rawText) return;
     navigator.clipboard?.writeText(rawText);
@@ -539,6 +580,7 @@ export function Workspace() {
   const mm = String(Math.floor(seconds / 60)).padStart(2, "0");
   const ss = String(seconds % 60).padStart(2, "0");
   const stats = getTextStats(rawText);
+  const currentVoiceName = chimegeVoices.find((v) => v.id === settings.defaultVoiceId)?.name || "Болор";
 
   return (
     <section className="workspace">
@@ -546,7 +588,7 @@ export function Workspace() {
         <div>
           <small>VOICE WORKSPACE</small>
           <h1>Ярихыг текст болго.</h1>
-          <p>Монгол (Chimege AI & Spellcheck.mn), English, 日本語 хэлээр ярьж эхлээрэй.</p>
+          <p>Chimege STT & TTS, Spellcheck.mn болон Duudlaga Flow горимтой ажиллана.</p>
         </div>
         <LanguageSelect
           value={settings.language}
@@ -590,7 +632,7 @@ export function Workspace() {
         <p className="engine">
           {settings.language === "mn"
             ? settings.chimegeToken
-              ? "⚡ Chimege AI STT + Spellcheck.mn холбогдсон"
+              ? `⚡ Chimege AI STT & TTS (${currentVoiceName}) • Spellcheck.mn бэлэн`
               : "⚠️ Chimege Token тохируулаагүй байна. Settings хэсэгт оруулна уу."
             : "🌐 Browser Web Speech Engine бэлэн"}
         </p>
@@ -714,6 +756,13 @@ export function Workspace() {
 
         <footer>
           <button
+            onClick={() => playTextToSpeech(rawText)}
+            disabled={!rawText || ttsLoading}
+            title={`Chimege хоолойгоор (${currentVoiceName}) сонсох`}
+          >
+            {ttsLoading ? "🔊 Дуу үүсгэж байна..." : `🔊 Сонсох (${currentVoiceName})`}
+          </button>
+          <button
             onClick={handleRunSpellCheck}
             disabled={!rawText || spellChecking}
             title="spellcheck.mn-ээр шалгах"
@@ -757,7 +806,10 @@ export function Workspace() {
           STT <b>{settings.sttEngine}</b>
         </span>
         <span>
-          Processing <b>{settings.processingMode}</b>
+          Voice <b>{currentVoiceName}</b>
+        </span>
+        <span>
+          Desktop Flow <b>{settings.desktopHotkey}</b>
         </span>
       </div>
     </section>
@@ -906,6 +958,71 @@ export function SettingsPanel() {
           k="useStandardStt"
           label="Standard STT (Хурдан)"
           description="Богино ярианд илүү хурдан (унтраавал урт ярианы Long STT горим ашиглана)."
+        />
+      </section>
+
+      {/* Chimege TTS Voices Selection */}
+      <section className="settings">
+        <h2>Chimege Дуу Хоолой (TTS Voices)</h2>
+        <p>Яриаг уншиж сонсоход ашиглах үндсэн хоолой (11 төрөл).</p>
+        <select
+          value={settings.defaultVoiceId}
+          onChange={(e) => update("defaultVoiceId", e.target.value)}
+          style={{ width: "100%", marginBottom: "12px" }}
+        >
+          <optgroup label="👩 Эмэгтэй хоолойнууд">
+            {chimegeVoices
+              .filter((v) => v.gender === "female")
+              .map((v) => (
+                <option key={v.id} value={v.id}>
+                  👩 {v.name} ({v.description})
+                </option>
+              ))}
+          </optgroup>
+          <optgroup label="👨 Эрэгтэй хоолойнууд">
+            {chimegeVoices
+              .filter((v) => v.gender === "male")
+              .map((v) => (
+                <option key={v.id} value={v.id}>
+                  👨 {v.name} ({v.description})
+                </option>
+              ))}
+          </optgroup>
+        </select>
+
+        <div style={{ display: "flex", gap: "8px", marginTop: "8px" }}>
+          <Link href="/tts" className="btn-secondary" style={{ fontSize: "12px", textDecoration: "none" }}>
+            🔊 Бүх 11 хоолойг туршиж үзэх (TTS Studio) →
+          </Link>
+        </div>
+      </section>
+
+      {/* Desktop Mode like Duudlaga Flow */}
+      <section className="settings">
+        <h2>Компьютер дээр ажиллуулах (Duudlaga Flow горим)</h2>
+        <p>Аль ч програм (Word, Chrome, Telegram, г.м.) дээр шууд ярьж бичих.</p>
+        
+        <div style={{ background: "var(--subtle)", padding: "12px", borderRadius: "12px", fontSize: "12px", lineHeight: 1.6, marginBottom: "14px" }}>
+          <div><b>💻 Хөвөгч FlowBar цонх:</b> Дэлгэцийн доод хэсэгт жижиг capsule хэлбэрээр байрлана.</div>
+          <div style={{ marginTop: "6px" }}><b>⌨️ Системийн товчлуур:</b> <kbd>Ctrl+Alt</kbd> (дэлгэцийн хаанаас ч ярьж эхлүүлнэ).</div>
+          <div style={{ marginTop: "6px" }}><b>✍️ Шууд бичих:</b> Ярьж дуусмагц тухайн идэвхтэй цонхонд текстийг автоматаар хуулж бичнэ.</div>
+        </div>
+
+        <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+          <Link
+            href="/flowbar"
+            target="_blank"
+            className="btn-primary"
+            style={{ textDecoration: "none" }}
+          >
+            ◫ FlowBar цонхыг нээх
+          </Link>
+        </div>
+
+        <Toggle
+          k="autoInsertText"
+          label="Auto-insert text"
+          description="Яриаг таньмагц идэвхтэй цонхонд автоматаар буулгах."
         />
       </section>
 

@@ -6,6 +6,14 @@ export type ProcessingMode = "raw" | "standard" | "clean" | "polished";
 export type Theme = "light" | "dark" | "system";
 export type SttEngine = "chimege" | "browser" | "auto";
 
+export interface ChimegeVoice {
+  id: string;
+  name: string;
+  gender: "female" | "male";
+  description: string;
+  tag: string;
+}
+
 export interface Settings {
   language: Language;
   sttEngine: SttEngine;
@@ -22,6 +30,14 @@ export interface Settings {
   saveRecordings: boolean;
   saveTranscripts: boolean;
   selectedAudioDevice: string;
+  // TTS & Voice Settings
+  defaultVoiceId: string;
+  ttsSpeed: number;
+  ttsPitch: number;
+  // Desktop mode settings (Duudlaga Flow)
+  desktopHotkey: string;
+  autoInsertText: boolean;
+  showFlowBar: boolean;
 }
 
 export interface TranscriptionRecord {

@@ -1,4 +1,4 @@
-import type { Language, RecordingMode, ProcessingMode, Shortcut, Theme, SttEngine, Settings } from "./types";
+import type { Language, RecordingMode, ProcessingMode, Shortcut, Theme, SttEngine, Settings, ChimegeVoice } from "./types";
 
 export const languages: { value: Language; label: string; icon: string }[] = [
   { value: "mn", label: "Монгол", icon: "🇲🇳" },
@@ -34,6 +34,22 @@ export const themes: { value: Theme; label: string }[] = [
   { value: "system", label: "System" },
 ];
 
+export const chimegeVoices: ChimegeVoice[] = [
+  // Эмэгтэй хоолойнууд
+  { id: "FEMALE3v2", name: "Болор", gender: "female", description: "Уян зөөлөн, байгалийн өнгө аяс", tag: "Анхдагч • Эмэгтэй" },
+  { id: "FEMALE1v2", name: "Номин", gender: "female", description: "Тод, цэвэр дуудлагатай", tag: "Эмэгтэй" },
+  { id: "FEMALE2v2", name: "Сарнай", gender: "female", description: "Эелдэг, дулаахан өнгө төрх", tag: "Эмэгтэй" },
+  { id: "FEMALE4v2", name: "Ану", gender: "female", description: "Мэдээ уншигч, албан ёсны", tag: "Эмэгтэй" },
+  { id: "FEMALE5v2", name: "Төгсөө", gender: "female", description: "Эрч хүчтэй, залуулаг", tag: "Эмэгтэй" },
+  { id: "FEMALE1", name: "Эгшиглэн", gender: "female", description: "Сонгодог хувилбар 1", tag: "Эмэгтэй v1" },
+  // Эрэгтэй хоолойнууд
+  { id: "MALE1v2", name: "Зориг", gender: "male", description: "Гүн, баргил, өөртөө итгэлтэй", tag: "Эрэгтэй" },
+  { id: "MALE2v2", name: "Тулга", gender: "male", description: "Хүчирхэг, тайван, найдвартай", tag: "Эрэгтэй" },
+  { id: "MALE3v2", name: "Баатар", gender: "male", description: "Уран яруу, өргөн цар хүрээтэй", tag: "Эрэгтэй" },
+  { id: "MALE4v2", name: "Энхээ", gender: "male", description: "Залуулаг, өдөр тутмын яриа", tag: "Эрэгтэй" },
+  { id: "MALE1", name: "Тэмүүлэн", gender: "male", description: "Сонгодог хувилбар 1", tag: "Эрэгтэй v1" },
+];
+
 export const defaultSettings: Settings = {
   language: "mn",
   sttEngine: "auto",
@@ -50,12 +66,19 @@ export const defaultSettings: Settings = {
   saveRecordings: true,
   saveTranscripts: true,
   selectedAudioDevice: "",
+  // TTS Settings
+  defaultVoiceId: "FEMALE3v2",
+  ttsSpeed: 1.0,
+  ttsPitch: 1.0,
+  // Desktop mode
+  desktopHotkey: "Ctrl+Alt",
+  autoInsertText: true,
+  showFlowBar: true,
 };
 
 export const CHIMEGE_API_URL = "https://api.chimege.com/v1.2";
 export const SPELLCHECK_API_URL = "https://spellcheck.mn/cms-client/modules/spellchecker";
 
-// Common Mongolian filler words to filter out when clean/polished mode or removeFillers is on
 export const MONGOLIAN_FILLER_WORDS = [
   "нөгөө",
   "нөгөөх",
