@@ -99,52 +99,76 @@ export default function KeyboardPage() {
       {/* WINDOWS TAB */}
       {activeOs === "windows" && (
         <div style={{ display: "grid", gap: "18px", marginTop: "20px" }}>
+          {/* Method 1: Chrome Extension - Recommended & Block-free */}
           <div
             className="settings"
             style={{
-              background: "linear-gradient(135deg, rgba(99, 102, 241, 0.12), rgba(15, 23, 42, 0.95))",
-              border: "1px solid rgba(99, 102, 241, 0.4)",
+              background: "linear-gradient(135deg, rgba(16, 185, 129, 0.12), rgba(15, 23, 42, 0.95))",
+              border: "1px solid rgba(16, 185, 129, 0.4)",
             }}
           >
             <h2 style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}>
-              <MicIcon width={18} height={18} style={{ color: "var(--accent)" }} />
-              <span>VOICE Windows Helper — Chrome, Word, Excel дээр шууд бичих</span>
+              <SparklesIcon width={18} height={18} style={{ color: "#10b981" }} />
+              <span>Шилдэг арга: Google Chrome Өргөтгөл (100% Аюулгүй, Windows хэзээ ч блоклохгүй)</span>
             </h2>
             <p style={{ marginBottom: "16px" }}>
-              Вэб хуудас браузерын аюулгүй байдлын үүднээс Word, Excel зэрэг өөр програмууд руу дур мэдэн бичиж чаддаггүй.
-              Тиймээс компьютер дээрээ доорх <b>1 товшилтоор татах</b> файлыг ажиллуулахад л та Chrome-ийн хайлтын талбар эсвэл Word дээр{" "}
-              <b>Ctrl + Alt</b> (эсвэл <b>F8</b>) дараад шууд ярьж бичих боломжтой болно!
+              Chrome, Edge хөтөч дээрээ суулгаснаар <b>Google хайлт, Facebook, YouTube, Messenger, Gmail, Word Online</b> зэрэг бүх вэбсайт дээр курсороо тавиад л гар дээрээ <kbd>Alt + Shift + V</kbd> дарж шууд ярьж бичнэ.
             </p>
 
-            <div style={{ display: "flex", gap: "12px", flexWrap: "wrap", alignItems: "center" }}>
+            <div style={{ display: "flex", gap: "12px", flexWrap: "wrap", alignItems: "center", marginBottom: "16px" }}>
               <a
-                href="/api/download/helper"
-                download="VOICE-Windows-Helper.bat"
+                href="/api/download/extension"
+                download="VOICE-Chrome-Extension.zip"
                 className="btn-primary"
                 style={{
                   textDecoration: "none",
                   padding: "12px 24px",
                   fontSize: "15px",
                   borderRadius: "14px",
+                  background: "linear-gradient(135deg, #10b981, #059669)",
                 }}
               >
-                ⬇️ 1 Товшилтоор Windows Helper татах (.bat)
+                ⬇️ Chrome Өргөтгөл татах (.zip)
               </a>
+            </div>
+
+            <div style={{ display: "grid", gap: "8px", fontSize: "13px", lineHeight: 1.6 }}>
+              <div style={{ padding: "8px 12px", background: "var(--subtle)", borderRadius: "10px" }}>
+                <b>1. Татаж задлах:</b> Дээрх ногоон товчоор zip файлаа татаад хавтсанд нь задална.
+              </div>
+              <div style={{ padding: "8px 12px", background: "var(--subtle)", borderRadius: "10px" }}>
+                <b>2. Chrome-д оруулах:</b> Chrome хөтчийн хаягийн мөрөнд <code>chrome://extensions</code> гэж бичиж ороод баруун дээд талын <b>Developer mode</b> асаана. Тэгээд <b>Load unpacked</b> товч дарж задалсан хавтсаа сонгоно.
+              </div>
+              <div style={{ padding: "8px 12px", background: "var(--subtle)", borderRadius: "10px" }}>
+                <b>3. Шууд ярьж бичих:</b> Google хайлтын нүд, Facebook коммент дээр курсороо тавиад <kbd>Alt</kbd> + <kbd>Shift</kbd> + <kbd>V</kbd> дараад ярина!
+              </div>
             </div>
           </div>
 
+          {/* Method 2: Windows System-wide Helper (.bat) */}
           <div className="settings">
-            <h2>Хэрхэн ашиглах вэ?</h2>
-            <div style={{ display: "grid", gap: "12px", marginTop: "12px", fontSize: "14px", lineHeight: 1.6 }}>
-              <div style={{ padding: "12px 16px", background: "var(--subtle)", borderRadius: "12px" }}>
-                <b>1. Файлыг татах:</b> Дээрх товч дээр дараад <code>VOICE-Windows-Helper.bat</code> файлыг татаж авна.
-              </div>
-              <div style={{ padding: "12px 16px", background: "var(--subtle)", borderRadius: "12px" }}>
-                <b>2. Ажиллуулах:</b> Татсан файлаа 1 удаа давхар товшино. Энэ нь Windows асах бүрт цаанаа далд ажиллахаар бүртгэгдэнэ. Ямар ч Python, нэмэлт сан суулгах шаардлагагүй.
-              </div>
-              <div style={{ padding: "12px 16px", background: "var(--subtle)", borderRadius: "12px" }}>
-                <b>3. Шууд ярьж бичих:</b> Одоо Chrome-ийн хайлтын нүд, Word, Excel, Facebook, Telegram дээр курсороо тавиад гар дээрээ <kbd>Ctrl</kbd> + <kbd>Alt</kbd> (эсвэл <kbd>F8</kbd>) дараад ярина. Ярьж дуусахад текст шууд бичигдэнэ!
-              </div>
+            <h2>Арга 2: Word, Excel офлайн програмд бичих (Windows Helper)</h2>
+            <p style={{ marginBottom: "14px" }}>
+              Хэрэв та зөвхөн хөтөч биш, офлайн <b>Microsoft Word, Excel, Notepad</b> зэрэг бүх цонхонд шууд ярьж бичихийг хүсвэл Windows Helper-ийг ашиглана:
+            </p>
+
+            <div style={{ display: "flex", gap: "12px", flexWrap: "wrap", alignItems: "center", marginBottom: "14px" }}>
+              <a
+                href="/api/download/helper"
+                download="VOICE-Windows-Helper.bat"
+                className="btn-secondary"
+                style={{ textDecoration: "none" }}
+              >
+                ⬇️ Windows Helper татах (.bat)
+              </a>
+            </div>
+
+            <div style={{ padding: "12px 14px", background: "rgba(245, 158, 11, 0.1)", border: "1px solid rgba(245, 158, 11, 0.3)", borderRadius: "12px", fontSize: "13px", lineHeight: 1.6 }}>
+              <b style={{ color: "#f59e0b" }}>⚠️ Windows Smart App Control блоколбол:</b>
+              <br />Windows 11 нь интернетээс татсан үл мэдэгдэх .bat файлыг анхааруулдаг.
+              <br />1. Татсан <code>VOICE-Windows-Helper.bat</code> файл дээрээ <b>Хулганы баруун товч (Right-click) → Properties (Шинж чанар)</b> дарна.
+              <br />2. Доод хэсэгт байх <b>"Unblock" (Блок гаргах)</b> нүдийг чагтлаад <b>OK</b> дарна.
+              <br />3. Одоо файл дээрээ давхар товшиж ажиллуулаад <kbd>Ctrl + Alt</kbd> дарж чөлөөтэй бичнэ!
             </div>
           </div>
         </div>
