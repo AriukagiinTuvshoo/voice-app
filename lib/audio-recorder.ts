@@ -92,8 +92,8 @@ export class AudioRecorder {
         if (this.options.autoStop) {
           if (normalized < 0.05) {
             this.silenceTimer += 50;
-            // 2.5 seconds of silence
-            if (this.silenceTimer >= 2500) {
+            // 3.2 seconds of silence so speaker can switch between MN/EN/JP comfortably
+            if (this.silenceTimer >= 3200) {
               this.options.onSilenceDetected?.();
             }
           } else {

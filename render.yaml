@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: voice-ai-studio
+    runtime: docker
+    plan: starter
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: LOCAL_PY_URL
+        value: http://127.0.0.1:8000

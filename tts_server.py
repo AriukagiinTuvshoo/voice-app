@@ -764,9 +764,57 @@ def apply_voice_clone_timbre(
 
 from concurrent.futures import ThreadPoolExecutor
 
-# Common English & Japanese terms frequently mixed into Mongolian speech
+# Common Mongolian corrections, English phrases & Japanese expressions mixed into speech
 CODESWITCH_PHRASE_MAP: list[tuple[str, str]] = [
-    # Multi-word phrases first
+    # 0. Common Mongolian proper name & phrase phonetic fixes
+    (r"\bнамайг\s+түшин\s*тулга?\b", "намайг Түвшинтулга"),
+    (r"\bнамайг\s+түвшин\s*тулга?\b", "намайг Түвшинтулга"),
+    (r"\bтүшин\s*тулга?\b", "Түвшинтулга"),
+    (r"\bтүвшин\s+тул\b", "Түвшинтулга"),
+
+    # 1. Conversational English phrases spoken mid-sentence (Cyrillic phonetic -> English)
+    (r"\bмай\s+нэйм\s+из\b", "my name is"),
+    (r"\bмай\s+нэм\s+из\b", "my name is"),
+    (r"\bмай\s+нэймс\b", "my name is"),
+    (r"\bмай\s+нэмс\b", "my name is"),
+    (r"\bмай\s+нэйм\s+с\b", "my name is"),
+    (r"\bмайн\s+нэйм\s+из\b", "my name is"),
+    (r"\bмайн\s+нэмс\b", "my name is"),
+    (r"\bми\s+нэйм\s+из\b", "my name is"),
+    (r"\bмай\s+нэйм\b", "my name"),
+    (r"\bмай\s+нэм\b", "my name"),
+    (r"\bват\s+из\s+юур\s+нэйм\b", "what is your name"),
+    (r"\bватс\s+юур\s+нэйм\b", "what's your name"),
+    (r"\bай\s+эм\s+фром\s+монголиа\b", "I am from Mongolia"),
+    (r"\bайм\s+фром\s+монголиа\b", "I'm from Mongolia"),
+    (r"\bай\s+эм\s+фром\b", "I am from"),
+    (r"\bай\s+эм\b", "I am"),
+    (r"\bхау\s+ар\s+юу\b", "how are you"),
+    (r"\bхау\s+ар\s+юү\b", "how are you"),
+    (r"\bнайс\s+ту\s+мит\s+юу\b", "nice to meet you"),
+    (r"\bнайс\s+тү\s+мит\s+юү\b", "nice to meet you"),
+    (r"\bтэнк\s+юу\s+вэри\s+мач\b", "thank you very much"),
+    (r"\bтэнк\s+юу\b", "thank you"),
+    (r"\bтэнк\s+юү\b", "thank you"),
+    (r"\bэкскюз\s+ми\b", "excuse me"),
+    (r"\bай\s+донт\s+ноу\b", "I don't know"),
+    (r"\bай\s+тинк\b", "I think"),
+    (r"\bай\s+лав\s+юу\b", "I love you"),
+    (r"\bлетс\s+гоу\b", "let's go"),
+    (r"\bлэтс\s+гоу\b", "let's go"),
+    (r"\bгуд\s+морнинг\b", "good morning"),
+    (r"\bгүүд\s+морнинг\b", "good morning"),
+    (r"\bгуд\s+найт\b", "good night"),
+    (r"\bгуд\s+бай\b", "goodbye"),
+    (r"\bбай\s+бай\b", "bye bye"),
+    (r"\bхэллоу\s+эвриван\b", "hello everyone"),
+    (r"\bхэллоу\s+ворлд\b", "hello world"),
+    (r"\bхэллоу\b", "hello"),
+    (r"\bхэлоу\b", "hello"),
+    (r"\bплийз\b", "please"),
+    (r"\bсорри\b", "sorry"),
+
+    # 2. Multi-word tech & app phrases
     (r"\bконтрол\s+альт\b", "Ctrl+Alt"),
     (r"\bконтрол\s+алт\b", "Ctrl+Alt"),
     (r"\bкнтрл\s+альт\b", "Ctrl+Alt"),
@@ -785,25 +833,105 @@ CODESWITCH_PHRASE_MAP: list[tuple[str, str]] = [
     (r"\bгүүгл\s+хром\b", "Google Chrome"),
     (r"\bмайкрософт\s+ворд\b", "Microsoft Word"),
     (r"\bвизуал\s+студио\b", "Visual Studio"),
-    # Japanese expressions commonly spoken in Mongolian conversation
-    (r"\bаригато\s+гозаймас\b", "ありがとうございます (Arigatou gozaimasu)"),
-    (r"\bаригато\b", "ありがとう (Arigatou)"),
-    (r"\bконничива\b", "こんにちは (Konnichiwa)"),
-    (r"\bконичива\b", "こんにちは (Konnichiwa)"),
-    (r"\bохаёо\s+гозаймас\b", "おはようございます (Ohayou gozaimasu)"),
-    (r"\bохаёо\b", "おはよう (Ohayou)"),
-    (r"\bсумимасэн\b", "すみません (Sumimasen)"),
-    (r"\bсумимасен\b", "すみません (Sumimasen)"),
-    (r"\bсаёонара\b", "さようなら (Sayounara)"),
-    (r"\bсугой\b", "すごい (Sugoi)"),
-    (r"\bкавайи\b", "かわいい (Kawaii)"),
-    (r"\bкавай\b", "かわいい (Kawaii)"),
-    (r"\bсэнсэй\b", "先生 (Sensei)"),
-    (r"\bсенсей\b", "先生 (Sensei)"),
-    (r"\bдайжообү\b", "大丈夫 (Daijoubu)"),
-    (r"\bдайжобү\b", "大丈夫 (Daijoubu)"),
-    (r"\bганбаттэ\b", "頑張って (Ganbatte)"),
-    # Single English tech & daily loanwords (preserving Mongolian suffixes if attached)
+
+    # 3. Japanese phrases & pronouns (Cyrillic & Romaji phonetic -> Authentic Japanese Kanji/Kana)
+    (r"\bваташи\s*но\s+намаэ\s*ва\b", "私の名前は"),
+    (r"\bваташи\s*но\s+намай\s*ва\b", "私の名前は"),
+    (r"\bwatashi\s*no\s+namae\s*wa\b", "私の名前は"),
+    (r"\bваташи\s*но\b", "私の"),
+    (r"\bваташино\b", "私の"),
+    (r"\bва\s+та\s+ши\s+но\b", "私の"),
+    (r"\bwatashi\s*no\b", "私の"),
+    (r"\bваташи\s*ва\b", "私は"),
+    (r"\bваташива\b", "私は"),
+    (r"\bwatashi\s*wa\b", "私は"),
+    (r"\bваташи\b", "私"),
+    (r"\bwatashi\b", "私"),
+    (r"\bбоку\s*но\s+намаэ\s*ва\b", "僕の名前は"),
+    (r"\bбоку\s*но\b", "僕の"),
+    (r"\bboku\s*no\b", "僕の"),
+    (r"\bбоку\s*ва\b", "僕は"),
+    (r"\bboku\s*wa\b", "僕は"),
+    (r"\bорэ\s*но\b", "俺の"),
+    (r"\bорэ\s*ва\b", "俺は"),
+    (r"\bаната\s*но\b", "あなたの"),
+    (r"\banata\s*no\b", "あなたの"),
+    (r"\bаната\s*ва\b", "あなたは"),
+    (r"\banata\s*wa\b", "あなたは"),
+    (r"\bкоре\s*ва\b", "これは"),
+    (r"\bkore\s*wa\b", "これは"),
+    (r"\bсоре\s*ва\b", "それは"),
+    (r"\bsore\s*wa\b", "それは"),
+    (r"\bаре\s*ва\b", "あれは"),
+    (r"\bare\s*wa\b", "あれは"),
+    (r"\bхажимэмашитэ\b", "初めまして"),
+    (r"\bхажимэмаштэ\b", "初めまして"),
+    (r"\bхажимемашите\b", "初めまして"),
+    (r"\bhajimemashite\b", "初めまして"),
+    (r"\bёрошикү\s+онэгайшимас\b", "よろしくお願いします"),
+    (r"\bёрошику\s+онегайшимас\b", "よろしくお願いします"),
+    (r"\byoroshiku\s+onegaishimasu\b", "よろしくお願いします"),
+    (r"\bёрошикү\b", "よろしく"),
+    (r"\bёрошику\b", "よろしく"),
+    (r"\byoroshiku\b", "よろしく"),
+    (r"\bонэгайшимас\b", "お願いします"),
+    (r"\bонегайшимас\b", "お願いします"),
+    (r"\bonegaishimasu\b", "お願いします"),
+    (r"\bаригато\s+гозаймас\b", "ありがとうございます"),
+    (r"\barigatou?\s+gozaimasu?\b", "ありがとうございます"),
+    (r"\bаригато\b", "ありがとう"),
+    (r"\barigatou?\b", "ありがとう"),
+    (r"\bконничива\b", "こんにちは"),
+    (r"\bконичива\b", "こんにちは"),
+    (r"\bkonnichiwa\b", "こんにちは"),
+    (r"\bконбанва\b", "こんばんは"),
+    (r"\bkonbanwa\b", "こんばんは"),
+    (r"\bохаёо\s+гозаймас\b", "おはようございます"),
+    (r"\bohayou?\s+gozaimasu?\b", "おはようございます"),
+    (r"\bохаёо\b", "おはよう"),
+    (r"\bohayou?\b", "おはよう"),
+    (r"\bсумимасэн\b", "すみません"),
+    (r"\bсумимасен\b", "すみません"),
+    (r"\bsumimasen\b", "すみません"),
+    (r"\bгомэннасай\b", "ごめんなさい"),
+    (r"\bгоменнасай\b", "ごめんなさい"),
+    (r"\bgomennasai\b", "ごめんなさい"),
+    (r"\bсаёонара\b", "さようなら"),
+    (r"\bsayounara\b", "さようなら"),
+    (r"\bогэнки\s+дэс\s*ка\b", "お元気ですか"),
+    (r"\bогенки\s+дес\s*ка\b", "お元気ですか"),
+    (r"\bogenki\s+desu\s*ka\b", "お元気ですか"),
+    (r"\bгэнки\s+дэс\b", "元気です"),
+    (r"\bgenki\s+desu\b", "元気です"),
+    (r"\bнихонго\b", "日本語"),
+    (r"\bnihongo\b", "日本語"),
+    (r"\bмонгоруго\b", "モンゴル語"),
+    (r"\bmongorugo\b", "モンゴル語"),
+    (r"\bдайски\b", "大好き"),
+    (r"\bдайсүки\b", "大好き"),
+    (r"\bdaisuki\b", "大好き"),
+    (r"\bсугой\b", "すごい"),
+    (r"\bсүгой\b", "すごい"),
+    (r"\bsugoi\b", "すごい"),
+    (r"\bкавайи\b", "かわいい"),
+    (r"\bкавай\b", "かわいい"),
+    (r"\bkawaii\b", "かわいい"),
+    (r"\bсэнсэй\b", "先生"),
+    (r"\bсенсей\b", "先生"),
+    (r"\bsensei\b", "先生"),
+    (r"\bдайжообү\b", "大丈夫"),
+    (r"\bдайжобү\b", "大丈夫"),
+    (r"\bdaijoubu\b", "大丈夫"),
+    (r"\bганбаттэ\b", "頑張って"),
+    (r"\bганбатте\b", "頑張って"),
+    (r"\bganbatte\b", "頑張って"),
+    (r"\bвакаримашита\b", "分かりました"),
+    (r"\bвакаримашта\b", "分かりました"),
+    (r"\bwakarimashita\b", "分かりました"),
+    (r"\bвакаримасэн\b", "分かりません"),
+    (r"\bwakarimasen\b", "分かりません"),
+
+    # 4. Single English tech & daily loanwords (preserving Mongolian suffixes if attached)
     (r"\bфэйсбүүк", "Facebook"),
     (r"\bфейсбүүк", "Facebook"),
     (r"\bфэйсбүк", "Facebook"),
@@ -877,10 +1005,21 @@ def _phonetic_similarity(cyr_word: str, eng_word: str) -> float:
     return (2.0 * overlap) / (len(bg_c) + len(bg_e))
 
 
+# Mongolian words commonly romanized by en-US STT when speaking Mongolian — never replace Cyrillic with these!
+_MONGOLIAN_ROMANIZED_STOP = {
+    "sain", "baina", "bain", "bn", "uu", "yu", "ve", "be", "namaig", "minii", "chinii",
+    "tanii", "manai", "tanai", "ene", "ter", "tere", "end", "tend", "odoo", "odo",
+    "bol", "bolon", "baigaa", "baisan", "gesen", "gej", "geed", "yum", "ym", "shuu",
+    "dee", "daa", "doo", "tuvshin", "tushin", "tulga", "tuvshintulga", "mongol",
+    "helnii", "hel", "ug", "yaria", "bichig", "bicheh", "bolgoh", "ajillaj", "ajillah",
+}
+
+
 def restore_codeswitch_terms(mn_text: str, en_text: str = "", ja_text: str = "") -> str:
     """
-    1. Applies curated Mongolian-English-Japanese code-switching dictionary.
-    2. Aligns phonetic Cyrillic tokens with high-confidence English words recognized in parallel on the same audio!
+    1. Applies curated Mongolian-English-Japanese code-switching phrase & word dictionary.
+    2. Aligns multi-word & single-word phonetic Cyrillic spans with English words recognized in parallel (en_text).
+    3. Splices authentic Japanese expressions recognized in parallel (ja_text).
     """
     if not mn_text:
         return mn_text
@@ -889,14 +1028,52 @@ def restore_codeswitch_terms(mn_text: str, en_text: str = "", ja_text: str = "")
     for pattern, replacement in CODESWITCH_PHRASE_MAP:
         out = re.sub(pattern, replacement, out, flags=re.IGNORECASE)
 
-    # If parallel English STT heard words, check if any Cyrillic word in mn_text is a direct phonetic transliteration
-    # of an English word from en_text (e.g., user said an English technical term mid-sentence)
+    # Multi-word & single-word phonetic alignment with parallel en-US transcript
     if en_text:
-        en_words = [w.strip(".,!?\"'()[]{}") for w in en_text.split() if len(w.strip(".,!?")) >= 4]
-        # Exclude common short English function words that might accidentally match Mongolian words
-        en_stop = {"that", "this", "with", "from", "have", "what", "when", "where", "your", "they", "will", "been", "were", "there", "about"}
-        en_candidates = [w for w in en_words if w.lower() not in en_stop and w.isascii() and w.isalpha()]
+        # First check if en_text itself contains Japanese romaji (e.g. "watashi no") and convert it in out if present
+        en_raw_words = [w.strip(".,!?\"'()[]{}") for w in en_text.split() if w.strip(".,!?\"'()[]{}")]
+        en_stop = {
+            "that", "this", "with", "from", "have", "when", "where", "they", "will",
+            "been", "were", "there", "about", "watashi", "boku", "anata", "namae",
+            "konnichiwa", "arigato", "arigatou", "sumimasen", "yoroshiku", "hajimemashite",
+        } | _MONGOLIAN_ROMANIZED_STOP
 
+        # 1) Multi-word English conversational bigrams/trigrams from en_text (e.g. "my name is", "my name's", "how are you")
+        if len(en_raw_words) >= 2:
+            out_tokens = out.split()
+            i = 0
+            merged_tokens: list[str] = []
+            while i < len(out_tokens):
+                matched_span = False
+                for span_len in (3, 2):
+                    if i + span_len <= len(out_tokens):
+                        cyr_slice = out_tokens[i : i + span_len]
+                        # Only attempt if all tokens in slice are Cyrillic
+                        if all(re.match(r"^[А-ЯӨҮЁа-яөүё.,!?]+$", t) for t in cyr_slice):
+                            cyr_joined = "".join(t.strip(".,!?") for t in cyr_slice)
+                            for j in range(len(en_raw_words) - span_len + 1):
+                                eng_slice = en_raw_words[j : j + span_len]
+                                if any(w.lower() in _MONGOLIAN_ROMANIZED_STOP for w in eng_slice):
+                                    continue
+                                eng_joined = "".join(eng_slice)
+                                if _phonetic_similarity(cyr_joined, eng_joined) >= 0.75:
+                                    punct = cyr_slice[-1][len(cyr_slice[-1].strip(".,!?")) :]
+                                    merged_tokens.append(" ".join(eng_slice) + punct)
+                                    i += span_len
+                                    matched_span = True
+                                    break
+                    if matched_span:
+                        break
+                if not matched_span:
+                    merged_tokens.append(out_tokens[i])
+                    i += 1
+            out = " ".join(merged_tokens)
+
+        # 2) Single-word English alignment for words >= 4 chars
+        en_candidates = [
+            w for w in en_raw_words
+            if len(w) >= 4 and w.lower() not in en_stop and w.isascii() and w.replace("'", "").isalpha()
+        ]
         if en_candidates:
             tokens = out.split()
             new_tokens = []
@@ -904,7 +1081,6 @@ def restore_codeswitch_terms(mn_text: str, en_text: str = "", ja_text: str = "")
                 clean_tok = tok.strip(".,!?")
                 punct_suffix = tok[len(clean_tok) :]
                 replaced = False
-                # Check if clean_tok (or stem before hyphen) matches an English candidate phonetically
                 if re.match(r"^[А-ЯӨҮЁа-яөүё]{4,}$", clean_tok):
                     for eng_w in en_candidates:
                         sim = _phonetic_similarity(clean_tok, eng_w)
@@ -916,16 +1092,82 @@ def restore_codeswitch_terms(mn_text: str, en_text: str = "", ja_text: str = "")
                     new_tokens.append(tok)
             out = " ".join(new_tokens)
 
+    # Re-apply phrase map in case en_text injected romaji like "watashi no"
+    for pattern, replacement in CODESWITCH_PHRASE_MAP:
+        out = re.sub(pattern, replacement, out, flags=re.IGNORECASE)
+
     return out
+
+
+def select_or_fuse_trilingual_clause(
+    mn_txt: str, mn_conf: float,
+    en_txt: str, en_conf: float,
+    ja_txt: str, ja_conf: float,
+) -> str:
+    """
+    Intelligently selects or fuses Mongolian (mn-MN), English (en-US), and Japanese (ja-JP)
+    recognition results for a single audio segment.
+    """
+    mn_clean = (mn_txt or "").strip()
+    en_clean = (en_txt or "").strip()
+    ja_clean = (ja_txt or "").strip()
+
+    combined_lower = f"{mn_clean} {en_clean}".lower()
+
+    # 1. Detect if this segment is primarily Japanese:
+    has_jp_script = bool(re.search(r"[\u3040-\u30ff\u4e00-\u9fff]", ja_clean))
+    has_jp_phonetics = bool(
+        re.search(
+            r"\b(ваташи|ваташино|ваташива|боку|аната|намаэ|конничива|коничива|аригато|сумимасэн|охаёо|хажимэ|ёрошикү|ёрошику|коре|соре|нихонго|монгоруго|дайски|сугой|кавай|сэнсэй|watashi|boku|anata|namae|konnichiwa|arigato|arigatou|sumimasen|hajimemashite|yoroshiku)\b",
+            combined_lower,
+        )
+    )
+    if ja_clean and has_jp_script:
+        if not mn_clean:
+            return ja_clean
+        if ja_conf >= 0.80 and (ja_conf - mn_conf) >= 0.04:
+            return ja_clean
+        if has_jp_phonetics and len(mn_clean.split()) <= 4:
+            return ja_clean
+
+    # 2. Detect if this segment is primarily English:
+    has_en_phrase = bool(
+        re.search(
+            r"\b(my name|i am|i'm|how are|what is|what's|nice to meet|thank you|hello|good morning|good night|let's|can you|i want|i like|this is|please|sorry|excuse me)\b",
+            en_clean.lower(),
+        )
+    )
+    has_en_phonetics_in_mn = bool(
+        re.search(
+            r"\b(май|майн|нэйм|нэмс|нэм|ай эм|хау ар|ват из|найс ту|тэнк юу|хэллоу|гуд|летс|плийз|сорри)\b",
+            mn_clean.lower(),
+        )
+    )
+    if en_clean and not has_jp_phonetics:
+        if not mn_clean:
+            return restore_codeswitch_terms(en_clean, en_text=en_clean, ja_text=ja_clean)
+        if en_conf >= 0.80 and (en_conf - mn_conf) >= 0.04 and not any(
+            w in _MONGOLIAN_ROMANIZED_STOP for w in en_clean.lower().split()
+        ):
+            return restore_codeswitch_terms(en_clean, en_text=en_clean, ja_text=ja_clean)
+        if has_en_phrase and has_en_phonetics_in_mn and len(mn_clean.split()) <= 5:
+            return restore_codeswitch_terms(en_clean, en_text=en_clean, ja_text=ja_clean)
+
+    # 3. Mixed Mongolian + English + Japanese intra-sentence fusion:
+    if mn_clean:
+        return restore_codeswitch_terms(mn_clean, en_text=en_clean, ja_text=ja_clean)
+
+    return restore_codeswitch_terms(en_clean or ja_clean or "", en_text=en_clean, ja_text=ja_clean)
 
 
 def split_audio_on_pauses(samples: np.ndarray, sample_rate: int = 16000) -> list[np.ndarray]:
     """
-    Splits audio into natural clause segments at pauses >= 280ms so code-switched clauses
-    (e.g. Mongolian clause -> English/Japanese clause -> Mongolian clause) are recognized in their own language!
+    Splits audio into natural micro-clauses at brief pauses or energy dips (>= 120ms)
+    so rapid intra-sentence code-switching (e.g., "Сайн байна уу намайг Түвшинтулга" -> "my name is..." -> "私の...")
+    isolates each language transition cleanly!
     """
     duration = samples.size / float(sample_rate)
-    if duration < 2.4:
+    if duration < 1.35:
         return [samples]
 
     frame_len = int(0.02 * sample_rate)  # 20ms frames
@@ -935,10 +1177,11 @@ def split_audio_on_pauses(samples: np.ndarray, sample_rate: int = 16000) -> list
 
     framed = samples[: n_frames * frame_len].reshape(n_frames, frame_len)
     rms = np.sqrt(np.mean(framed ** 2, axis=1) + 1e-10)
-    thresh = max(0.014, float(np.percentile(rms, 22)) * 1.15)
+    # Adaptive dip threshold that catches brief breath/language-switch dips between phrases
+    thresh = max(0.015, float(np.percentile(rms, 26)) * 1.25)
     is_silent = rms < thresh
 
-    # Find contiguous silent runs >= 14 frames (280ms)
+    # Find contiguous low-energy runs >= 6 frames (120ms)
     segments: list[np.ndarray] = []
     seg_start_sample = 0
     silent_run = 0
@@ -947,22 +1190,22 @@ def split_audio_on_pauses(samples: np.ndarray, sample_rate: int = 16000) -> list
         if sil:
             silent_run += 1
         else:
-            if silent_run >= 14:
+            if silent_run >= 6:
                 split_frame = i - (silent_run // 2)
                 split_sample = split_frame * frame_len
-                if (split_sample - seg_start_sample) >= int(0.85 * sample_rate):
+                if (split_sample - seg_start_sample) >= int(0.55 * sample_rate):
                     segments.append(samples[seg_start_sample:split_sample])
                     seg_start_sample = split_sample
             silent_run = 0
 
     tail = samples[seg_start_sample:]
-    if tail.size >= int(0.45 * sample_rate) or not segments:
+    if tail.size >= int(0.35 * sample_rate) or not segments:
         segments.append(tail)
     elif segments:
         segments[-1] = np.concatenate([segments[-1], tail])
 
-    # Cap at 5 segments max to avoid excessive API calls
-    if len(segments) > 5:
+    # Cap at 8 segments max to keep parallel recognition fast
+    if len(segments) > 8:
         return [samples]
     return segments
 
@@ -1057,16 +1300,9 @@ def transcribe_wav_bytes(raw_bytes: bytes, language: str = "mn") -> tuple[str, s
                 en_txt, en_conf = fut_en.result()
                 ja_txt, ja_conf = fut_ja.result()
 
-                # Decide if this clause was spoken primarily in Japanese, English, or Mongolian:
-                if ja_txt and (not mn_txt or (ja_conf >= 0.84 and ja_conf - mn_conf >= 0.14)):
-                    chosen = ja_txt
-                elif en_txt and (not mn_txt or (en_conf >= 0.84 and en_conf - mn_conf >= 0.14)):
-                    chosen = en_txt
-                elif mn_txt:
-                    # Mongolian base clause with smart English/Japanese code-switch token restoration!
-                    chosen = restore_codeswitch_terms(mn_txt, en_text=en_txt, ja_text=ja_txt)
-                else:
-                    chosen = en_txt or ja_txt or ""
+                chosen = select_or_fuse_trilingual_clause(
+                    mn_txt, mn_conf, en_txt, en_conf, ja_txt, ja_conf
+                )
 
                 if chosen:
                     final_clauses.append(chosen)
@@ -1549,10 +1785,10 @@ def _native_audio_hotkey_worker() -> None:
 
             was_hotkey_down = hotkey_down
 
-            # Update timer & silence auto-stop (if in Toggle mode and user paused for 2.2s after speaking)
+            # Update timer & silence auto-stop (if in Toggle mode and user paused for 3.2s after speaking)
             if _is_recording:
                 FLOWBAR_STATE["seconds"] = int(now - _record_start_time)
-                if not hotkey_down and _has_spoken and (now - _last_speech_time) > 2.2:
+                if not hotkey_down and _has_spoken and (now - _last_speech_time) > 3.2:
                     stop_native_flowbar_recording()
 
         except Exception as e:

@@ -1,4 +1,5 @@
 import type { Language } from "./types";
+import { restoreCodeSwitchingTerms } from "./text-processor";
 
 interface SpeechRecognitionErrorEvent extends Event {
   error: string;
@@ -103,16 +104,18 @@ export class BrowserSpeechRecognizer {
           }
         }
         this.lastInterim = interim.trim();
-        const combined = [this.finalTranscript, this.lastInterim]
-          .filter(Boolean)
-          .join(" ")
-          .trim();
+        const combined = restoreCodeSwitchingTerms(
+          [this.finalTranscript, this.lastInterim]
+            .filter(Boolean)
+            .join(" ")
+            .trim()
+        );
 
         if (combined) {
           this.options.onInterim?.(combined);
         }
         if (this.finalTranscript) {
-          this.options.onFinal?.(this.finalTranscript);
+          this.options.onFinal?.(restoreCodeSwitchingTerms(this.finalTranscript));
         }
       };
 
