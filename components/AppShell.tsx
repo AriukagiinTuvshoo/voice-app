@@ -1133,6 +1133,20 @@ export function SettingsPanel() {
         </div>
       </section>
 
+      {/* Desktop Helper for system-wide Ctrl+Alt */}
+      <section className="settings desktop-only">
+        <h2>💻 Chrome, Word дээр Ctrl+Alt-аар шууд бичих</h2>
+        <p>
+          Вэб хуудас өөр программ руу бичих эрхгүй тул компьютер дээрээ жижиг <b>VOICE Helper</b> ажиллуулна.
+          Нэг удаа суулгахад Windows асах бүрт далд ажиллана.
+        </p>
+        <div style={{ background: "var(--subtle)", padding: "14px", borderRadius: "14px", fontSize: "12px", lineHeight: 1.7, border: "1px solid var(--border)" }}>
+          <div><b>1.</b> VOICE хавтас дахь <code>Install-VOICE-Helper.bat</code> файлыг давхар товшино.</div>
+          <div><b>2.</b> Chrome / Word / Facebook дээр курсороо байрлуулна.</div>
+          <div><b>3.</b> <kbd>Ctrl</kbd> + <kbd>Alt</kbd> (эсвэл <kbd>F8</kbd>) дараад ярина — текст курсор дээр бичигдэнэ.</div>
+        </div>
+      </section>
+
       {/* Recording Mode */}
       <section className="settings">
         <h2>Бичлэг хийх тохиргоо</h2>
