@@ -33,10 +33,10 @@ export default function KeyboardPage() {
 
   return (
     <section className="page">
-      <h1>⌨️ Утасны VOICE Гар (Android & iPhone)</h1>
+      <h1>💻 Компьютерын VOICE & Chrome Өргөтгөл</h1>
       <p>
-        Утсаараа Chrome, Google хайлт, Facebook, Messenger, Instagram доторх бичих нүдэн дээр{" "}
-        <b>хуулж буулгахгүйгээр шууд ярьж бичих</b> системийн гар.
+        Facebook, Google хайлт, Word, Excel зэрэг дурын програм дээр{" "}
+        <b>F8 товчоор эсвэл 1 товшилтоор шууд ярьж бичих</b> шийдэл.
       </p>
 
       {/* OS Selector Tabs */}

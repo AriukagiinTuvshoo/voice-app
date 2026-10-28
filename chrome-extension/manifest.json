@@ -1,15 +1,17 @@
 {
   "manifest_version": 3,
   "name": "VOICE — Монгол Яриаг Текст Болгогч",
-  "version": "1.0.0",
-  "description": "Google хайлт, Facebook, YouTube, Messenger зэрэг бүх сайт дээр дуу хоолойгоороо шууд бичих хөтчийн өргөтгөл.",
+  "version": "1.1.0",
+  "description": "Facebook, Google, YouTube, Messenger зэрэг бүх сайт дээр 1 товшилтоор эсвэл F8 товчоор шууд ярьж бичих өргөтгөл.",
   "permissions": [
     "storage",
-    "activeTab"
+    "activeTab",
+    "scripting"
   ],
   "host_permissions": [
     "https://voice-app.onrender.com/*",
-    "http://127.0.0.1:8000/*"
+    "http://127.0.0.1:8000/*",
+    "<all_urls>"
   ],
   "action": {
     "default_popup": "popup.html",
@@ -17,15 +19,6 @@
   },
   "background": {
     "service_worker": "background.js"
-  },
-  "commands": {
-    "toggle-dictation": {
-      "suggested_key": {
-        "default": "Alt+Shift+V",
-        "mac": "Alt+Shift+V"
-      },
-      "description": "Ярьж бичихийг эхлүүлэх / зогсоох (Alt+Shift+V)"
-    }
   },
   "content_scripts": [
     {
