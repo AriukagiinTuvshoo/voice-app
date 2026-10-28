@@ -1,54 +1,36 @@
 @echo off
-chcp 65001 >nul
-title VOICE — Компьютерын Шууд Яриа Танигч
 cd /d "%~dp0"
+title VOICE - Desktop Launcher
 
 echo ============================================================
-echo   🎤 VOICE — Компьютерын Local Яриа Танигч
-echo   Дэлгэц дээр "VOICE FLOW" хөвөгч товч гарч ирнэ.
+echo   VOICE - Desktop Voice Dictation Launcher
 echo ============================================================
 echo.
 
-echo [1/3] Хиймэл оюуны санг шалгаж байна...
+echo [1/2] Checking Python dependencies...
 python -c "import uvicorn, fastapi, multipart" 2>nul
 if %errorlevel% neq 0 (
-    echo       Анхны удаа хэрэгцээт сангуудыг бэлдэж байна (түр хүлээнэ үү)...
-    pip install -q -r requirements.txt
-    pip install -q python-multipart uvicorn fastapi
+    echo Installing required packages...
+    pip install -q python-multipart uvicorn fastapi sounddevice soundfile speechrecognition edge-tts scipy numpy
 )
 
-echo [2/3] VOICE FLOW серверийг асааж байна...
+echo [2/2] Starting VOICE AI Engine ^& Floating Pill...
 netstat -ano | findstr ":8000 " | findstr "LISTENING" >nul
 if %errorlevel% neq 0 (
     if exist ".venv\Scripts\python.exe" (
-        start "" /b ".venv\Scripts\python.exe" -m uvicorn tts_server:app --host 127.0.0.1 --port 8000
+        start "VOICE-AI" ".venv\Scripts\python.exe" -m uvicorn tts_server:app --host 127.0.0.1 --port 8000
     ) else (
-        start "" /b python -m uvicorn tts_server:app --host 127.0.0.1 --port 8000
+        start "VOICE-AI" python -m uvicorn tts_server:app --host 127.0.0.1 --port 8000
     )
     timeout /t 3 /nobreak >nul
-) else (
-    echo       [OK] Сервер аль хэдийн ажиллаж байна.
 )
 
 echo.
 echo ============================================================
-echo   [АМЖИЛТТАЙ] VOICE FLOW дэлгэц дээр гарч ирлээ!
+echo   [SUCCESS] VOICE FLOW floating pill is now on your screen!
 echo.
-echo   - Дэлгэцийн баруун доод буланд байрлах "VOICE FLOW" 
-echo     хөвөгч капсул дээр хулганаараа дарах эсвэл 
-echo     гар дээрээ [Ctrl + Alt] (эсвэл F8) дараад ярина.
-echo   - Таны ярьсан үг курсор байрлаж буй програм руу 
-echo     (Facebook, Chrome, Word, Excel...) шууд бичигдэнэ!
+echo   - Click the floating pill at bottom-right or press Ctrl+Alt / F8
+echo   - Speak in Mongolian to type directly into any app!
 echo ============================================================
-echo.
-
-rem Хэрэв вэб интерфэйс шаардлагатай бол
-if exist "node_modules" (
-    netstat -ano | findstr ":3000 " | findstr "LISTENING" >nul
-    if %errorlevel% neq 0 (
-        start "" /b cmd /c "npm run dev"
-    )
-)
-
-timeout /t 5 >nul
+timeout /t 4 >nul
 exit /b 0
