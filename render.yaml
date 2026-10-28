@@ -1,11 +1,21 @@
 services:
   - type: web
-    name: voice-ai-studio
+    name: voice-app
     runtime: docker
-    plan: starter
+    plan: free
+    region: oregon
     autoDeploy: true
     envVars:
       - key: NODE_ENV
         value: production
+      - key: HOSTNAME
+        value: 0.0.0.0
       - key: LOCAL_PY_URL
         value: http://127.0.0.1:8000
+      - key: LOCAL_TTS_URL
+        value: http://127.0.0.1:8000/tts
+      - key: LOCAL_TTS_HEALTH
+        value: http://127.0.0.1:8000/health
+      - key: LOCAL_STT_URL
+        value: http://127.0.0.1:8000/transcribe
+
