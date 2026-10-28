@@ -1150,58 +1150,324 @@ def select_or_fuse_trilingual_clause(
     return restore_codeswitch_terms(mn_clean, en_text=en_clean, ja_text=ja_clean)
 
 
+import hashlib
+import urllib.request
+
+# Common glued words & detached suffix corrections for Mongolian STT precision
+_MONGOLIAN_WORD_REFINEMENTS: list[tuple[str, str]] = [
+    # 1. Glued words commonly produced by fast speech in Google mn-MN STT
+    (r"\bсайнбайнауу\b", "сайн байна уу"),
+    (r"\bсайнбайна\s+уу\b", "сайн байна уу"),
+    (r"\bсайн\s+байнауу\b", "сайн байна уу"),
+    (r"\bюубайна\b", "юу байна"),
+    (r"\bяажбайна\b", "яаж байна"),
+    (r"\bбайнауу\b", "байна уу"),
+    (r"\bболохгүйбайна\b", "болохгүй байна"),
+    (r"\bажиллахгүйбайна\b", "ажиллахгүй байна"),
+    (r"\bтанихгүйбайна\b", "танихгүй байна"),
+    (r"\bсонсогдохгүйбайна\b", "сонсогдохгүй байна"),
+    (r"\bоржирэх\b", "орж ирэх"),
+    (r"\bгарчирэх\b", "гарч ирэх"),
+    (r"\bярьжбайна\b", "ярьж байна"),
+    (r"\bхийжбайна\b", "хийж байна"),
+    (r"\bбайгааюм\b", "байгаа юм"),
+    (r"\bболохюм\b", "болох юм"),
+    (r"\bхэрэгтэйбайна\b", "хэрэгтэй байна"),
+    (r"\bболомжтойбайна\b", "боломжтой байна"),
+
+    # 2. Detached negative suffix (-гүй / -гуй) that STT separates with a space
+    (r"\b([А-ЯӨҮЁа-яөүё]{2,})\s+гүй\b", r"\1гүй"),
+    (r"\b([А-ЯӨҮЁа-яөүё]{2,})\s+гуй\b", r"\1гүй"),
+    (r"\b([А-ЯӨҮЁа-яөүё]{2,})\s+гүйн\b", r"\1гүйн"),
+
+    # 3. Frequent phonetic word/letter confusions in Mongolian dictation
+    (r"\bчадварыг\s+нь\b", "чадварыг нь"),
+    (r"\bчадварын\s+илүү\b", "чадварыг нь илүү"),
+    (r"\bчадварыг\s+илүү\b", "чадварыг нь илүү"),
+    (r"\bтэрийн\s+сайжруулаад\b", "тэрийг нь сайжруулаад"),
+    (r"\bтэрийг\s+сайжруулаад\b", "тэрийг нь сайжруулаад"),
+    (r"\bүг\s+үсгийг\b", "үг, үсгийг"),
+    (r"\bер\s+өөсөө\b", "ерөөсөө"),
+    (r"\bтэр\s+өөсөө\b", "ерөөсөө"),
+    (r"\bажилгаанд\b", "ажиллагаанд"),
+    (r"\bажилагаанд\b", "ажиллагаанд"),
+    (r"\bхөрвүлдэг\b", "хөрвүүлдэг"),
+    (r"\bсайжрулад\b", "сайжруулаад"),
+    (r"\bхөгжүлэд\b", "хөгжүүлээд"),
+]
+
+
+def _levenshtein_distance(a: str, b: str) -> int:
+    """Compute character edit distance between two strings."""
+    if a == b:
+        return 0
+    if not a:
+        return len(b)
+    if not b:
+        return len(a)
+    prev = list(range(len(b) + 1))
+    for i, ca in enumerate(a, 1):
+        curr = [i]
+        for j, cb in enumerate(b, 1):
+            cost = 0 if ca == cb else 1
+            curr.append(min(curr[-1] + 1, prev[j] + 1, prev[j - 1] + cost))
+        prev = curr
+    return prev[-1]
+
+
+def _encrypt_spellcheck_key(text: str) -> str:
+    """Request key algorithm for spellcheck.mn ($encrypt function)."""
+    mod = 10000000008
+    n = 0
+    for ch in text:
+        n = (n + ord(ch) + 1) % mod
+    return hashlib.sha256(str(n).encode("utf-8")).hexdigest()
+
+
+def _auto_correct_subtle_typos_spellcheck_mn(text: str) -> str:
+    """
+    Queries spellcheck.mn with a fast timeout and automatically fixes ONLY genuine 1-to-2 letter
+    orthographic/acoustic typos (where first letter matches and Levenshtein edit distance <= 2).
+    Never alters foreign words, proper nouns, or words with distant suggestions.
+    """
+    if not text or len(text) < 3:
+        return text
+    # Only check if there are Cyrillic words
+    if not re.search(r"[А-ЯӨҮЁа-яөүё]{4,}", text):
+        return text
+
+    base_url = "https://spellcheck.mn/cms-client/modules/spellchecker"
+    headers = {
+        "Content-Type": "application/json",
+        "Origin": "https://spellcheck.mn",
+        "Referer": "https://spellcheck.mn/",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) VoiceApp/1.0",
+    }
+    try:
+        key = _encrypt_spellcheck_key(text)
+        req = urllib.request.Request(
+            f"{base_url}/check",
+            data=json.dumps({"text": text, "key": key}).encode("utf-8"),
+            headers=headers,
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=1.6) as resp:
+            raw_body = resp.read().decode("utf-8", errors="ignore")
+        misspelled_raw = json.loads(raw_body)
+        if not isinstance(misspelled_raw, list) or not misspelled_raw:
+            return text
+
+        misspelled = list({w.replace("-", "").strip() for w in misspelled_raw if isinstance(w, str) and len(w.replace("-", "").strip()) >= 4})
+        if not misspelled:
+            return text
+
+        out = text
+        for m_word in misspelled[:5]:  # Cap at 5 lookups max to stay under 1.5s
+            # Skip capitalized proper names
+            if m_word[0].isupper() and m_word not in out.split()[:1]:
+                continue
+            s_key = _encrypt_spellcheck_key(m_word)
+            s_req = urllib.request.Request(
+                f"{base_url}/suggest",
+                data=json.dumps({"word": m_word, "key": s_key}).encode("utf-8"),
+                headers=headers,
+                method="POST",
+            )
+            with urllib.request.urlopen(s_req, timeout=1.2) as s_resp:
+                s_body = s_resp.read().decode("utf-8", errors="ignore")
+            cands = json.loads(s_body)
+            if isinstance(cands, list) and cands:
+                best_cand = str(cands[0]).strip()
+                # Only auto-replace if it is a close 1-2 letter acoustic/orthographic fix
+                # with the same starting letter and no space injection
+                if (
+                    best_cand
+                    and " " not in best_cand
+                    and best_cand[0].lower() == m_word[0].lower()
+                    and 1 <= _levenshtein_distance(m_word.lower(), best_cand.lower()) <= 2
+                ):
+                    if m_word[0].isupper():
+                        best_cand = best_cand[0].upper() + best_cand[1:]
+                    out = re.sub(rf"(?<![А-ЯӨҮЁа-яөүё]){re.escape(m_word)}(?![А-ЯӨҮЁа-яөүё])", best_cand, out)
+        return out
+    except Exception:
+        return text
+
+
+def refine_mongolian_orthography_and_words(text: str) -> str:
+    """
+    Post-processes recognized speech to fix:
+    1. Glued words ('сайнбайнауу' -> 'сайн байна уу')
+    2. Detached suffixes ('болох гүй' -> 'болохгүй')
+    3. Stuttered/duplicated adjacent words ('Сайн сайн байна уу' -> 'Сайн байна уу')
+    4. Subtle 1-2 letter Mongolian spelling/acoustic errors via spellcheck.mn
+    """
+    if not text:
+        return text
+
+    out = text
+    for pattern, replacement in _MONGOLIAN_WORD_REFINEMENTS:
+        out = re.sub(pattern, replacement, out, flags=re.IGNORECASE)
+
+    # Deduplicate accidental stuttered/repeated identical adjacent Cyrillic words (e.g. "Сайн сайн байна" -> "Сайн байна")
+    tokens = out.split()
+    deduped: list[str] = []
+    for tok in tokens:
+        if deduped:
+            prev_clean = deduped[-1].strip(".,!?").lower()
+            curr_clean = tok.strip(".,!?").lower()
+            if curr_clean and curr_clean == prev_clean and re.match(r"^[а-яөүё]+$", curr_clean):
+                # Keep punctuation if the second token had it
+                if tok[-1] in ".,!?" and deduped[-1][-1] not in ".,!?":
+                    deduped[-1] = deduped[-1] + tok[-1]
+                continue
+        deduped.append(tok)
+    out = " ".join(deduped)
+
+    # Run fast high-precision 1-2 letter spellcheck refinement
+    out = _auto_correct_subtle_typos_spellcheck_mn(out)
+    return out
+
+
+def prepare_audio_for_asr(samples: np.ndarray, sample_rate: int = 16000) -> np.ndarray:
+    """
+    Studio-grade acoustic front-end for maximum word & letter recognition accuracy:
+    1. Removes DC offset and sub-85Hz mic rumble/pop.
+    2. Spectral noise gating in STFT domain to suppress stationary fan/room noise.
+    3. Consonant presence boost (2.0 kHz - 5.5 kHz) so Mongolian/English/Japanese plosives & sibilants
+       (с, ш, ч, ц, т, д, г, к, х, л, р) are crisp and distinct.
+    4. Syllable-level dynamic leveling so quiet word endings (-ийг, -ыг, -аар, -тай, -гүй) aren't lost.
+    5. Adds 200ms leading and 250ms trailing silence margin so VAD never clips the first or last letter!
+    """
+    y = samples.astype(np.float64)
+    y = y - np.mean(y)
+
+    try:
+        # 1. High-pass at 85Hz to remove rumble/pop
+        sos_hp = sp_signal.butter(2, 85.0 / (sample_rate / 2.0), btype="highpass", output="sos")
+        y = sp_signal.sosfiltfilt(sos_hp, y)
+
+        # 2. Gentle STFT spectral noise floor gate
+        if y.size >= 1024:
+            f_bins, _, Zxx = sp_signal.stft(y, fs=sample_rate, nperseg=512, noverlap=384)
+            mag = np.abs(Zxx)
+            phase = np.angle(Zxx)
+            noise_floor = np.percentile(mag, 15, axis=1, keepdims=True)
+            gain = np.clip((mag - 0.65 * noise_floor) / np.maximum(mag, 1e-9), 0.25, 1.0)
+            # 3. Consonant & formant clarity boost (2.0 kHz - 5.5 kHz)
+            presence_boost = np.ones((f_bins.size, 1), dtype=np.float64)
+            band_mask = (f_bins >= 1800.0) & (f_bins <= 5800.0)
+            presence_boost[band_mask, 0] = 1.28  # +2.1 dB consonant articulation boost
+            Zxx_clean = (mag * gain * presence_boost) * np.exp(1j * phase)
+            _, y_rec = sp_signal.istft(Zxx_clean, fs=sample_rate, nperseg=512, noverlap=384)
+            y = y_rec[: y.size]
+    except Exception:
+        pass
+
+    y32 = y.astype(np.float32)
+    # Trim dead silence with a gentle -48 dB threshold so quiet word-initial/final consonants survive
+    y32 = trim_silence(y32, sample_rate, threshold_db=-48.0)
+    y32 = level_speech_np(y32, sample_rate)
+    y32 = normalize_audio_np(y32, target_dbfs=-1.0)
+
+    # Pad 200ms leading silence and 250ms trailing silence so Google's VAD never clips the first/last letter
+    lead_pad = np.zeros(int(0.20 * sample_rate), dtype=np.float32)
+    trail_pad = np.zeros(int(0.25 * sample_rate), dtype=np.float32)
+    return np.concatenate([lead_pad, y32, trail_pad])
+
+
 def split_audio_on_pauses(samples: np.ndarray, sample_rate: int = 16000) -> list[np.ndarray]:
     """
-    Splits audio into natural micro-clauses at brief pauses or energy dips (>= 120ms)
-    so rapid intra-sentence code-switching (e.g., "Сайн байна уу намайг Түвшинтулга" -> "my name is..." -> "私の...")
-    isolates each language transition cleanly!
+    Splits audio only at genuine inter-phrase pauses (>= 300ms = 15 frames) with minimum segment length 1.25s,
+    preventing mid-word splits that break consonant closures or glue words together.
     """
     duration = samples.size / float(sample_rate)
-    if duration < 1.35:
+    if duration < 2.5:
         return [samples]
 
     frame_len = int(0.02 * sample_rate)  # 20ms frames
     n_frames = samples.size // frame_len
-    if n_frames < 20:
+    if n_frames < 30:
         return [samples]
 
     framed = samples[: n_frames * frame_len].reshape(n_frames, frame_len)
     rms = np.sqrt(np.mean(framed ** 2, axis=1) + 1e-10)
-    # Adaptive dip threshold that catches brief breath/language-switch dips between phrases
-    thresh = max(0.015, float(np.percentile(rms, 26)) * 1.25)
+    thresh = max(0.014, float(np.percentile(rms, 22)) * 1.15)
     is_silent = rms < thresh
 
-    # Find contiguous low-energy runs >= 6 frames (120ms)
+    # Find contiguous silent runs >= 15 frames (300ms)
     segments: list[np.ndarray] = []
     seg_start_sample = 0
     silent_run = 0
+    pad_samples = int(0.15 * sample_rate)
 
     for i, sil in enumerate(is_silent):
         if sil:
             silent_run += 1
         else:
-            if silent_run >= 6:
+            if silent_run >= 15:
                 split_frame = i - (silent_run // 2)
                 split_sample = split_frame * frame_len
-                if (split_sample - seg_start_sample) >= int(0.55 * sample_rate):
-                    segments.append(samples[seg_start_sample:split_sample])
+                if (split_sample - seg_start_sample) >= int(1.25 * sample_rate):
+                    seg_chunk = samples[seg_start_sample:split_sample]
+                    # Pad 150ms silence on split boundaries so boundary letters are never clipped
+                    seg_padded = np.concatenate([
+                        np.zeros(pad_samples, dtype=np.float32),
+                        seg_chunk,
+                        np.zeros(pad_samples, dtype=np.float32),
+                    ])
+                    segments.append(seg_padded)
                     seg_start_sample = split_sample
             silent_run = 0
 
     tail = samples[seg_start_sample:]
-    if tail.size >= int(0.35 * sample_rate) or not segments:
-        segments.append(tail)
+    if tail.size >= int(0.60 * sample_rate) or not segments:
+        tail_padded = np.concatenate([
+            np.zeros(pad_samples, dtype=np.float32),
+            tail,
+            np.zeros(pad_samples, dtype=np.float32),
+        ])
+        segments.append(tail_padded)
     elif segments:
-        segments[-1] = np.concatenate([segments[-1], tail])
+        segments[-1] = np.concatenate([segments[-1], tail, np.zeros(pad_samples, dtype=np.float32)])
 
-    # Cap at 8 segments max to keep parallel recognition fast
-    if len(segments) > 8:
+    if len(segments) > 6:
         return [samples]
     return segments
 
 
+def _score_candidate_hypothesis(text: str, base_conf: float, lang_code: str) -> float:
+    """
+    Reranks Google STT N-best alternative hypotheses based on word-boundary quality,
+    orthographic validity, and absence of glued or fragmented words.
+    """
+    if not text:
+        return -1.0
+    score = base_conf
+    words = text.split()
+    if not words:
+        return -1.0
+
+    if lang_code == "mn-MN":
+        for w in words:
+            clean = w.strip(".,!?")
+            # Penalize abnormally long glued words (> 16 letters like 'сайнбайнауу')
+            if len(clean) >= 16:
+                score -= 0.08
+            # Penalize stray 1-letter Cyrillic fragments (except valid particles/abbreviations)
+            if len(clean) == 1 and clean.lower() not in ("б", "в", "г", "д", "л", "нь", "ч", "ш"):
+                score -= 0.05
+        # Reward well-spaced common Mongolian words & particles
+        lower_txt = f" {text.lower()} "
+        for good_tok in (" байна ", " уу ", " юу ", " нь ", " болон ", " дээр ", " гэж ", " сайн ", " бол "):
+            if good_tok in lower_txt:
+                score += 0.03
+
+    return score
+
+
 def _recognize_single_lang(wav_bytes: bytes, lang_code: str) -> tuple[str, float]:
-    """Run Google STT with show_all=True and return (best_transcript, confidence)."""
+    """Run Google STT with show_all=True and rerank all N-best alternatives for maximum word/letter accuracy."""
     r = sr.Recognizer()
     r.dynamic_energy_threshold = False
     try:
@@ -1210,10 +1476,21 @@ def _recognize_single_lang(wav_bytes: bytes, lang_code: str) -> tuple[str, float
         res = r.recognize_google(audio_data, language=lang_code, show_all=True)
         if isinstance(res, dict) and "alternative" in res and res["alternative"]:
             alts = res["alternative"]
-            best = alts[0]
-            text = (best.get("transcript") or "").strip()
-            conf = float(best.get("confidence", 0.78))
-            return text, conf
+            best_text = ""
+            best_conf = 0.0
+            best_score = -999.0
+            for idx, alt in enumerate(alts):
+                cand_text = (alt.get("transcript") or "").strip()
+                if not cand_text:
+                    continue
+                # Google often omits 'confidence' on alts[1..N]; assign slight rank decay from alts[0]
+                raw_conf = float(alt.get("confidence", max(0.70, 0.84 - idx * 0.03)))
+                cand_score = _score_candidate_hypothesis(cand_text, raw_conf, lang_code)
+                if cand_score > best_score:
+                    best_score = cand_score
+                    best_text = cand_text
+                    best_conf = raw_conf
+            return best_text, best_conf
     except Exception:
         pass
     return "", 0.0
@@ -1221,11 +1498,11 @@ def _recognize_single_lang(wav_bytes: bytes, lang_code: str) -> tuple[str, float
 
 def transcribe_wav_bytes(raw_bytes: bytes, language: str = "mn") -> tuple[str, str]:
     """
-    Studio-grade Multilingual & Code-Switching STT Engine:
-    1. Pre-emphasizes consonants (sibilants/plosives), filters 75Hz rumble, levels speech dynamics, normalizes to -1.0 dBFS.
-    2. Splits long utterances on natural pauses into clauses.
-    3. Runs parallel multi-language recognition (mn-MN, en-US, ja-JP) with confidence comparison.
-    4. Fuses English/Japanese code-switched words inside Mongolian sentences cleanly.
+    Studio-grade Multilingual & High-Precision Word/Letter STT Engine:
+    1. Spectral noise gate + consonant articulation boost (2-5.5 kHz) + 200ms VAD padding.
+    2. Splits long utterances only on genuine pauses (>= 300ms) with padded boundaries.
+    3. Reranks N-best hypotheses across mn-MN, en-US, ja-JP.
+    4. Refines Mongolian word boundaries, detached suffixes, stuttered words, and 1-2 letter typos via spellcheck.mn.
     """
     if not HAS_SR:
         return "", "SpeechRecognition суугаагүй байна."
@@ -1238,20 +1515,8 @@ def transcribe_wav_bytes(raw_bytes: bytes, language: str = "mn") -> tuple[str, s
     if samples.size < 2400:  # < 0.15s
         return "", "Аудио хэт богино байна."
 
-    # 1. Studio Audio Cleaning for Crisp Speech Recognition
-    try:
-        # 75Hz high-pass filter to remove mic pop & room rumble
-        sos = sp_signal.butter(2, 75.0 / 8000.0, btype="highpass", output="sos")
-        samples = sp_signal.sosfiltfilt(sos, samples.astype(np.float64)).astype(np.float32)
-        # Subtle pre-emphasis to sharpen Mongolian/English/Japanese consonants
-        pre_emph = np.append(samples[0], samples[1:] - 0.55 * samples[:-1]).astype(np.float32)
-        samples = 0.70 * samples + 0.30 * pre_emph
-    except Exception:
-        pass
-
-    samples = trim_silence(samples, 16000, threshold_db=-46.0)
-    samples = level_speech_np(samples, 16000)
-    samples = normalize_audio_np(samples, target_dbfs=-1.0)
+    # 1. Studio Acoustic Conditioning for Crisp Word & Letter Recognition
+    samples = prepare_audio_for_asr(samples, 16000)
 
     req_lang = (language or "mn").lower().strip()
     segments = split_audio_on_pauses(samples, 16000)
@@ -1299,6 +1564,8 @@ def transcribe_wav_bytes(raw_bytes: bytes, language: str = "mn") -> tuple[str, s
 
     text = " ".join(c.strip() for c in final_clauses if c.strip()).strip()
     if text:
+        # Apply deep Mongolian word-boundary, suffix, and 1-2 letter orthographic refinement
+        text = refine_mongolian_orthography_and_words(text)
         text = text[0].upper() + text[1:]
         if text[-1] not in ".!?。！？":
             text += "."

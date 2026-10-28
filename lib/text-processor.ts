@@ -180,6 +180,38 @@ const CODESWITCH_REPLACEMENTS: Array<[RegExp, string]> = [
   [/\bжемини\b/giu, "Gemini"],
   [/\bклод\b/giu, "Claude"],
   [/\bантигравити\b/giu, "Antigravity"],
+
+  // Glued Mongolian words & detached suffix corrections
+  [/\bсайнбайнауу\b/giu, "сайн байна уу"],
+  [/\bсайнбайна\s+уу\b/giu, "сайн байна уу"],
+  [/\bсайн\s+байнауу\b/giu, "сайн байна уу"],
+  [/\bюубайна\b/giu, "юу байна"],
+  [/\bяажбайна\b/giu, "яаж байна"],
+  [/\bбайнауу\b/giu, "байна уу"],
+  [/\bболохгүйбайна\b/giu, "болохгүй байна"],
+  [/\bажиллахгүйбайна\b/giu, "ажиллахгүй байна"],
+  [/\bтанихгүйбайна\b/giu, "танихгүй байна"],
+  [/\bсонсогдохгүйбайна\b/giu, "сонсогдохгүй байна"],
+  [/\bоржирэх\b/giu, "орж ирэх"],
+  [/\bгарчирэх\b/giu, "гарч ирэх"],
+  [/\bярьжбайна\b/giu, "ярьж байна"],
+  [/\bхийжбайна\b/giu, "хийж байна"],
+  [/\bбайгааюм\b/giu, "байгаа юм"],
+  [/\bболохюм\b/giu, "болох юм"],
+  [/\bхэрэгтэйбайна\b/giu, "хэрэгтэй байна"],
+  [/\bболомжтойбайна\b/giu, "боломжтой байна"],
+  [/\b([А-ЯӨҮЁа-яөүё]{2,})\s+гүй\b/giu, "$1гүй"],
+  [/\b([А-ЯӨҮЁа-яөүё]{2,})\s+гуй\b/giu, "$1гүй"],
+  [/\bчадварын\s+илүү\b/giu, "чадварыг нь илүү"],
+  [/\bтэрийн\s+сайжруулаад\b/giu, "тэрийг нь сайжруулаад"],
+  [/\bүг\s+үсгийг\b/giu, "үг, үсгийг"],
+  [/\bер\s+өөсөө\b/giu, "ерөөсөө"],
+  [/\bтэр\s+өөсөө\b/giu, "ерөөсөө"],
+  [/\bажилгаанд\b/giu, "ажиллагаанд"],
+  [/\bажилагаанд\b/giu, "ажиллагаанд"],
+  [/\bхөрвүлдэг\b/giu, "хөрвүүлдэг"],
+  [/\bсайжрулад\b/giu, "сайжруулаад"],
+  [/\bхөгжүлэд\b/giu, "хөгжүүлээд"],
 ];
 
 export function restoreCodeSwitchingTerms(text: string): string {
@@ -190,8 +222,20 @@ export function restoreCodeSwitchingTerms(text: string): string {
   // Ensure clean spacing around Japanese Kanji/Kana and Latin/Cyrillic characters
   out = out.replace(/([\p{L}\p{N}])([\u3040-\u30ff\u4e00-\u9fff])/gu, "$1 $2");
   out = out.replace(/([\u3040-\u30ff\u4e00-\u9fff])([\p{L}\p{N}])/gu, "$1 $2");
-  out = out.replace(/\s{2,}/g, " ").trim();
-  return out;
+  // Deduplicate adjacent identical Cyrillic words (e.g., "Сайн сайн байна уу" -> "Сайн байна уу")
+  const tokens = out.split(/\s+/);
+  const deduped: string[] = [];
+  for (const tok of tokens) {
+    if (deduped.length > 0) {
+      const prevClean = deduped[deduped.length - 1].replace(/[.,!?]/g, "").toLowerCase();
+      const currClean = tok.replace(/[.,!?]/g, "").toLowerCase();
+      if (currClean && currClean === prevClean && /^[а-яөүё]+$/iu.test(currClean)) {
+        continue;
+      }
+    }
+    deduped.push(tok);
+  }
+  return deduped.join(" ").trim();
 }
 
 /**
