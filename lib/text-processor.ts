@@ -187,6 +187,10 @@ export function restoreCodeSwitchingTerms(text: string): string {
   for (const [pattern, replacement] of CODESWITCH_REPLACEMENTS) {
     out = out.replace(pattern, replacement);
   }
+  // Ensure clean spacing around Japanese Kanji/Kana and Latin/Cyrillic characters
+  out = out.replace(/([\p{L}\p{N}])([\u3040-\u30ff\u4e00-\u9fff])/gu, "$1 $2");
+  out = out.replace(/([\u3040-\u30ff\u4e00-\u9fff])([\p{L}\p{N}])/gu, "$1 $2");
+  out = out.replace(/\s{2,}/g, " ").trim();
   return out;
 }
 

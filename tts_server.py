@@ -1096,6 +1096,11 @@ def restore_codeswitch_terms(mn_text: str, en_text: str = "", ja_text: str = "")
     for pattern, replacement in CODESWITCH_PHRASE_MAP:
         out = re.sub(pattern, replacement, out, flags=re.IGNORECASE)
 
+    # Clean up spacing around Japanese Kanji/Kana and Latin characters
+    out = re.sub(r"([А-ЯӨҮЁа-яөүёA-Za-z0-9])([\u3040-\u30ff\u4e00-\u9fff])", r"\1 \2", out)
+    out = re.sub(r"([\u3040-\u30ff\u4e00-\u9fff])([А-ЯӨҮЁа-яөүёA-Za-z0-9])", r"\1 \2", out)
+    out = re.sub(r"\s{2,}", " ", out).strip()
+
     return out
 
 
@@ -1105,59 +1110,44 @@ def select_or_fuse_trilingual_clause(
     ja_txt: str, ja_conf: float,
 ) -> str:
     """
-    Intelligently selects or fuses Mongolian (mn-MN), English (en-US), and Japanese (ja-JP)
-    recognition results for a single audio segment.
+    Intelligently fuses Mongolian (mn-MN), English (en-US), and Japanese (ja-JP).
+    CRITICAL RULE: Never allow ja-JP or en-US to hallucinate foreign words over Mongolian speech!
+    Mongolian is the primary baseline; Japanese and English phrases are selectively and accurately
+    spliced into the sentence without corrupting Mongolian words like 'сайн байна уу', 'ухаалаг', etc.
     """
     mn_clean = (mn_txt or "").strip()
     en_clean = (en_txt or "").strip()
     ja_clean = (ja_txt or "").strip()
 
-    combined_lower = f"{mn_clean} {en_clean}".lower()
-
-    # 1. Detect if this segment is primarily Japanese:
-    has_jp_script = bool(re.search(r"[\u3040-\u30ff\u4e00-\u9fff]", ja_clean))
-    has_jp_phonetics = bool(
-        re.search(
-            r"\b(ваташи|ваташино|ваташива|боку|аната|намаэ|конничива|коничива|аригато|сумимасэн|охаёо|хажимэ|ёрошикү|ёрошику|коре|соре|нихонго|монгоруго|дайски|сугой|кавай|сэнсэй|watashi|boku|anata|namae|konnichiwa|arigato|arigatou|sumimasen|hajimemashite|yoroshiku)\b",
-            combined_lower,
-        )
-    )
-    if ja_clean and has_jp_script:
-        if not mn_clean:
+    # 1. If NO Mongolian text was recognized at all:
+    if not mn_clean:
+        # Check Japanese first if it contains genuine Japanese Kanji/Kana
+        if ja_clean and re.search(r"[\u3040-\u30ff\u4e00-\u9fff]", ja_clean):
+            # Guard: ensure ja_clean is not an absurd single-syllable mistranslation
             return ja_clean
-        if ja_conf >= 0.80 and (ja_conf - mn_conf) >= 0.04:
-            return ja_clean
-        if has_jp_phonetics and len(mn_clean.split()) <= 4:
-            return ja_clean
-
-    # 2. Detect if this segment is primarily English:
-    has_en_phrase = bool(
-        re.search(
-            r"\b(my name|i am|i'm|how are|what is|what's|nice to meet|thank you|hello|good morning|good night|let's|can you|i want|i like|this is|please|sorry|excuse me)\b",
-            en_clean.lower(),
-        )
-    )
-    has_en_phonetics_in_mn = bool(
-        re.search(
-            r"\b(май|майн|нэйм|нэмс|нэм|ай эм|хау ар|ват из|найс ту|тэнк юу|хэллоу|гуд|летс|плийз|сорри)\b",
-            mn_clean.lower(),
-        )
-    )
-    if en_clean and not has_jp_phonetics:
-        if not mn_clean:
+        if en_clean:
             return restore_codeswitch_terms(en_clean, en_text=en_clean, ja_text=ja_clean)
-        if en_conf >= 0.80 and (en_conf - mn_conf) >= 0.04 and not any(
-            w in _MONGOLIAN_ROMANIZED_STOP for w in en_clean.lower().split()
-        ):
-            return restore_codeswitch_terms(en_clean, en_text=en_clean, ja_text=ja_clean)
-        if has_en_phrase and has_en_phonetics_in_mn and len(mn_clean.split()) <= 5:
+        return ""
+
+    # 2. Check if the user spoke an ENTIRE standalone Japanese phrase with zero Mongolian content
+    # (e.g. user just said "こんにちは" or "ありがとうございます" or "初めましてよろしくお願いします")
+    pure_jp_patterns = r"^(私の名前は|私は|こんにちは|ありがとう|ありがとうございます|初めまして|よろしくお願いします|おはようございます|こんばんは|すみません|ごめんなさい|さようなら|お元気ですか|大丈夫です?|元気です)$"
+    if ja_clean and re.match(pure_jp_patterns, ja_clean.replace(" ", "")):
+        return ja_clean
+
+    # 3. Check if the user spoke an ENTIRE standalone English phrase with zero Mongolian content
+    # (e.g. user just said "how are you", "my name is Tuvshin", "nice to meet you", "thank you very much")
+    pure_en_patterns = r"^(my name is|how are you|nice to meet you|thank you very much|thank you|good morning|good night|hello everyone|let's go)"
+    if en_clean and re.match(pure_en_patterns, en_clean.lower()):
+        # Ensure mn_clean didn't contain genuine Mongolian words that aren't phonetic English
+        mn_words = mn_clean.lower().split()
+        phonetic_en_seeds = {"май", "майн", "нэйм", "нэмс", "нэм", "из", "ай", "эм", "хау", "ар", "юу", "юү", "найс", "ту", "тү", "мит", "тэнк", "вэри", "мач", "гуд", "морнинг", "хэллоу"}
+        if all(w.strip(".,!?") in phonetic_en_seeds for w in mn_words):
             return restore_codeswitch_terms(en_clean, en_text=en_clean, ja_text=ja_clean)
 
-    # 3. Mixed Mongolian + English + Japanese intra-sentence fusion:
-    if mn_clean:
-        return restore_codeswitch_terms(mn_clean, en_text=en_clean, ja_text=ja_clean)
-
-    return restore_codeswitch_terms(en_clean or ja_clean or "", en_text=en_clean, ja_text=ja_clean)
+    # 4. Standard Case (Mongolian primary + exact English and Japanese phrases spliced):
+    # This prevents ja-JP from hallucinating '仙台', '買い', '良い', 'さん' over Mongolian words!
+    return restore_codeswitch_terms(mn_clean, en_text=en_clean, ja_text=ja_clean)
 
 
 def split_audio_on_pauses(samples: np.ndarray, sample_rate: int = 16000) -> list[np.ndarray]:
