@@ -8,13 +8,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     libsndfile1 \
     flac \
+    && ln -sf /usr/bin/python3 /usr/bin/python \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
 # Install Python dependencies directly
 RUN pip3 install --no-cache-dir --break-system-packages \
-    fastapi uvicorn edge-tts numpy scipy soundfile SpeechRecognition pydantic python-multipart miniaudio
+    fastapi uvicorn edge-tts numpy scipy soundfile SpeechRecognition pydantic python-multipart \
+    && (pip3 install --no-cache-dir --break-system-packages miniaudio || true)
 
 # Install Node.js dependencies
 COPY package*.json ./
@@ -23,9 +25,10 @@ RUN npm install
 # Copy application code
 COPY . .
 
-# Build Next.js application
-RUN npm run build
-RUN chmod +x start-cloud.sh
+# Build Next.js application and normalize startup script line endings
+RUN npm run build \
+    && sed -i 's/\r$//' start-cloud.sh \
+    && chmod +x start-cloud.sh
 
 EXPOSE 3000 10000
 ENV NODE_ENV=production

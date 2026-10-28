@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
+import { BASE_PY_URL, ensurePythonServerReady } from "@/lib/ensure-py-server";
 
 const CHIMEGE_STT_URL = "https://api.chimege.com/v1.2/transcribe";
-const LOCAL_STT_URL = process.env.LOCAL_STT_URL || "http://127.0.0.1:8000/transcribe";
+const LOCAL_STT_URL = process.env.LOCAL_STT_URL || `${BASE_PY_URL}/transcribe`;
 
 export async function POST(req: NextRequest) {
   try {
@@ -45,10 +46,12 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // 2. Try Local Python Server STT (Google Neural STT mn-MN / en-US / ja-JP with audio normalization)
+    // 2. Ensure Python STT Server is running and call Trilingual Neural STT
+    await ensurePythonServerReady(4500);
+
     try {
       const ctrl = new AbortController();
-      const timer = setTimeout(() => ctrl.abort(), 20000);
+      const timer = setTimeout(() => ctrl.abort(), 25000);
 
       const pyForm = new FormData();
       const pyBlob = new Blob([audioBuffer], { type: "audio/wav" });
@@ -79,7 +82,7 @@ export async function POST(req: NextRequest) {
         }
       }
     } catch (e: unknown) {
-      console.warn("Local STT server warning:", e);
+      console.warn("STT server warning:", e);
     }
 
     return NextResponse.json({
