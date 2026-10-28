@@ -1,5 +1,8 @@
 edge-tts
 SpeechRecognition
+numpy
+scipy
 fastapi
 uvicorn
 pydantic
+python-multipart
