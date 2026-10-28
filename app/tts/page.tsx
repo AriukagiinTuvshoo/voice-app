@@ -52,7 +52,10 @@ const DEFAULT_VOICES = [
     id: "mn-MN-YesuiNeural",
     name: "Есүй",
     gender: "female" as const,
-    description: "Уян зөөлөн, байгалийн өнгө аяс (Эмэгтэй)",
+    category: "mn",
+    icon: "👩",
+    defaultPreset: "broadcast",
+    description: "Уян зөөлөн, байгалийн тод өнгө аяс (Эмэгтэй)",
     tag: "Үндсэн • Эмэгтэй",
     pitch: 1.0,
     speed: 1.0,
@@ -64,6 +67,9 @@ const DEFAULT_VOICES = [
     id: "mn-MN-BataaNeural",
     name: "Батаа",
     gender: "male" as const,
+    category: "mn",
+    icon: "👨",
+    defaultPreset: "broadcast",
     description: "Тод цэвэр, өөртөө итгэлтэй, баргил (Эрэгтэй)",
     tag: "Үндсэн • Эрэгтэй",
     pitch: 1.0,
@@ -72,10 +78,161 @@ const DEFAULT_VOICES = [
     sampleUrl: "",
     refText: "",
   },
+  {
+    id: "mn-studio-narrator",
+    name: "Тэмүүлэн",
+    gender: "male" as const,
+    category: "mn",
+    icon: "🎬",
+    defaultPreset: "cinematic",
+    description: "Гүн баргил, кино тайлбар болон аудио номд зориулсан өгүүлэгч",
+    tag: "Студи • Өгүүлэгч",
+    pitch: 1.0,
+    speed: 1.0,
+    baseVoice: "mn-MN-BataaNeural",
+    sampleUrl: "",
+    refText: "",
+  },
+  {
+    id: "mn-studio-news",
+    name: "Ану",
+    gender: "female" as const,
+    category: "mn",
+    icon: "📺",
+    defaultPreset: "bright",
+    description: "Телевиз, мэдээний студийн тод цэвэр, хурц хэмнэлтэй хөтлөгч",
+    tag: "Студи • Мэдээ",
+    pitch: 1.0,
+    speed: 1.0,
+    baseVoice: "mn-MN-YesuiNeural",
+    sampleUrl: "",
+    refText: "",
+  },
+  {
+    id: "mn-studio-podcast",
+    name: "Ананд",
+    gender: "male" as const,
+    category: "mn",
+    icon: "🎙️",
+    defaultPreset: "podcast",
+    description: "Ойрын микрофоны дулаан, энгийн чөлөөт ярианы подкаст хоолой",
+    tag: "Студи • Подкаст",
+    pitch: 1.0,
+    speed: 1.0,
+    baseVoice: "mn-MN-BataaNeural",
+    sampleUrl: "",
+    refText: "",
+  },
+  {
+    id: "mn-studio-maral",
+    name: "Марал",
+    gender: "female" as const,
+    category: "mn",
+    icon: "🌸",
+    defaultPreset: "warm",
+    description: "Тайвшруулах, зөөлөн дулаан, уран зохиол ба бясалгалын хоолой",
+    tag: "Студи • Уянгалаг",
+    pitch: 1.0,
+    speed: 1.0,
+    baseVoice: "mn-MN-YesuiNeural",
+    sampleUrl: "",
+    refText: "",
+  },
+  {
+    id: "mn-studio-elder",
+    name: "Тулга",
+    gender: "male" as const,
+    category: "mn",
+    icon: "🦁",
+    defaultPreset: "warm",
+    description: "Намбалаг, цээжний гүн резонанстай, жинтэй эрэгтэй хоолой",
+    tag: "Студи • Гүн баргил",
+    pitch: 1.0,
+    speed: 1.0,
+    baseVoice: "mn-MN-BataaNeural",
+    sampleUrl: "",
+    refText: "",
+  },
+  {
+    id: "mn-studio-kid",
+    name: "Мишээл",
+    gender: "female" as const,
+    category: "mn",
+    icon: "🌟",
+    defaultPreset: "bright",
+    description: "Үлгэр, хүүхдийн контентод зориулсан цовоо сэргэлэн хоолой",
+    tag: "Студи • Хүүхэд",
+    pitch: 1.0,
+    speed: 1.0,
+    baseVoice: "mn-MN-YesuiNeural",
+    sampleUrl: "",
+    refText: "",
+  },
+  {
+    id: "en-US-AvaMultilingualNeural",
+    name: "Ava (Multilingual)",
+    gender: "female" as const,
+    category: "intl",
+    icon: "🌐",
+    defaultPreset: "broadcast",
+    description: "Англи болон олон улсын холимог текстийг унших студийн эмэгтэй хоолой",
+    tag: "Олон хэл • Эмэгтэй",
+    pitch: 1.0,
+    speed: 1.0,
+    baseVoice: "en-US-AvaMultilingualNeural",
+    sampleUrl: "",
+    refText: "",
+  },
+  {
+    id: "en-US-AndrewMultilingualNeural",
+    name: "Andrew (Multilingual)",
+    gender: "male" as const,
+    category: "intl",
+    icon: "🌍",
+    defaultPreset: "podcast",
+    description: "Англи болон олон улсын холимог текстийг унших гүн эрэгтэй хоолой",
+    tag: "Олон хэл • Эрэгтэй",
+    pitch: 1.0,
+    speed: 1.0,
+    baseVoice: "en-US-AndrewMultilingualNeural",
+    sampleUrl: "",
+    refText: "",
+  },
+  {
+    id: "ja-JP-NanamiNeural",
+    name: "Nanami • 七海",
+    gender: "female" as const,
+    category: "intl",
+    icon: "🇯🇵",
+    defaultPreset: "broadcast",
+    description: "Япон хэлний байгалийн, маш тод цэвэр эмэгтэй хоолой (Japanese)",
+    tag: "Япон • Эмэгтэй",
+    pitch: 1.0,
+    speed: 1.0,
+    baseVoice: "ja-JP-NanamiNeural",
+    sampleUrl: "",
+    refText: "",
+  },
+  {
+    id: "ja-JP-KeitaNeural",
+    name: "Keita • 圭太",
+    gender: "male" as const,
+    category: "intl",
+    icon: "🗾",
+    defaultPreset: "broadcast",
+    description: "Япон хэлний тод, итгэлтэй эрэгтэй хоолой (Japanese)",
+    tag: "Япон • Эрэгтэй",
+    pitch: 1.0,
+    speed: 1.0,
+    baseVoice: "ja-JP-KeitaNeural",
+    sampleUrl: "",
+    refText: "",
+  },
 ];
 
 export default function TTSPage() {
   const [activeTab, setActiveTab] = useState<"standard" | "clone">("standard");
+  const [voiceFilter, setVoiceFilter] = useState<"all" | "mn" | "intl" | "cloned">("all");
 
   // Synthesis State
   const [text, setText] = useState(
@@ -486,36 +643,78 @@ export default function TTSPage() {
         <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: "24px", marginTop: "20px" }}>
           {/* Voice Selector Cards */}
           <div className="settings">
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px", flexWrap: "wrap", gap: "8px" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "14px", flexWrap: "wrap", gap: "10px" }}>
               <h2 style={{ margin: 0, display: "flex", alignItems: "center", gap: "8px" }}>
                 <VolumeIcon width={18} height={18} style={{ color: "var(--accent)" }} />
-                <span>1. Дуу хоолой сонгох</span>
+                <span>1. Дуу хоолойны загвар сонгох ({allVoices.length})</span>
               </h2>
               <button
                 onClick={() => setActiveTab("clone")}
-                className="btn-secondary"
-                style={{ fontSize: "12px", padding: "6px 14px", display: "inline-flex", alignItems: "center", gap: "6px" }}
+                className="btn-primary"
+                style={{ fontSize: "12px", padding: "7px 14px" }}
               >
-                <SparklesIcon width={14} height={14} style={{ color: "var(--accent)" }} />
+                <SparklesIcon width={14} height={14} />
                 <span>+ Шинэ хоолой хувилах</span>
               </button>
+            </div>
+
+            {/* Category filter pills */}
+            <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", marginBottom: "16px" }}>
+              {[
+                { id: "all", label: `Бүгд (${allVoices.length})` },
+                { id: "mn", label: "🇲🇳 Монгол Студи (8)" },
+                { id: "intl", label: "🌐 Англи / Япон (4)" },
+                { id: "cloned", label: `✨ Миний хувилсан (${clonedVoices.length})` },
+              ].map((tab) => (
+                <button
+                  key={tab.id}
+                  type="button"
+                  onClick={() => setVoiceFilter(tab.id as "all" | "mn" | "intl" | "cloned")}
+                  style={{
+                    padding: "6px 14px",
+                    borderRadius: "999px",
+                    fontSize: "12px",
+                    fontWeight: 600,
+                    border: voiceFilter === tab.id ? "1px solid var(--accent)" : "1px solid var(--border)",
+                    background: voiceFilter === tab.id ? "rgba(99, 102, 241, 0.16)" : "var(--surface)",
+                    color: voiceFilter === tab.id ? "var(--accent)" : "var(--muted)",
+                    transition: "all 0.15s ease",
+                  }}
+                >
+                  {tab.label}
+                </button>
+              ))}
             </div>
 
             <div
               style={{
                 display: "grid",
-                gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))",
-                gap: "14px",
+                gridTemplateColumns: "repeat(auto-fill, minmax(250px, 1fr))",
+                gap: "12px",
               }}
             >
-              {allVoices.map((voice) => {
+              {allVoices
+                .filter((v) => {
+                  const isCloned = v.id.startsWith("cloned_");
+                  const cat = "category" in v ? (v as { category?: string }).category : "cloned";
+                  if (voiceFilter === "cloned") return isCloned;
+                  if (voiceFilter === "mn") return !isCloned && cat === "mn";
+                  if (voiceFilter === "intl") return !isCloned && cat === "intl";
+                  return true;
+                })
+                .map((voice) => {
                 const isSelected = selectedVoiceId === voice.id;
                 const isFemale = voice.gender === "female";
                 const isCloned = voice.id.startsWith("cloned_");
+                const customIcon = "icon" in voice ? (voice as { icon?: string }).icon : undefined;
+                const defPreset = "defaultPreset" in voice ? (voice as { defaultPreset?: string }).defaultPreset : undefined;
                 return (
                   <div
                     key={voice.id}
-                    onClick={() => setSelectedVoiceId(voice.id)}
+                    onClick={() => {
+                      setSelectedVoiceId(voice.id);
+                      if (defPreset) setSelectedPreset(defPreset);
+                    }}
                     style={{
                       padding: "16px 18px",
                       borderRadius: "16px",
@@ -558,7 +757,7 @@ export default function TTSPage() {
                             boxShadow: isCloned ? "0 0 12px rgba(217, 70, 239, 0.4)" : "none",
                           }}
                         >
-                          {isCloned ? "✨" : isFemale ? "👩" : "👨"}
+                          {isCloned ? "✨" : customIcon || (isFemale ? "👩" : "👨")}
                         </div>
                         <div>
                           <div style={{ fontWeight: 700, fontSize: "15px" }}>

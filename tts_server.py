@@ -158,7 +158,12 @@ VOICES = [
         "name": "Есүй",
         "gender": "female",
         "engine": "edge-neural",
-        "description": "Эелдэг, уян зөөлөн, байгалийн өнгө аяс",
+        "baseVoice": "mn-MN-YesuiNeural",
+        "pitch": 1.0,
+        "speed": 1.0,
+        "formantWarp": 1.0,
+        "defaultPreset": "broadcast",
+        "description": "Эелдэг, уян зөөлөн, байгалийн тод өнгө аяс (Эмэгтэй)",
         "tag": "Үндсэн • Эмэгтэй",
     },
     {
@@ -166,10 +171,147 @@ VOICES = [
         "name": "Батаа",
         "gender": "male",
         "engine": "edge-neural",
-        "description": "Цэвэр тод, өөртөө итгэлтэй, баргил",
+        "baseVoice": "mn-MN-BataaNeural",
+        "pitch": 1.0,
+        "speed": 1.0,
+        "formantWarp": 1.0,
+        "defaultPreset": "broadcast",
+        "description": "Цэвэр тод, өөртөө итгэлтэй, баргил (Эрэгтэй)",
         "tag": "Үндсэн • Эрэгтэй",
     },
+    {
+        "id": "mn-studio-narrator",
+        "name": "Тэмүүлэн",
+        "gender": "male",
+        "engine": "voicestudio-persona",
+        "baseVoice": "mn-MN-BataaNeural",
+        "pitch": 0.86,
+        "speed": 0.94,
+        "formantWarp": 0.91,
+        "defaultPreset": "cinematic",
+        "description": "Гүн баргил, кино тайлбар болон аудио номд зориулсан өгүүлэгч",
+        "tag": "Студи • Өгүүлэгч",
+    },
+    {
+        "id": "mn-studio-news",
+        "name": "Ану",
+        "gender": "female",
+        "engine": "voicestudio-persona",
+        "baseVoice": "mn-MN-YesuiNeural",
+        "pitch": 1.05,
+        "speed": 1.08,
+        "formantWarp": 1.03,
+        "defaultPreset": "bright",
+        "description": "Телевиз, мэдээний студийн тод цэвэр, хурц хэмнэлтэй хөтлөгч",
+        "tag": "Студи • Мэдээ",
+    },
+    {
+        "id": "mn-studio-podcast",
+        "name": "Ананд",
+        "gender": "male",
+        "engine": "voicestudio-persona",
+        "baseVoice": "mn-MN-BataaNeural",
+        "pitch": 0.94,
+        "speed": 1.04,
+        "formantWarp": 0.96,
+        "defaultPreset": "podcast",
+        "description": "Ойрын микрофоны дулаан, энгийн чөлөөт ярианы подкаст хоолой",
+        "tag": "Студи • Подкаст",
+    },
+    {
+        "id": "mn-studio-maral",
+        "name": "Марал",
+        "gender": "female",
+        "engine": "voicestudio-persona",
+        "baseVoice": "mn-MN-YesuiNeural",
+        "pitch": 0.92,
+        "speed": 0.91,
+        "formantWarp": 0.95,
+        "defaultPreset": "warm",
+        "description": "Тайвшруулах, зөөлөн дулаан, уран зохиол ба бясалгалын хоолой",
+        "tag": "Студи • Уянгалаг",
+    },
+    {
+        "id": "mn-studio-elder",
+        "name": "Тулга",
+        "gender": "male",
+        "engine": "voicestudio-persona",
+        "baseVoice": "mn-MN-BataaNeural",
+        "pitch": 0.78,
+        "speed": 0.88,
+        "formantWarp": 0.86,
+        "defaultPreset": "warm",
+        "description": "Намбалаг, цээжний гүн резонанстай, жинтэй эрэгтэй хоолой",
+        "tag": "Студи • Гүн баргил",
+    },
+    {
+        "id": "mn-studio-kid",
+        "name": "Мишээл",
+        "gender": "female",
+        "engine": "voicestudio-persona",
+        "baseVoice": "mn-MN-YesuiNeural",
+        "pitch": 1.24,
+        "speed": 1.06,
+        "formantWarp": 1.14,
+        "defaultPreset": "bright",
+        "description": "Үлгэр, хүүхдийн контентод зориулсан цовоо сэргэлэн хоолой",
+        "tag": "Студи • Хүүхэд",
+    },
+    {
+        "id": "en-US-AvaMultilingualNeural",
+        "name": "Ava (Multilingual)",
+        "gender": "female",
+        "engine": "edge-multilingual",
+        "baseVoice": "en-US-AvaMultilingualNeural",
+        "pitch": 1.0,
+        "speed": 1.0,
+        "formantWarp": 1.0,
+        "defaultPreset": "broadcast",
+        "description": "Англи болон олон улсын холимог текстийг унших студийн эмэгтэй хоолой",
+        "tag": "Олон хэл • Эмэгтэй",
+    },
+    {
+        "id": "en-US-AndrewMultilingualNeural",
+        "name": "Andrew (Multilingual)",
+        "gender": "male",
+        "engine": "edge-multilingual",
+        "baseVoice": "en-US-AndrewMultilingualNeural",
+        "pitch": 1.0,
+        "speed": 1.0,
+        "formantWarp": 1.0,
+        "defaultPreset": "podcast",
+        "description": "Англи болон олон улсын холимог текстийг унших гүн эрэгтэй хоолой",
+        "tag": "Олон хэл • Эрэгтэй",
+    },
+    {
+        "id": "ja-JP-NanamiNeural",
+        "name": "Nanami • 七海",
+        "gender": "female",
+        "engine": "edge-neural",
+        "baseVoice": "ja-JP-NanamiNeural",
+        "pitch": 1.0,
+        "speed": 1.0,
+        "formantWarp": 1.0,
+        "defaultPreset": "broadcast",
+        "description": "Япон хэлний байгалийн, маш тод цэвэр эмэгтэй хоолой (Japanese)",
+        "tag": "Япон • Эмэгтэй",
+    },
+    {
+        "id": "ja-JP-KeitaNeural",
+        "name": "Keita • 圭太",
+        "gender": "male",
+        "engine": "edge-neural",
+        "baseVoice": "ja-JP-KeitaNeural",
+        "pitch": 1.0,
+        "speed": 1.0,
+        "formantWarp": 1.0,
+        "defaultPreset": "broadcast",
+        "description": "Япон хэлний тод, итгэлтэй эрэгтэй хоолой (Japanese)",
+        "tag": "Япон • Эрэгтэй",
+    },
 ]
+
+VOICES_BY_ID = {v["id"]: v for v in VOICES}
 
 # ---------------------------------------------------------------------------
 # Cloned Voices Persistence
@@ -617,13 +759,240 @@ def apply_voice_clone_timbre(
 
 
 # ---------------------------------------------------------------------------
-# STT Helper with Audio Enhancement for High Accuracy
+# Multilingual Code-Switching STT Engine (Mongolian + English + Japanese)
 # ---------------------------------------------------------------------------
+
+from concurrent.futures import ThreadPoolExecutor
+
+# Common English & Japanese terms frequently mixed into Mongolian speech
+CODESWITCH_PHRASE_MAP: list[tuple[str, str]] = [
+    # Multi-word phrases first
+    (r"\bконтрол\s+альт\b", "Ctrl+Alt"),
+    (r"\bконтрол\s+алт\b", "Ctrl+Alt"),
+    (r"\bкнтрл\s+альт\b", "Ctrl+Alt"),
+    (r"\bвойс\s+студио\b", "VoiceStudio"),
+    (r"\bвойс\s+флоу\b", "Voice Flow"),
+    (r"\bдуудлага\s+флоу\b", "Duudlaga Flow"),
+    (r"\bнекст\s+жэй\s*эс\b", "Next.js"),
+    (r"\bнекст\s+жи\s*эс\b", "Next.js"),
+    (r"\bнекст\s+жс\b", "Next.js"),
+    (r"\bнод\s+жэй\s*эс\b", "Node.js"),
+    (r"\bтайп\s*скрипт\b", "TypeScript"),
+    (r"\bжава\s*скрипт\b", "JavaScript"),
+    (r"\bчат\s*жи\s*пи\s*ти\b", "ChatGPT"),
+    (r"\bчат\s*жпт\b", "ChatGPT"),
+    (r"\bжемини\s+плас\b", "Gemini Plus"),
+    (r"\bгүүгл\s+хром\b", "Google Chrome"),
+    (r"\bмайкрософт\s+ворд\b", "Microsoft Word"),
+    (r"\bвизуал\s+студио\b", "Visual Studio"),
+    # Japanese expressions commonly spoken in Mongolian conversation
+    (r"\bаригато\s+гозаймас\b", "ありがとうございます (Arigatou gozaimasu)"),
+    (r"\bаригато\b", "ありがとう (Arigatou)"),
+    (r"\bконничива\b", "こんにちは (Konnichiwa)"),
+    (r"\bконичива\b", "こんにちは (Konnichiwa)"),
+    (r"\bохаёо\s+гозаймас\b", "おはようございます (Ohayou gozaimasu)"),
+    (r"\bохаёо\b", "おはよう (Ohayou)"),
+    (r"\bсумимасэн\b", "すみません (Sumimasen)"),
+    (r"\bсумимасен\b", "すみません (Sumimasen)"),
+    (r"\bсаёонара\b", "さようなら (Sayounara)"),
+    (r"\bсугой\b", "すごい (Sugoi)"),
+    (r"\bкавайи\b", "かわいい (Kawaii)"),
+    (r"\bкавай\b", "かわいい (Kawaii)"),
+    (r"\bсэнсэй\b", "先生 (Sensei)"),
+    (r"\bсенсей\b", "先生 (Sensei)"),
+    (r"\bдайжообү\b", "大丈夫 (Daijoubu)"),
+    (r"\bдайжобү\b", "大丈夫 (Daijoubu)"),
+    (r"\bганбаттэ\b", "頑張って (Ganbatte)"),
+    # Single English tech & daily loanwords (preserving Mongolian suffixes if attached)
+    (r"\bфэйсбүүк", "Facebook"),
+    (r"\bфейсбүүк", "Facebook"),
+    (r"\bфэйсбүк", "Facebook"),
+    (r"\bинстаграм", "Instagram"),
+    (r"\bтелеграм", "Telegram"),
+    (r"\bюүтүб", "YouTube"),
+    (r"\bютуб", "YouTube"),
+    (r"\bтикток", "TikTok"),
+    (r"\bворд\b", "Word"),
+    (r"\bэксел\b", "Excel"),
+    (r"\bпауэрпойнт\b", "PowerPoint"),
+    (r"\bвиндоус\b", "Windows"),
+    (r"\bайфон\b", "iPhone"),
+    (r"\bандроид\b", "Android"),
+    (r"\bпайтон\b", "Python"),
+    (r"\bпитон\b", "Python"),
+    (r"\bреакт\b", "React"),
+    (r"\bфлаттер\b", "Flutter"),
+    (r"\bдокер\b", "Docker"),
+    (r"\bгитхаб\b", "GitHub"),
+    (r"\bжемини\b", "Gemini"),
+    (r"\bклод\b", "Claude"),
+    (r"\bантигравити\b", "Antigravity"),
+    (r"\bфронтенд\b", "Frontend"),
+    (r"\bбэкенд\b", "Backend"),
+    (r"\bфуллстэк\b", "Fullstack"),
+    (r"\bдеплой\b", "deploy"),
+    (r"\bкоммит\b", "commit"),
+    (r"\bшорткат\b", "shortcut"),
+    (r"\bхоткей\b", "hotkey"),
+]
+
+_CYR_TO_LAT_PHONETIC = str.maketrans({
+    "а": "a", "б": "b", "в": "v", "г": "g", "д": "d", "е": "e", "ё": "yo",
+    "ж": "j", "з": "z", "и": "i", "й": "i", "к": "k", "л": "l", "м": "m",
+    "н": "n", "о": "o", "ө": "u", "п": "p", "р": "r", "с": "s", "т": "t",
+    "у": "u", "ү": "u", "ф": "f", "х": "h", "ц": "ts", "ч": "ch", "ш": "sh",
+    "щ": "sh", "ъ": "", "ы": "y", "ь": "", "э": "e", "ю": "yu", "я": "ya",
+})
+
+
+def _cyrillic_to_phonetic_latin(word: str) -> str:
+    return word.lower().translate(_CYR_TO_LAT_PHONETIC)
+
+
+def _phonetic_similarity(cyr_word: str, eng_word: str) -> float:
+    """Measure phonetic similarity between a Cyrillic word and an English word recognized on the same audio."""
+    c_lat = re.sub(r"[^a-z]", "", _cyrillic_to_phonetic_latin(cyr_word))
+    e_lat = re.sub(r"[^a-z]", "", eng_word.lower())
+    # Normalize common English silent/phonetic patterns
+    e_norm = (
+        e_lat.replace("ph", "f")
+        .replace("tion", "shn")
+        .replace("ck", "k")
+        .replace("c", "k")
+        .replace("w", "v")
+        .replace("x", "ks")
+        .replace("ee", "i")
+        .replace("oo", "u")
+    )
+    if len(c_lat) < 3 or len(e_norm) < 3:
+        return 0.0
+    if c_lat == e_norm or c_lat.startswith(e_norm) or e_norm.startswith(c_lat):
+        return 0.92
+    # Character bigram Dice coefficient
+    bg_c = {c_lat[i : i + 2] for i in range(len(c_lat) - 1)}
+    bg_e = {e_norm[i : i + 2] for i in range(len(e_norm) - 1)}
+    if not bg_c or not bg_e:
+        return 0.0
+    overlap = len(bg_c & bg_e)
+    return (2.0 * overlap) / (len(bg_c) + len(bg_e))
+
+
+def restore_codeswitch_terms(mn_text: str, en_text: str = "", ja_text: str = "") -> str:
+    """
+    1. Applies curated Mongolian-English-Japanese code-switching dictionary.
+    2. Aligns phonetic Cyrillic tokens with high-confidence English words recognized in parallel on the same audio!
+    """
+    if not mn_text:
+        return mn_text
+
+    out = mn_text
+    for pattern, replacement in CODESWITCH_PHRASE_MAP:
+        out = re.sub(pattern, replacement, out, flags=re.IGNORECASE)
+
+    # If parallel English STT heard words, check if any Cyrillic word in mn_text is a direct phonetic transliteration
+    # of an English word from en_text (e.g., user said an English technical term mid-sentence)
+    if en_text:
+        en_words = [w.strip(".,!?\"'()[]{}") for w in en_text.split() if len(w.strip(".,!?")) >= 4]
+        # Exclude common short English function words that might accidentally match Mongolian words
+        en_stop = {"that", "this", "with", "from", "have", "what", "when", "where", "your", "they", "will", "been", "were", "there", "about"}
+        en_candidates = [w for w in en_words if w.lower() not in en_stop and w.isascii() and w.isalpha()]
+
+        if en_candidates:
+            tokens = out.split()
+            new_tokens = []
+            for tok in tokens:
+                clean_tok = tok.strip(".,!?")
+                punct_suffix = tok[len(clean_tok) :]
+                replaced = False
+                # Check if clean_tok (or stem before hyphen) matches an English candidate phonetically
+                if re.match(r"^[А-ЯӨҮЁа-яөүё]{4,}$", clean_tok):
+                    for eng_w in en_candidates:
+                        sim = _phonetic_similarity(clean_tok, eng_w)
+                        if sim >= 0.78:
+                            new_tokens.append(eng_w + punct_suffix)
+                            replaced = True
+                            break
+                if not replaced:
+                    new_tokens.append(tok)
+            out = " ".join(new_tokens)
+
+    return out
+
+
+def split_audio_on_pauses(samples: np.ndarray, sample_rate: int = 16000) -> list[np.ndarray]:
+    """
+    Splits audio into natural clause segments at pauses >= 280ms so code-switched clauses
+    (e.g. Mongolian clause -> English/Japanese clause -> Mongolian clause) are recognized in their own language!
+    """
+    duration = samples.size / float(sample_rate)
+    if duration < 2.4:
+        return [samples]
+
+    frame_len = int(0.02 * sample_rate)  # 20ms frames
+    n_frames = samples.size // frame_len
+    if n_frames < 20:
+        return [samples]
+
+    framed = samples[: n_frames * frame_len].reshape(n_frames, frame_len)
+    rms = np.sqrt(np.mean(framed ** 2, axis=1) + 1e-10)
+    thresh = max(0.014, float(np.percentile(rms, 22)) * 1.15)
+    is_silent = rms < thresh
+
+    # Find contiguous silent runs >= 14 frames (280ms)
+    segments: list[np.ndarray] = []
+    seg_start_sample = 0
+    silent_run = 0
+
+    for i, sil in enumerate(is_silent):
+        if sil:
+            silent_run += 1
+        else:
+            if silent_run >= 14:
+                split_frame = i - (silent_run // 2)
+                split_sample = split_frame * frame_len
+                if (split_sample - seg_start_sample) >= int(0.85 * sample_rate):
+                    segments.append(samples[seg_start_sample:split_sample])
+                    seg_start_sample = split_sample
+            silent_run = 0
+
+    tail = samples[seg_start_sample:]
+    if tail.size >= int(0.45 * sample_rate) or not segments:
+        segments.append(tail)
+    elif segments:
+        segments[-1] = np.concatenate([segments[-1], tail])
+
+    # Cap at 5 segments max to avoid excessive API calls
+    if len(segments) > 5:
+        return [samples]
+    return segments
+
+
+def _recognize_single_lang(wav_bytes: bytes, lang_code: str) -> tuple[str, float]:
+    """Run Google STT with show_all=True and return (best_transcript, confidence)."""
+    r = sr.Recognizer()
+    r.dynamic_energy_threshold = False
+    try:
+        with sr.AudioFile(io.BytesIO(wav_bytes)) as source:
+            audio_data = r.record(source)
+        res = r.recognize_google(audio_data, language=lang_code, show_all=True)
+        if isinstance(res, dict) and "alternative" in res and res["alternative"]:
+            alts = res["alternative"]
+            best = alts[0]
+            text = (best.get("transcript") or "").strip()
+            conf = float(best.get("confidence", 0.78))
+            return text, conf
+    except Exception:
+        pass
+    return "", 0.0
+
 
 def transcribe_wav_bytes(raw_bytes: bytes, language: str = "mn") -> tuple[str, str]:
     """
-    Enhance recorded audio (decode, remove rumble, trim silence, normalize to -1.5 dBFS)
-    and transcribe via Google STT (mn-MN, en-US, ja-JP).
+    Studio-grade Multilingual & Code-Switching STT Engine:
+    1. Pre-emphasizes consonants (sibilants/plosives), filters 75Hz rumble, levels speech dynamics, normalizes to -1.0 dBFS.
+    2. Splits long utterances on natural pauses into clauses.
+    3. Runs parallel multi-language recognition (mn-MN, en-US, ja-JP) with confidence comparison.
+    4. Fuses English/Japanese code-switched words inside Mongolian sentences cleanly.
     """
     if not HAS_SR:
         return "", "SpeechRecognition суугаагүй байна."
@@ -636,52 +1005,85 @@ def transcribe_wav_bytes(raw_bytes: bytes, language: str = "mn") -> tuple[str, s
     if samples.size < 2400:  # < 0.15s
         return "", "Аудио хэт богино байна."
 
-    # High-pass filter at 75Hz to clean mic rumble/hum + normalize volume for STT clarity
+    # 1. Studio Audio Cleaning for Crisp Speech Recognition
     try:
+        # 75Hz high-pass filter to remove mic pop & room rumble
         sos = sp_signal.butter(2, 75.0 / 8000.0, btype="highpass", output="sos")
         samples = sp_signal.sosfiltfilt(sos, samples.astype(np.float64)).astype(np.float32)
+        # Subtle pre-emphasis to sharpen Mongolian/English/Japanese consonants
+        pre_emph = np.append(samples[0], samples[1:] - 0.55 * samples[:-1]).astype(np.float32)
+        samples = 0.70 * samples + 0.30 * pre_emph
     except Exception:
         pass
 
-    samples = trim_silence(samples, 16000, threshold_db=-48.0)
-    samples = normalize_audio_np(samples, target_dbfs=-1.5)
+    samples = trim_silence(samples, 16000, threshold_db=-46.0)
+    samples = level_speech_np(samples, 16000)
+    samples = normalize_audio_np(samples, target_dbfs=-1.0)
 
-    clean_wav = encode_wav_bytes(samples, 16000)
+    req_lang = (language or "mn").lower().strip()
+    segments = split_audio_on_pauses(samples, 16000)
 
-    lang_map = {
-        "mn": "mn-MN",
-        "mn-mn": "mn-MN",
-        "en": "en-US",
-        "en-us": "en-US",
-        "ja": "ja-JP",
-        "ja-jp": "ja-JP",
-        "auto": "mn-MN",
-    }
-    lang_code = lang_map.get((language or "mn").lower().strip(), "mn-MN")
+    final_clauses: list[str] = []
 
-    r = sr.Recognizer()
-    r.dynamic_energy_threshold = False
-    with sr.AudioFile(io.BytesIO(clean_wav)) as source:
-        audio_data = r.record(source)
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        for seg in segments:
+            seg_wav = encode_wav_bytes(seg, 16000)
 
-    try:
-        text = r.recognize_google(audio_data, language=lang_code)
-        text = (text or "").strip()
-        if text:
-            # Capitalize first letter
-            text = text[0].upper() + text[1:]
-            if text[-1] not in ".!?":
-                text += "."
+            if req_lang in ("en", "en-us"):
+                fut_en = pool.submit(_recognize_single_lang, seg_wav, "en-US")
+                fut_mn = pool.submit(_recognize_single_lang, seg_wav, "mn-MN")
+                en_txt, en_conf = fut_en.result()
+                mn_txt, mn_conf = fut_mn.result()
+                chosen = en_txt if (en_txt and en_conf >= mn_conf - 0.1) else (mn_txt or en_txt)
+                if chosen:
+                    final_clauses.append(chosen)
+
+            elif req_lang in ("ja", "ja-jp"):
+                fut_ja = pool.submit(_recognize_single_lang, seg_wav, "ja-JP")
+                fut_mn = pool.submit(_recognize_single_lang, seg_wav, "mn-MN")
+                ja_txt, ja_conf = fut_ja.result()
+                mn_txt, mn_conf = fut_mn.result()
+                chosen = ja_txt if (ja_txt and ja_conf >= mn_conf - 0.1) else (mn_txt or ja_txt)
+                if chosen:
+                    final_clauses.append(chosen)
+
+            else:
+                # Multilingual Code-Switching Mode (Mongolian + English + Japanese simultaneously!)
+                fut_mn = pool.submit(_recognize_single_lang, seg_wav, "mn-MN")
+                fut_en = pool.submit(_recognize_single_lang, seg_wav, "en-US")
+                fut_ja = pool.submit(_recognize_single_lang, seg_wav, "ja-JP")
+
+                mn_txt, mn_conf = fut_mn.result()
+                en_txt, en_conf = fut_en.result()
+                ja_txt, ja_conf = fut_ja.result()
+
+                # Decide if this clause was spoken primarily in Japanese, English, or Mongolian:
+                if ja_txt and (not mn_txt or (ja_conf >= 0.84 and ja_conf - mn_conf >= 0.14)):
+                    chosen = ja_txt
+                elif en_txt and (not mn_txt or (en_conf >= 0.84 and en_conf - mn_conf >= 0.14)):
+                    chosen = en_txt
+                elif mn_txt:
+                    # Mongolian base clause with smart English/Japanese code-switch token restoration!
+                    chosen = restore_codeswitch_terms(mn_txt, en_text=en_txt, ja_text=ja_txt)
+                else:
+                    chosen = en_txt or ja_txt or ""
+
+                if chosen:
+                    final_clauses.append(chosen)
+
+    text = " ".join(c.strip() for c in final_clauses if c.strip()).strip()
+    if text:
+        text = text[0].upper() + text[1:]
+        if text[-1] not in ".!?。！？":
+            text += "."
         return text, ""
-    except sr.UnknownValueError:
-        return "", "Яриа танигдсангүй. Микрофондоо ойрхон, тод ярина уу."
-    except sr.RequestError as e:
-        return "", f"Яриа таних сервертэй холбогдож чадсангүй: {e}"
+
+    return "", "Яриа танигдсангүй. Микрофондоо ойрхон, тод ярина уу."
 
 
 # ---------------------------------------------------------------------------
 # Native Windows Duudlaga Flow Engine:
-# Global Ctrl+Alt Hook + Always-On-Top Floating Pill + Direct Word/Facebook Typing
+# Global Ctrl+Alt / F8 Hook + Always-On-Top Floating Pill + Direct Word/Facebook Typing
 # ---------------------------------------------------------------------------
 
 FLOWBAR_STATE = {
@@ -693,14 +1095,24 @@ FLOWBAR_STATE = {
     "seconds": 0,
     "levels": [4, 8, 12, 8, 4],
     "language": "mn",
+    "target_window": "",
+    "desktop": "",
+    "last_insert_debug": "",
 }
 
 _target_hwnd: int = 0
+_last_active_hwnd: int = 0
+_last_active_title: str = ""
+_last_external_hwnd: int = 0
+_last_external_title: str = ""
+_flowbar_hwnd: int = 0
 _recording_Buffer: list[np.ndarray] = []
 _recording_lock = threading.Lock()
 _is_recording = False
 _record_start_time = 0.0
 _last_speech_time = 0.0
+_last_stop_time = 0.0
+_speech_frames_count = 0
 _has_spoken = False
 _tk_root = None
 
@@ -713,12 +1125,41 @@ if os.name == "nt":
     WS_EX_TOOLWINDOW = 0x00000080
     WS_EX_TOPMOST = 0x00000008
 
+    HWND_TOPMOST = -1
+    SWP_NOSIZE = 0x0001
+    SWP_NOMOVE = 0x0002
+    SWP_NOACTIVATE = 0x0010
+    SWP_SHOWWINDOW = 0x0040
+
     INPUT_KEYBOARD = 1
     KEYEVENTF_UNICODE = 0x0004
     KEYEVENTF_KEYUP = 0x0002
     VK_CONTROL = 0x11
+    VK_LCONTROL = 0xA2
+    VK_RCONTROL = 0xA3
     VK_MENU = 0x12
+    VK_LMENU = 0xA4
+    VK_RMENU = 0xA5
+    VK_SPACE = 0x20
+    VK_F8 = 0x77
     VK_V = 0x56
+    CF_UNICODETEXT = 13
+    GMEM_MOVEABLE = 0x0002
+
+    kernel32.GlobalAlloc.argtypes = [wintypes.UINT, ctypes.c_size_t]
+    kernel32.GlobalAlloc.restype = ctypes.c_void_p
+    kernel32.GlobalLock.argtypes = [ctypes.c_void_p]
+    kernel32.GlobalLock.restype = ctypes.c_void_p
+    kernel32.GlobalUnlock.argtypes = [ctypes.c_void_p]
+    kernel32.GlobalUnlock.restype = wintypes.BOOL
+    user32.OpenClipboard.argtypes = [wintypes.HWND]
+    user32.OpenClipboard.restype = wintypes.BOOL
+    user32.EmptyClipboard.argtypes = []
+    user32.EmptyClipboard.restype = wintypes.BOOL
+    user32.SetClipboardData.argtypes = [wintypes.UINT, ctypes.c_void_p]
+    user32.SetClipboardData.restype = ctypes.c_void_p
+    user32.CloseClipboard.argtypes = []
+    user32.CloseClipboard.restype = wintypes.BOOL
 
     class KEYBDINPUT(ctypes.Structure):
         _fields_ = [
@@ -746,118 +1187,238 @@ if os.name == "nt":
         _fields_ = [("type", wintypes.DWORD), ("union", _INPUTunion)]
 
 
-def copy_to_windows_clipboard(text: str) -> None:
-    """Copy Unicode text to Windows clipboard cleanly."""
-    if _tk_root is not None:
-        try:
-            _tk_root.clipboard_clear()
-            _tk_root.clipboard_append(text)
-            _tk_root.update()
-            return
-        except Exception:
-            pass
+def is_own_process_window(hwnd: int) -> bool:
+    """Return True if hwnd belongs to this Python tts_server.py process (i.e. Tkinter FlowBar)."""
+    if not hwnd or os.name != "nt":
+        return False
     try:
-        import subprocess
-        p = subprocess.Popen(["clip"], stdin=subprocess.PIPE, shell=True)
-        p.communicate(input=text.encode("utf-16-le"))
+        pid = wintypes.DWORD(0)
+        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+        return pid.value == os.getpid()
+    except Exception:
+        return False
+
+
+def get_window_title(hwnd: int) -> str:
+    if not hwnd or os.name != "nt":
+        return ""
+    try:
+        buf = ctypes.create_unicode_buffer(256)
+        user32.GetWindowTextW(hwnd, buf, 256)
+        return buf.value.strip()
+    except Exception:
+        return ""
+
+
+def get_current_desktop_name() -> str:
+    if os.name != "nt":
+        return "posix"
+    try:
+        desk = user32.GetThreadDesktop(kernel32.GetCurrentThreadId())
+        buf = ctypes.create_unicode_buffer(256)
+        user32.GetUserObjectInformationW(desk, 2, buf, 512, None)
+        return buf.value
+    except Exception:
+        return "unknown"
+
+
+def _suppress_alt_menu_activation() -> None:
+    """
+    When a user presses Ctrl+Alt and releases Alt, Windows normally sends WM_SYSCOMMAND(SC_KEYMENU)
+    which focuses the window's top menu bar (File, Edit...) and steals focus from the text input box!
+    Sending an unassigned virtual key (0xFF) while Alt is held tells win32k that Alt was part of a chord,
+    completely suppressing menu bar activation when Alt is released.
+    """
+    if os.name != "nt":
+        return
+    try:
+        dummy = (INPUT * 2)()
+        dummy[0].type = INPUT_KEYBOARD
+        dummy[0].union.ki = KEYBDINPUT(0xFF, 0, 0, 0, 0)
+        dummy[1].type = INPUT_KEYBOARD
+        dummy[1].union.ki = KEYBDINPUT(0xFF, 0, KEYEVENTF_KEYUP, 0, 0)
+        user32.SendInput(2, ctypes.byref(dummy), ctypes.sizeof(INPUT))
     except Exception:
         pass
 
 
+def copy_to_windows_clipboard(text: str) -> None:
+    """
+    Thread-safe native Win32 clipboard copy using CF_UNICODETEXT.
+    Never touches Tkinter from background threads and never spawns clip.exe!
+    """
+    if not text or os.name != "nt":
+        return
+    data = text.encode("utf-16-le") + b"\x00\x00"
+    for _ in range(5):
+        if user32.OpenClipboard(0):
+            try:
+                user32.EmptyClipboard()
+                h_mem = kernel32.GlobalAlloc(GMEM_MOVEABLE, len(data))
+                if h_mem:
+                    ptr = kernel32.GlobalLock(h_mem)
+                    if ptr:
+                        ctypes.memmove(ptr, data, len(data))
+                        kernel32.GlobalUnlock(h_mem)
+                        user32.SetClipboardData(CF_UNICODETEXT, h_mem)
+                return
+            finally:
+                user32.CloseClipboard()
+        time.sleep(0.01)
+
+
+def restore_window_focus(target: int) -> bool:
+    """Unconditionally restore foreground & keyboard focus to target HWND."""
+    if not target or os.name != "nt" or is_own_process_window(target):
+        return False
+    try:
+        target_tid = user32.GetWindowThreadProcessId(target, None)
+        curr_tid = kernel32.GetCurrentThreadId()
+        attached = False
+        if target_tid and target_tid != curr_tid:
+            attached = bool(user32.AttachThreadInput(curr_tid, target_tid, True))
+        try:
+            user32.SetForegroundWindow(target)
+            user32.BringWindowToTop(target)
+            user32.SetFocus(target)
+        finally:
+            if attached:
+                user32.AttachThreadInput(curr_tid, target_tid, False)
+        return True
+    except Exception:
+        return False
+
+
 def insert_text_to_active_window(text: str, hwnd: int = 0) -> bool:
     """
-    Ported directly from DuudlagaFlow TextInsertionService.cs:
-    1. Copies text to clipboard.
-    2. Restores focus to captured target window (Word, Facebook, Chrome, Telegram) if needed.
-    3. Types every Unicode Cyrillic character directly via Win32 SendInput(KEYEVENTF_UNICODE).
+    Ported & hardened from DuudlagaFlow TextInsertionService.cs:
+    1. Copies text to Windows clipboard via thread-safe Win32 CF_UNICODETEXT.
+    2. Restores focus to captured target window (Antigravity IDE, Word, Facebook, Chrome, Telegram).
+    3. Releases any lingering Ctrl/Alt keys and types every Unicode character via SendInput(KEYEVENTF_UNICODE).
     """
     if not text or os.name != "nt":
         return False
 
     copy_to_windows_clipboard(text)
 
-    target = hwnd or _target_hwnd or user32.GetForegroundWindow()
+    # Pick best non-self target window
+    candidates = [hwnd, _target_hwnd, _last_external_hwnd, _last_active_hwnd, user32.GetForegroundWindow()]
+    target = 0
+    for c in candidates:
+        if c and not is_own_process_window(c):
+            t_title = get_window_title(c)
+            if t_title != "Task Switching":
+                target = c
+                break
+
     if target:
-        curr_fg = user32.GetForegroundWindow()
-        if curr_fg != target:
-            target_tid = user32.GetWindowThreadProcessId(target, None)
-            curr_tid = kernel32.GetCurrentThreadId()
-            attached = False
-            if target_tid != curr_tid:
-                attached = bool(user32.AttachThreadInput(curr_tid, target_tid, True))
-            try:
-                user32.SetForegroundWindow(target)
-                time.sleep(0.06)
-            finally:
-                if attached:
-                    user32.AttachThreadInput(curr_tid, target_tid, False)
+        restore_window_focus(target)
+        for _ in range(12):
+            time.sleep(0.02)
+            if user32.GetForegroundWindow() == target:
+                break
+        time.sleep(0.04)
 
-    # Release any lingering Ctrl or Alt modifier state so target app sees clean Unicode typing
-    release_mods = (INPUT * 2)()
-    release_mods[0].type = INPUT_KEYBOARD
-    release_mods[0].union.ki = KEYBDINPUT(VK_CONTROL, 0, KEYEVENTF_KEYUP, 0, 0)
-    release_mods[1].type = INPUT_KEYBOARD
-    release_mods[1].union.ki = KEYBDINPUT(VK_MENU, 0, KEYEVENTF_KEYUP, 0, 0)
-    user32.SendInput(2, ctypes.byref(release_mods), ctypes.sizeof(INPUT))
-    time.sleep(0.03)
+    # Wait up to 300ms if user's fingers are still physically holding Ctrl or Alt
+    for _ in range(12):
+        c_down = (user32.GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0
+        a_down = (user32.GetAsyncKeyState(VK_MENU) & 0x8000) != 0
+        if not c_down and not a_down:
+            break
+        time.sleep(0.025)
 
-    # Send Unicode characters directly (works in MS Word, Facebook, Chrome, Notepad, etc.)
+    # Explicitly release all Ctrl and Alt modifier keys so target app receives pure Unicode chars
+    mod_vks = [VK_CONTROL, VK_LCONTROL, VK_RCONTROL, VK_MENU, VK_LMENU, VK_RMENU]
+    release_mods = (INPUT * len(mod_vks))()
+    for i, vk in enumerate(mod_vks):
+        release_mods[i].type = INPUT_KEYBOARD
+        release_mods[i].union.ki = KEYBDINPUT(vk, 0, KEYEVENTF_KEYUP, 0, 0)
+    user32.SendInput(len(mod_vks), ctypes.byref(release_mods), ctypes.sizeof(INPUT))
+    time.sleep(0.025)
+
+    # Type each character 2 events at a time (exact match to DuudlagaFlow TypeText)
     text_with_space = text if text.endswith(" ") else text + " "
-    n_chars = len(text_with_space)
-    inputs = (INPUT * (n_chars * 2))()
+    total_sent = 0
+    pair = (INPUT * 2)()
     for idx, ch in enumerate(text_with_space):
         code = ord(ch)
-        i_down = idx * 2
-        i_up = idx * 2 + 1
-        inputs[i_down].type = INPUT_KEYBOARD
-        inputs[i_down].union.ki = KEYBDINPUT(0, code, KEYEVENTF_UNICODE, 0, 0)
-        inputs[i_up].type = INPUT_KEYBOARD
-        inputs[i_up].union.ki = KEYBDINPUT(0, code, KEYEVENTF_UNICODE | KEYEVENTF_KEYUP, 0, 0)
+        pair[0].type = INPUT_KEYBOARD
+        pair[0].union.ki = KEYBDINPUT(0, code, KEYEVENTF_UNICODE, 0, 0)
+        pair[1].type = INPUT_KEYBOARD
+        pair[1].union.ki = KEYBDINPUT(0, code, KEYEVENTF_UNICODE | KEYEVENTF_KEYUP, 0, 0)
+        sent = user32.SendInput(2, ctypes.byref(pair), ctypes.sizeof(INPUT))
+        total_sent += sent
+        if idx % 14 == 13:
+            time.sleep(0.002)
 
-    sent = user32.SendInput(n_chars * 2, ctypes.byref(inputs), ctypes.sizeof(INPUT))
-    print(f"[FlowBar] Typed {len(text)} chars into HWND 0x{target:X} (SendInput={sent})")
-    return sent > 0
+    target_title = get_window_title(target)
+    fg_now = user32.GetForegroundWindow()
+    FLOWBAR_STATE["last_insert_debug"] = (
+        f"target=0x{target:X}('{target_title[:25]}') fg=0x{fg_now:X} sent={total_sent}/{len(text_with_space)*2}"
+    )
+    print(f"[FlowBar] {FLOWBAR_STATE['last_insert_debug']}")
+    return total_sent > 0
 
 
-def start_native_flowbar_recording() -> None:
-    global _is_recording, _target_hwnd, _record_start_time, _last_speech_time, _has_spoken
+def start_native_flowbar_recording(from_ui_button: bool = False) -> None:
+    global _is_recording, _target_hwnd, _record_start_time, _last_speech_time, _has_spoken, _speech_frames_count
     if _is_recording or FLOWBAR_STATE["status"] == "processing":
+        return
+
+    # Prevent accidental immediate re-trigger right after an auto-stop
+    if time.time() - _last_stop_time < 0.85:
         return
 
     if os.name == "nt":
         fg = user32.GetForegroundWindow()
-        if fg:
+        fg_title = get_window_title(fg) if fg else ""
+        if (
+            fg
+            and not is_own_process_window(fg)
+            and fg_title not in ("", "VOICE FlowBar", "Task Switching")
+            and not (from_ui_button and ("VOICE —" in fg_title or "localhost:3000" in fg_title))
+        ):
             _target_hwnd = fg
+        else:
+            _target_hwnd = _last_external_hwnd or _last_active_hwnd
+
+        # Immediately return focus to target window if user clicked the floating pill
+        if _target_hwnd and is_own_process_window(fg):
+            restore_window_focus(_target_hwnd)
 
     with _recording_lock:
         _recording_Buffer.clear()
 
     _record_start_time = time.time()
     _last_speech_time = time.time()
+    _speech_frames_count = 0
     _has_spoken = False
     _is_recording = True
     FLOWBAR_STATE["status"] = "recording"
     FLOWBAR_STATE["seconds"] = 0
     FLOWBAR_STATE["error"] = ""
     FLOWBAR_STATE["visible"] = True
-    print(f"[FlowBar] Recording started (Target HWND: 0x{_target_hwnd:X})")
+    FLOWBAR_STATE["target_window"] = get_window_title(_target_hwnd) or _last_external_title
+    print(f"[FlowBar] Recording started (Target HWND: 0x{_target_hwnd:X} '{FLOWBAR_STATE['target_window']}')")
 
 
 def stop_native_flowbar_recording() -> None:
-    global _is_recording
+    global _is_recording, _last_stop_time
     if not _is_recording:
         return
     _is_recording = False
+    _last_stop_time = time.time()
     FLOWBAR_STATE["status"] = "processing"
     threading.Thread(target=_process_native_recording, daemon=True).start()
 
 
 def _process_native_recording() -> None:
+    global _last_stop_time
     with _recording_lock:
         if not _recording_Buffer:
             FLOWBAR_STATE["status"] = "error"
             FLOWBAR_STATE["error"] = "Яриа сонсогдсонгүй"
-            time.sleep(1.8)
+            time.sleep(1.5)
             FLOWBAR_STATE["status"] = "idle"
             return
         audio_np = np.concatenate(_recording_Buffer, axis=0).reshape(-1)
@@ -866,42 +1427,46 @@ def _process_native_recording() -> None:
     if audio_np.size < 3200:
         FLOWBAR_STATE["status"] = "error"
         FLOWBAR_STATE["error"] = "Хэт богино байна"
-        time.sleep(1.8)
+        time.sleep(1.5)
         FLOWBAR_STATE["status"] = "idle"
         return
 
     wav_bytes = encode_wav_bytes(audio_np, 16000)
     text, err = transcribe_wav_bytes(wav_bytes, language=FLOWBAR_STATE.get("language", "mn"))
+    _last_stop_time = time.time()
     if text:
         FLOWBAR_STATE["last_text"] = text
         FLOWBAR_STATE["last_timestamp"] = int(time.time() * 1000)
         FLOWBAR_STATE["status"] = "success"
         insert_text_to_active_window(text, _target_hwnd)
-        time.sleep(2.0)
+        time.sleep(1.8)
         FLOWBAR_STATE["status"] = "idle"
     else:
         FLOWBAR_STATE["status"] = "error"
         FLOWBAR_STATE["error"] = "Тод ярина уу"
         print("[FlowBar] STT empty:", err)
-        time.sleep(2.0)
+        time.sleep(1.8)
         FLOWBAR_STATE["status"] = "idle"
 
 
 def _native_audio_hotkey_worker() -> None:
     """
     Background worker that:
-    1. Polls Windows hardware Ctrl+Alt state at 35Hz (supports both Hold-to-Talk and Tap-to-Toggle!).
-    2. Captures microphone audio via sounddevice while _is_recording is True.
+    1. Tracks active non-self foreground windows continuously (so it always knows the target window).
+    2. Polls Windows hardware Ctrl+Alt AND F8 state at 40Hz (supports both Hold-to-Talk and Tap-to-Toggle!).
+    3. Captures microphone audio via sounddevice while _is_recording is True.
     """
+    global _last_active_hwnd, _last_active_title, _last_external_hwnd, _last_external_title
     if os.name != "nt":
         return
 
+    FLOWBAR_STATE["desktop"] = get_current_desktop_name()
     was_hotkey_down = False
     hotkey_press_time = 0.0
     started_by_current_press = False
 
     def audio_callback(indata, frames, time_info, status):
-        global _last_speech_time, _has_spoken
+        global _last_speech_time, _has_spoken, _speech_frames_count
         if not _is_recording:
             return
         chunk = indata[:, 0].copy()
@@ -911,9 +1476,11 @@ def _native_audio_hotkey_worker() -> None:
         lvl = int(min(22, max(4, rms * 260)))
         FLOWBAR_STATE["levels"] = FLOWBAR_STATE["levels"][1:] + [lvl]
         FLOWBAR_STATE["seconds"] = int(time.time() - _record_start_time)
-        if rms > 0.018:
-            _has_spoken = True
+        if rms > 0.020:
+            _speech_frames_count += 1
             _last_speech_time = time.time()
+            if _speech_frames_count >= 4:  # >= 0.25s of genuine voice energy
+                _has_spoken = True
 
     stream = None
     if HAS_SOUNDDEVICE:
@@ -926,57 +1493,80 @@ def _native_audio_hotkey_worker() -> None:
                 callback=audio_callback,
             )
             stream.start()
-            print("[+] Native Windows Microphone Stream ready for Ctrl+Alt Dictation")
+            print(f"[+] Native Windows Microphone Stream ready (Desktop: {FLOWBAR_STATE['desktop']})")
         except Exception as e:
             print("[-] Native microphone stream warning:", e)
 
     while True:
         try:
-            ctrl_down = (user32.GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0
-            alt_down = (user32.GetAsyncKeyState(VK_MENU) & 0x8000) != 0
-            # Check that Shift or Win are not pressed
-            shift_down = (user32.GetAsyncKeyState(0x10) & 0x8000) != 0
-            hotkey_down = ctrl_down and alt_down and not shift_down
+            # Track foreground window continuously (ignoring our own Tkinter window!)
+            fg = user32.GetForegroundWindow()
+            if fg and not is_own_process_window(fg):
+                title = get_window_title(fg)
+                if title and title not in ("VOICE FlowBar", "Task Switching"):
+                    _last_active_hwnd = fg
+                    _last_active_title = title
+                    if "VOICE —" not in title and "localhost:3000" not in title:
+                        _last_external_hwnd = fg
+                        _last_external_title = title
+                    if not _is_recording:
+                        FLOWBAR_STATE["target_window"] = _last_external_title or _last_active_title
+
+            ctrl_down = bool(
+                (user32.GetAsyncKeyState(VK_CONTROL) & 0x8000)
+                or (user32.GetAsyncKeyState(VK_LCONTROL) & 0x8000)
+                or (user32.GetAsyncKeyState(VK_RCONTROL) & 0x8000)
+            )
+            alt_down = bool(
+                (user32.GetAsyncKeyState(VK_MENU) & 0x8000)
+                or (user32.GetAsyncKeyState(VK_LMENU) & 0x8000)
+                or (user32.GetAsyncKeyState(VK_RMENU) & 0x8000)
+            )
+            f8_down = bool(user32.GetAsyncKeyState(VK_F8) & 0x8000)
+            shift_down = bool(user32.GetAsyncKeyState(0x10) & 0x8000)
+            hotkey_down = (ctrl_down and alt_down and not shift_down) or f8_down
 
             now = time.time()
 
             if hotkey_down and not was_hotkey_down:
                 hotkey_press_time = now
+                if alt_down:
+                    _suppress_alt_menu_activation()
                 if not _is_recording and FLOWBAR_STATE["status"] != "processing":
-                    start_native_flowbar_recording()
+                    start_native_flowbar_recording(from_ui_button=False)
                     started_by_current_press = True
                 elif _is_recording:
-                    # Tapped Ctrl+Alt again to stop!
+                    # Tapped Ctrl+Alt or F8 again to stop!
                     started_by_current_press = False
                     stop_native_flowbar_recording()
 
             elif not hotkey_down and was_hotkey_down:
                 held_duration = now - hotkey_press_time
-                # If user held Ctrl+Alt for >= 0.55s (Push-to-Talk), stop on release!
-                if _is_recording and started_by_current_press and held_duration >= 0.55:
+                # If user held Ctrl+Alt for >= 0.45s (Push-to-Talk), stop on release!
+                if _is_recording and started_by_current_press and held_duration >= 0.45:
                     stop_native_flowbar_recording()
                 started_by_current_press = False
 
             was_hotkey_down = hotkey_down
 
-            # Update timer & silence auto-stop (if in Toggle mode and user paused for 2.5s after speaking)
+            # Update timer & silence auto-stop (if in Toggle mode and user paused for 2.2s after speaking)
             if _is_recording:
                 FLOWBAR_STATE["seconds"] = int(now - _record_start_time)
-                if not hotkey_down and _has_spoken and (now - _last_speech_time) > 2.5:
+                if not hotkey_down and _has_spoken and (now - _last_speech_time) > 2.2:
                     stop_native_flowbar_recording()
 
         except Exception as e:
             print("Hotkey worker error:", e)
 
-        time.sleep(0.028)
+        time.sleep(0.025)
 
 
 def _native_flowbar_ui_worker() -> None:
     """
     Native Always-On-Top Floating Pill Window (exact equivalent of DuudlagaFlow FlowBarWindow.xaml)
-    with WS_EX_NOACTIVATE so clicking it never steals focus from Word or Facebook!
+    with WS_EX_NOACTIVATE and SWP_NOACTIVATE so clicking it never steals focus from Antigravity, Word, or Facebook!
     """
-    global _tk_root
+    global _tk_root, _flowbar_hwnd
     if os.name != "nt":
         return
 
@@ -991,47 +1581,50 @@ def _native_flowbar_ui_worker() -> None:
         root.title("VOICE FlowBar")
         root.overrideredirect(True)
         root.attributes("-topmost", True)
-        root.attributes("-alpha", 0.95)
+        root.attributes("-alpha", 0.96)
         root.configure(bg="#090d16")
 
         screen_w = root.winfo_screenwidth()
         screen_h = root.winfo_screenheight()
-        bar_w, bar_h = 236, 42
+        bar_w, bar_h = 286, 46
         pos_x = (screen_w - bar_w) // 2
-        pos_y = screen_h - bar_h - 62
+        pos_y = screen_h - bar_h - 58
         root.geometry(f"{bar_w}x{bar_h}+{pos_x}+{pos_y}")
 
         canvas = tk.Canvas(
             root,
             width=bar_w,
             height=bar_h,
-            bg="#0f131a",
-            highlightthickness=1,
-            highlightbackground="#334155",
+            bg="#0f1420",
+            highlightthickness=2,
+            highlightbackground="#6366f1",
             bd=0,
             cursor="hand2",
         )
         canvas.pack(fill="both", expand=True)
 
-        # Apply WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW so clicking never steals focus from Word/Facebook
+        # Apply WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW to both outer and inner Tk HWNDs
         root.update_idletasks()
-        hwnd = user32.GetParent(root.winfo_id()) or root.winfo_id()
-        ex_style = user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
-        user32.SetWindowLongW(
-            hwnd, GWL_EXSTYLE, ex_style | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW | WS_EX_TOPMOST
-        )
+        inner_hwnd = root.winfo_id()
+        outer_hwnd = user32.GetParent(inner_hwnd) or inner_hwnd
+        _flowbar_hwnd = outer_hwnd
+        for h in {inner_hwnd, outer_hwnd}:
+            if h:
+                ex_style = user32.GetWindowLongW(h, GWL_EXSTYLE)
+                user32.SetWindowLongW(
+                    h, GWL_EXSTYLE, ex_style | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW | WS_EX_TOPMOST
+                )
 
         drag_data = {"x": 0, "y": 0, "moved": False}
+        was_visible = True
 
         def on_press(event):
             drag_data["x"] = event.x
             drag_data["y"] = event.y
             drag_data["moved"] = False
-            # Capture active foreground window before click
-            fg = user32.GetForegroundWindow()
-            if fg and fg != hwnd:
-                global _target_hwnd
-                _target_hwnd = fg
+            # Immediately restore focus to last external window if Tk grabbed focus on click
+            if _last_external_hwnd:
+                restore_window_focus(_last_external_hwnd)
 
         def on_drag(event):
             dx = event.x - drag_data["x"]
@@ -1043,79 +1636,104 @@ def _native_flowbar_ui_worker() -> None:
                 root.geometry(f"{bar_w}x{bar_h}+{nx}+{ny}")
 
         def on_release(event):
+            if _last_external_hwnd:
+                restore_window_focus(_last_external_hwnd)
             if not drag_data["moved"]:
                 if _is_recording:
                     stop_native_flowbar_recording()
                 elif FLOWBAR_STATE["status"] != "processing":
-                    start_native_flowbar_recording()
+                    start_native_flowbar_recording(from_ui_button=False)
 
         canvas.bind("<ButtonPress-1>", on_press)
         canvas.bind("<B1-Motion>", on_drag)
         canvas.bind("<ButtonRelease-1>", on_release)
 
         def refresh_ui():
-            if not FLOWBAR_STATE.get("visible", True):
+            nonlocal was_visible
+            vis = bool(FLOWBAR_STATE.get("visible", True))
+            if not vis and was_visible:
                 root.withdraw()
-            else:
+                was_visible = False
+            elif vis and not was_visible:
                 root.deiconify()
-                root.attributes("-topmost", True)
+                was_visible = True
+
+            if vis and outer_hwnd:
+                # Keep topmost WITHOUT activating the window!
+                user32.SetWindowPos(
+                    outer_hwnd,
+                    HWND_TOPMOST,
+                    0,
+                    0,
+                    0,
+                    0,
+                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW,
+                )
 
             st = FLOWBAR_STATE["status"]
             canvas.delete("all")
 
             if st == "idle":
-                canvas.configure(bg="#0f131a", highlightbackground="#4f46e5")
-                canvas.create_oval(16, 15, 26, 25, fill="#818cf8", outline="")
+                canvas.configure(bg="#0f1420", highlightbackground="#6366f1")
+                canvas.create_oval(14, 13, 34, 33, fill="#4f46e5", outline="#818cf8", width=1)
+                canvas.create_text(24, 23, text="🎙", fill="#ffffff", font=("Segoe UI Emoji", 10))
                 canvas.create_text(
-                    126,
-                    21,
-                    text="🎙️ VOICE FLOW  (Ctrl+Alt)",
+                    158,
+                    16,
+                    text="VOICE FLOW • Энд дарж ярина уу",
                     fill="#f8fafc",
                     font=("Segoe UI", 9, "bold"),
                 )
+                canvas.create_text(
+                    158,
+                    32,
+                    text="Товчлуур: Ctrl + Alt  эсвэл  F8",
+                    fill="#94a3b8",
+                    font=("Segoe UI", 8),
+                )
             elif st == "recording":
-                canvas.configure(bg="#b91c1c", highlightbackground="#f87171")
-                canvas.create_oval(14, 15, 24, 25, fill="#ffffff", outline="")
+                canvas.configure(bg="#b91c1c", highlightbackground="#fca5a5")
+                canvas.create_oval(14, 15, 28, 29, fill="#ffffff", outline="")
                 secs = FLOWBAR_STATE.get("seconds", 0)
                 canvas.create_text(
-                    85,
-                    21,
-                    text=f"Ярьж байна... {secs}с",
+                    112,
+                    23,
+                    text=f"Ярьж байна... {secs}с (Дараад дуусгах)",
                     fill="#ffffff",
                     font=("Segoe UI", 9, "bold"),
                 )
                 lvls = FLOWBAR_STATE.get("levels", [6, 12, 16, 12, 6])
                 for i, l in enumerate(lvls):
-                    bx = 162 + i * 10
-                    bh = max(4, min(26, l))
-                    by0 = 21 - bh // 2
-                    by1 = 21 + bh // 2
+                    bx = 222 + i * 10
+                    bh = max(4, min(28, l))
+                    by0 = 23 - bh // 2
+                    by1 = 23 + bh // 2
                     canvas.create_rectangle(bx, by0, bx + 5, by1, fill="#ffffff", outline="")
             elif st == "processing":
-                canvas.configure(bg="#4338ca", highlightbackground="#818cf8")
+                canvas.configure(bg="#4338ca", highlightbackground="#a5b4fc")
                 canvas.create_text(
-                    118,
-                    21,
-                    text="⏳ Текст болгож байна...",
+                    143,
+                    23,
+                    text="⏳ Текст болгож бичиж байна...",
                     fill="#ffffff",
                     font=("Segoe UI", 9, "bold"),
                 )
             elif st == "success":
-                canvas.configure(bg="#047857", highlightbackground="#34d399")
-                preview = FLOWBAR_STATE.get("last_text", "")[:18]
+                canvas.configure(bg="#047857", highlightbackground="#6ee7b7")
+                preview = FLOWBAR_STATE.get("last_text", "")[:22]
                 canvas.create_text(
-                    118,
-                    21,
+                    143,
+                    23,
                     text=f"✅ Бичигдлээ: {preview}",
                     fill="#ffffff",
                     font=("Segoe UI", 9, "bold"),
                 )
             else:
-                canvas.configure(bg="#7f1d1d", highlightbackground="#ef4444")
-                err_txt = FLOWBAR_STATE.get("error", "Дахин ярина уу")[:22]
+                canvas.configure(bg="#7f1d1d", highlightbackground="#f87171")
+                err_txt = FLOWBAR_STATE.get("error", "Дахин ярина уу")[:24]
                 canvas.create_text(
-                    118,
-                    21,
+                    143,
+                    23,
                     text=f"⚠️ {err_txt}",
                     fill="#ffffff",
                     font=("Segoe UI", 9, "bold"),
@@ -1180,6 +1798,7 @@ def index():
 
 @app.get("/health")
 def health():
+    fg = user32.GetForegroundWindow() if os.name == "nt" else 0
     return {
         "status": "ok",
         "has_edge": HAS_EDGE_TTS,
@@ -1190,6 +1809,10 @@ def health():
         "flowbar_status": FLOWBAR_STATE["status"],
         "flowbar_visible": FLOWBAR_STATE["visible"],
         "cloned_count": len(CLONED_VOICES_DB),
+        "desktop": get_current_desktop_name(),
+        "foreground_hwnd": fg,
+        "foreground_title": get_window_title(fg) if fg else "",
+        "target_window": FLOWBAR_STATE.get("target_window", ""),
     }
 
 
@@ -1246,7 +1869,7 @@ def flowbar_action(req: FlowBarActionRequest):
     elif act == "hide":
         FLOWBAR_STATE["visible"] = False
     elif act == "start":
-        start_native_flowbar_recording()
+        start_native_flowbar_recording(from_ui_button=True)
     elif act == "stop":
         stop_native_flowbar_recording()
     elif act == "set_language" and req.language:
@@ -1260,6 +1883,96 @@ def api_insert_text(req: InsertTextRequest):
     return {"inserted": ok, "text": req.text}
 
 
+def apply_persona_formant_warp(
+    src_samples: np.ndarray,
+    warp_ratio: float,
+    sample_rate: int = TARGET_SR,
+) -> np.ndarray:
+    """
+    VoiceStudio Persona Formant Warping:
+    Shifts vocal tract resonance formants (F1..F4) without altering glottal harmonic pitch,
+    giving each studio persona (Narrator, News, Podcast, Maral, Tulga, Misheel) a distinct vocal tract character.
+    """
+    if abs(warp_ratio - 1.0) < 0.015 or src_samples.size < 2048:
+        return src_samples
+
+    _, _, Zxx = sp_signal.stft(
+        src_samples, fs=sample_rate, nperseg=STFT_NPERSEG, noverlap=STFT_NOVERLAP
+    )
+    mag = np.abs(Zxx) + 1e-8
+    phase = np.angle(Zxx)
+    n_bins, n_frames = mag.shape
+    bins = np.arange(n_bins, dtype=np.float32)
+
+    lifter = np.zeros(STFT_NPERSEG, dtype=np.float64)
+    lifter[:CEPSTRAL_LIFTER] = 1.0
+    lifter[-CEPSTRAL_LIFTER + 1 :] = 1.0
+
+    new_mag = np.empty_like(mag)
+    for t in range(n_frames):
+        frame_log = np.log(mag[:, t])
+        cep = np.fft.irfft(frame_log)
+        inst_env = np.real(np.fft.rfft(cep * lifter))
+        fine_excitation = frame_log - inst_env
+        warped_env = np.interp(bins / warp_ratio, bins, inst_env)
+        new_mag[:, t] = np.exp(fine_excitation + warped_env)
+
+    Zxx_mod = new_mag * np.exp(1j * phase)
+    _, y_out = sp_signal.istft(
+        Zxx_mod, fs=sample_rate, nperseg=STFT_NPERSEG, noverlap=STFT_NOVERLAP
+    )
+    y_out = y_out[: src_samples.size].astype(np.float32)
+
+    # Add sub-harmonic chest resonance for deep personas (warp_ratio < 0.93)
+    if warp_ratio < 0.93:
+        sos_sub = sp_signal.butter(
+            2, [80.0 / (sample_rate / 2.0), 230.0 / (sample_rate / 2.0)], btype="bandpass", output="sos"
+        )
+        sub_band = sp_signal.sosfiltfilt(sos_sub, y_out)
+        y_out = y_out + float((0.95 - warp_ratio) * 1.8) * sub_band.astype(np.float32)
+
+    return y_out
+
+
+_ENG_TO_MN_TTS_MAP: list[tuple[str, str]] = [
+    (r"\bVoiceStudio\b", "Войс Студио"),
+    (r"\bDuudlaga\s*Flow\b", "Дуудлага Флоу"),
+    (r"\bFlowBar\b", "Флоу Бар"),
+    (r"\bCtrl\s*\+\s*Alt\b", "Контрол Альт"),
+    (r"\bFacebook\b", "Фэйсбүүк"),
+    (r"\bInstagram\b", "Инстаграм"),
+    (r"\bTelegram\b", "Телеграм"),
+    (r"\bYouTube\b", "Юүтүб"),
+    (r"\bMicrosoft\s+Word\b", "Майкрософт Ворд"),
+    (r"\bWord\b", "Ворд"),
+    (r"\bExcel\b", "Эксел"),
+    (r"\bGoogle\s+Chrome\b", "Гүүгл Хром"),
+    (r"\bChrome\b", "Хром"),
+    (r"\bPython\b", "Пайтон"),
+    (r"\bNext\.js\b", "Некст жи эс"),
+    (r"\bReact\b", "Реакт"),
+    (r"\bTypeScript\b", "Тайпскрипт"),
+    (r"\bJavaScript\b", "Жаваскрипт"),
+    (r"\bChatGPT\b", "Чат жи пи ти"),
+    (r"\bGemini\b", "Жемини"),
+    (r"\bClaude\b", "Клод"),
+    (r"\bAI\b", "Эй Ай"),
+    (r"\bAPI\b", "Эй Пи Ай"),
+    (r"\bTTS\b", "Ти Ти Эс"),
+    (r"\bSTT\b", "Эс Ти Ти"),
+]
+
+
+def prepare_tts_text_for_voice(text: str, base_voice: str) -> str:
+    """If a Mongolian neural voice is reading mixed text with English terms, adapt English loanwords for natural pronunciation."""
+    if not base_voice.startswith("mn-MN"):
+        return text
+    out = text
+    for pat, repl in _ENG_TO_MN_TTS_MAP:
+        out = re.sub(pat, repl, out, flags=re.IGNORECASE)
+    return out
+
+
 @app.post("/tts")
 async def tts(req: TTSRequest):
     text = (req.text or "").strip()
@@ -1271,14 +1984,20 @@ async def tts(req: TTSRequest):
     timbre_strength = float(np.clip(req.timbreStrength if req.timbreStrength is not None else 0.92, 0.0, 1.0))
 
     clone_profile = CLONED_VOICES_DB.get(voice_id)
-    is_cloned = clone_profile is not None or voice_id.startswith("cloned_")
+    persona_profile = VOICES_BY_ID.get(voice_id)
+    persona_warp = 1.0
+
+    # Check if text contains predominantly Japanese characters (Hiragana/Katakana/Kanji)
+    has_japanese = bool(re.search(r"[\u3040-\u30ff\u4e00-\u9faf]", text))
 
     # Determine base neural voice & prosody parameters
     if clone_profile:
         base_voice = clone_profile.get("baseVoice", "mn-MN-BataaNeural")
+        if has_japanese and not re.search(r"[А-ЯӨҮЁа-яөүё]", text):
+            base_voice = "ja-JP-KeitaNeural" if clone_profile.get("gender") == "male" else "ja-JP-NanamiNeural"
         speaker_f0 = float(clone_profile.get("f0", 135.0))
         speaker_rate = float(clone_profile.get("rate_hz", 4.2))
-        base_f0 = 122.0 if "bataa" in base_voice.lower() else 210.0
+        base_f0 = 122.0 if ("bataa" in base_voice.lower() or "keita" in base_voice.lower()) else 210.0
         # Shift pitch in Hz directly toward speaker's measured F0
         f0_diff_hz = int(np.clip(speaker_f0 - base_f0, -45, 45))
         user_pitch_adj = int(((req.pitch or 1.0) - 1.0) * 40)
@@ -1289,6 +2008,15 @@ async def tts(req: TTSRequest):
         total_speed = (req.speed or 1.0) * cadence_ratio
         rate_percent = int(np.clip((total_speed - 1.0) * 100, -45, 60))
         rate_str = f"{rate_percent:+d}%"
+    elif persona_profile:
+        base_voice = persona_profile.get("baseVoice", "mn-MN-YesuiNeural")
+        p_pitch = float(persona_profile.get("pitch", 1.0)) * float(req.pitch or 1.0)
+        p_speed = float(persona_profile.get("speed", 1.0)) * float(req.speed or 1.0)
+        persona_warp = float(persona_profile.get("formantWarp", 1.0))
+        rate_percent = int(np.clip((p_speed - 1.0) * 100, -45, 60))
+        rate_str = f"{rate_percent:+d}%"
+        pitch_hz = int(np.clip((p_pitch - 1.0) * 55, -50, 50))
+        pitch_str = f"{pitch_hz:+d}Hz"
     else:
         base_voice = "mn-MN-BataaNeural" if ("bataa" in voice_id.lower() or "male" in voice_id.lower()) else "mn-MN-YesuiNeural"
         rate_percent = int(((req.speed or 1.0) - 1.0) * 100)
@@ -1299,9 +2027,11 @@ async def tts(req: TTSRequest):
     if not HAS_EDGE_TTS:
         raise HTTPException(status_code=503, detail="Edge-TTS engine not installed")
 
+    synth_text = prepare_tts_text_for_voice(text, base_voice)
+
     try:
         communicate = edge_tts.Communicate(
-            text=text,
+            text=synth_text,
             voice=base_voice,
             rate=rate_str,
             pitch=pitch_str,
@@ -1314,7 +2044,7 @@ async def tts(req: TTSRequest):
         if not raw_mp3:
             raise HTTPException(status_code=500, detail="Empty audio generated")
 
-        # Decode to 24kHz float32 PCM so we can run VoiceStudio Timbre Transfer & Mastering DSP
+        # Decode to 24kHz float32 PCM so we can run VoiceStudio Timbre Transfer, Persona Warp & Mastering DSP
         if HAS_MINIAUDIO:
             samples = decode_audio_bytes(bytes(raw_mp3), TARGET_SR)
             if clone_profile and timbre_strength > 0.05:
@@ -1323,6 +2053,12 @@ async def tts(req: TTSRequest):
                     base_voice_id=base_voice,
                     clone_profile=clone_profile,
                     timbre_strength=timbre_strength,
+                    sample_rate=TARGET_SR,
+                )
+            elif abs(persona_warp - 1.0) >= 0.015:
+                samples = apply_persona_formant_warp(
+                    samples,
+                    warp_ratio=persona_warp,
                     sample_rate=TARGET_SR,
                 )
             samples = apply_voicestudio_dsp(samples, TARGET_SR, preset_id=preset_id)

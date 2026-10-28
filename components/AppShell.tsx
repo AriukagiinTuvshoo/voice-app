@@ -482,11 +482,8 @@ export function Workspace() {
           }
         }
 
-        // Prefer serverTranscript (normalized whole-utterance WAV) or longer transcript
-        const transcript =
-          serverTranscript.length >= browserTranscript.length
-            ? serverTranscript || browserTranscript
-            : browserTranscript || serverTranscript;
+        // Always prefer serverTranscript (Multilingual Code-Switching mn-MN + en-US + ja-JP engine)
+        const transcript = serverTranscript || browserTranscript;
 
         if (!transcript || !transcript.trim()) {
           setState("idle");
@@ -504,6 +501,7 @@ export function Workspace() {
         setRawText(processed);
         setWorkspaceText(processed);
         setState("success");
+        navigator.clipboard?.writeText(processed).catch(() => {});
 
         if (settings.saveTranscripts) {
           const stats = getTextStats(processed);
@@ -937,6 +935,22 @@ export function Workspace() {
         )}
 
         <footer>
+          <button
+            className="btn-primary"
+            onClick={() => {
+              if (!rawText) return;
+              fetch("/api/flowbar", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ insertText: rawText }),
+              }).catch(() => {});
+            }}
+            disabled={!rawText}
+            title="Сүүлд ажиллаж байсан Word, Facebook, Chrome, Antigravity цонх руу шууд бичих"
+          >
+            <FlowBarIcon width={15} height={15} />
+            <span>Цонх руу шууд бичих</span>
+          </button>
           <button
             className="btn-secondary"
             onClick={() => playTextToSpeech(rawText)}

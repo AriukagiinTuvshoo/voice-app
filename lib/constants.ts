@@ -1,16 +1,16 @@
 import type { Language, RecordingMode, ProcessingMode, Shortcut, Theme, SttEngine, Settings, ChimegeVoice } from "./types";
 
 export const languages: { value: Language; label: string; icon: string }[] = [
-  { value: "mn", label: "Монгол", icon: "🇲🇳" },
+  { value: "mn", label: "Монгол (+EN/JP холимог)", icon: "🇲🇳" },
+  { value: "auto", label: "Auto (МН • EN • JP)", icon: "🌐" },
   { value: "en", label: "English", icon: "🇬🇧" },
-  { value: "ja", label: "日本語", icon: "🇯🇵" },
-  { value: "auto", label: "Auto Detect", icon: "🌐" },
+  { value: "ja", label: "日本語 (Япон)", icon: "🇯🇵" },
 ];
 
 export const sttEngines: { value: SttEngine; label: string; description: string }[] = [
-  { value: "auto", label: "Автомат (Auto)", description: "Монгол хэлэнд Chimege, бусад хэлэнд Browser STT ашиглана." },
-  { value: "chimege", label: "Chimege AI (Монгол)", description: "Монгол яриаг таних тусгай загвар (API token шаардлагатай)." },
-  { value: "browser", label: "Browser Web Speech", description: "Хөтөчийн суурь яриа танигч (үнэгүй, онлайн/офлайн)." },
+  { value: "auto", label: "Multilingual AI (МН + EN + JP)", description: "Монгол яриан дунд Англи, Япон үг хольж ярихад зэрэг таних ухаалаг горим." },
+  { value: "chimege", label: "Studio Deep STT (Сервер)", description: "Шуугиан шүүж, олон хэлний авиаг нарийвчлан шинжлэх студийн горим." },
+  { value: "browser", label: "Browser Web Speech", description: "Хөтөчийн суурь хурдан яриа танигч." },
 ];
 
 export const recordingModes: { value: RecordingMode; label: string; description: string }[] = [
