@@ -1,4 +1,4 @@
-import { encodeWAV, resampleTo16kMono } from "./wav-encoder";
+import { encodeWAV, resampleFloat32Array } from "./wav-encoder";
 
 export interface AudioRecorderOptions {
   deviceId?: string;
@@ -48,6 +48,11 @@ export class AudioRecorder {
 
       const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
       this.audioContext = new AudioCtx();
+      // On mobile browsers (especially iOS Safari), AudioContext begins in "suspended" state
+      // and must be resumed explicitly inside user interaction.
+      if (this.audioContext.state === "suspended") {
+        await this.audioContext.resume();
+      }
 
       this.source = this.audioContext.createMediaStreamSource(this.mediaStream);
       this.analyser = this.audioContext.createAnalyser();
@@ -129,15 +134,9 @@ export class AudioRecorder {
       throw new Error("Аудио бичигдээгүй, дахин оролдоно уу.");
     }
 
-    // Resample to 16kHz mono WAV for Chimege API
-    // Create an offline/temporary audio buffer to resample
-    const offlineCtx = new (window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext)();
-    const sourceBuffer = offlineCtx.createBuffer(1, fullBuffer.length, sampleRate);
-    sourceBuffer.copyToChannel(fullBuffer, 0);
-
-    const resampled = resampleTo16kMono(sourceBuffer);
-    offlineCtx.close();
-
+    // Resample directly from Float32Array to 16kHz mono WAV without creating
+    // secondary OfflineAudioContext, which fails on some mobile Safari versions
+    const resampled = resampleFloat32Array(fullBuffer, sampleRate, 16000);
     return encodeWAV(resampled, 16000);
   }
 

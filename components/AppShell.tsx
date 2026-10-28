@@ -72,11 +72,19 @@ export function useSettings() {
 function Provider({ children }: { children: ReactNode }) {
   const [settings, setSettings] = useState<Settings>(defaultSettings);
   const [workspaceText, setWorkspaceText] = useState<string>("");
-  const [flowbarStatus, setFlowbarStatus] = useState({
-    status: "idle",
-    visible: true,
-    last_text: "",
-    last_timestamp: 0,
+  const [flowbarStatus, setFlowbarStatus] = useState(() => {
+    let saved = true;
+    if (typeof window !== "undefined") {
+      try {
+        saved = localStorage.getItem("voice_web_flowbar_visible") !== "false";
+      } catch {}
+    }
+    return {
+      status: "idle",
+      visible: saved,
+      last_text: "",
+      last_timestamp: 0,
+    };
   });
   const lastSeenTimestampRef = useRef<number>(0);
 
@@ -102,20 +110,21 @@ function Provider({ children }: { children: ReactNode }) {
     }).catch(() => {});
   }, [settings.language]);
 
-  // Poll Native Windows FlowBar status (so Ctrl+Alt dictations in Word/Facebook also sync into Workspace & History)
+  // Poll Native Windows FlowBar status (when running desktop helper)
   useEffect(() => {
     const timer = setInterval(async () => {
       try {
         const res = await fetch("/api/flowbar");
         if (!res.ok) return;
         const data = await res.json();
-        if (data && typeof data.status === "string") {
-          setFlowbarStatus({
+        if (data && typeof data.status === "string" && data.status !== "offline") {
+          setFlowbarStatus((prev) => ({
+            ...prev,
             status: data.status,
-            visible: Boolean(data.visible),
+            visible: data.visible !== undefined ? Boolean(data.visible) : prev.visible,
             last_text: data.last_text || "",
             last_timestamp: data.last_timestamp || 0,
-          });
+          }));
 
           if (
             data.last_timestamp &&
@@ -159,20 +168,19 @@ function Provider({ children }: { children: ReactNode }) {
   }, [settings.theme]);
 
   const toggleFlowBar = useCallback(async () => {
+    setFlowbarStatus((prev) => {
+      const nextVisible = !prev.visible;
+      try {
+        localStorage.setItem("voice_web_flowbar_visible", String(nextVisible));
+      } catch {}
+      return { ...prev, visible: nextVisible };
+    });
     try {
-      const res = await fetch("/api/flowbar", {
+      await fetch("/api/flowbar", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "toggle_visibility" }),
       });
-      if (res.ok) {
-        const data = await res.json();
-        setFlowbarStatus((prev) => ({
-          ...prev,
-          visible: Boolean(data.visible),
-          status: data.status || prev.status,
-        }));
-      }
     } catch {}
   }, []);
 
@@ -346,6 +354,10 @@ function Shell({ children }: { children: ReactNode }) {
         </header>
 
         {children}
+
+        {flowbarStatus.visible && path !== "/flowbar" && (
+          <FloatingWebFlowBar />
+        )}
       </main>
 
       <nav className="mobile-nav">
@@ -544,7 +556,15 @@ export function Workspace() {
     setLivePreview("");
 
     try {
-      if (isBrowserSpeechSupported() && settings.sttEngine !== "chimege") {
+      if (typeof navigator !== "undefined" && navigator.vibrate) {
+        navigator.vibrate(40);
+      }
+
+      // Check if iOS (iPhone/iPad). iOS Safari lacks native Mongolian Web Speech support,
+      // so iOS relies directly on our high-accuracy Python STT backend via AudioRecorder!
+      const isIOS = typeof navigator !== "undefined" && /iPad|iPhone|iPod/.test(navigator.userAgent || "");
+
+      if (isBrowserSpeechSupported() && settings.sttEngine !== "chimege" && !isIOS) {
         const recognizer = new BrowserSpeechRecognizer({
           language: settings.language,
           onInterim: (previewText) => {
@@ -1279,6 +1299,287 @@ export function SettingsPanel() {
           </button>
         </div>
       </section>
+    </div>
+  );
+}
+
+export function FloatingWebFlowBar() {
+  const { settings, setWorkspaceText, toggleFlowBar } = useSettings();
+  const [state, setState] = useState<"idle" | "recording" | "processing" | "success" | "error">("idle");
+  const [seconds, setSeconds] = useState(0);
+  const [audioLevels, setAudioLevels] = useState<number[]>([4, 10, 16, 10, 4]);
+  const [lastDictated, setLastDictated] = useState("");
+  const [copiedBadge, setCopiedBadge] = useState(false);
+
+  const recorderRef = useRef<AudioRecorder | null>(null);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  useEffect(() => {
+    if (state === "recording") {
+      timerRef.current = setInterval(() => setSeconds((s) => s + 1), 1000);
+    } else if (timerRef.current) {
+      clearInterval(timerRef.current);
+    }
+    return () => {
+      if (timerRef.current) clearInterval(timerRef.current);
+    };
+  }, [state]);
+
+  const stopAndTranscribe = useCallback(async () => {
+    setState("processing");
+    try {
+      if (typeof navigator !== "undefined" && navigator.vibrate) {
+        navigator.vibrate(50);
+      }
+
+      let wavBlob: Blob | null = null;
+      if (recorderRef.current) {
+        wavBlob = await recorderRef.current.stop();
+        recorderRef.current = null;
+      }
+
+      if (!wavBlob) {
+        setState("idle");
+        return;
+      }
+
+      const formData = new FormData();
+      formData.append("audio", wavBlob, "flow_speech.wav");
+      formData.append("language", settings.language);
+
+      const res = await fetch("/api/chimege/transcribe", {
+        method: "POST",
+        body: formData,
+      });
+
+      const data = await res.json().catch(() => ({}));
+      const rawText = (data.text || "").trim();
+
+      if (!rawText) {
+        setState("error");
+        setTimeout(() => setState("idle"), 2200);
+        return;
+      }
+
+      const processed = processTranscriptText(rawText, {
+        mode: settings.processingMode,
+        autoPunctuation: settings.autoPunctuation,
+        removeFillers: settings.removeFillers,
+        language: settings.language,
+      });
+
+      setLastDictated(processed);
+      setWorkspaceText(processed);
+      setState("success");
+      setCopiedBadge(true);
+
+      navigator.clipboard?.writeText(processed).catch(() => {});
+      HistoryStore.add({
+        text: processed,
+        rawText,
+        durationSeconds: Math.max(1, seconds),
+        language: settings.language,
+        engine: "VOICE FLOW (Web / Mobile)",
+        wordCount: processed.split(/\s+/).length,
+        charCount: processed.length,
+      });
+
+      if (typeof navigator !== "undefined" && navigator.vibrate) {
+        navigator.vibrate([40, 60, 40]);
+      }
+
+      setTimeout(() => {
+        setState("idle");
+        setCopiedBadge(false);
+      }, 3500);
+    } catch (e) {
+      console.warn("Web FlowBar error:", e);
+      setState("error");
+      setTimeout(() => setState("idle"), 2200);
+    }
+  }, [settings, seconds, setWorkspaceText]);
+
+  const startRecording = useCallback(async () => {
+    setSeconds(0);
+    try {
+      if (typeof navigator !== "undefined" && navigator.vibrate) {
+        navigator.vibrate(40);
+      }
+
+      const recorder = new AudioRecorder({
+        deviceId: settings.selectedAudioDevice,
+        autoStop: settings.autoStop,
+        onAudioLevel: (lvl) => {
+          setAudioLevels((prev) => [...prev.slice(1), Math.max(4, Math.round(lvl * 24))]);
+        },
+        onSilenceDetected: () => {
+          stopAndTranscribe();
+        },
+      });
+      recorderRef.current = recorder;
+      await recorder.start();
+      setState("recording");
+    } catch (err) {
+      console.warn("Web FlowBar start error:", err);
+      setState("error");
+      setTimeout(() => setState("idle"), 2200);
+    }
+  }, [settings, stopAndTranscribe]);
+
+  const toggle = () => {
+    if (state === "idle" || state === "success" || state === "error") {
+      startRecording();
+    } else if (state === "recording") {
+      stopAndTranscribe();
+    }
+  };
+
+  const mm = String(Math.floor(seconds / 60)).padStart(2, "0");
+  const ss = String(seconds % 60).padStart(2, "0");
+  const isRecording = state === "recording";
+
+  return (
+    <div
+      className={`floating-web-flowbar ${isRecording ? "recording" : ""}`}
+      onClick={(e) => {
+        if ((e.target as HTMLElement).closest(".flowbar-dismiss, .flowbar-share")) return;
+        toggle();
+      }}
+      title={isRecording ? "Дарж бичлэгийг зогсоох" : "Дарж шууд ярьж бичих (VOICE FLOW)"}
+    >
+      <button
+        type="button"
+        className="flowbar-btn"
+        aria-label="FlowBar Dictate"
+        style={{
+          width: "32px",
+          height: "32px",
+          borderRadius: "50%",
+          border: "none",
+          background: isRecording ? "#ef4444" : "linear-gradient(135deg, #6366f1, #8b5cf6)",
+          color: "#fff",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          cursor: "pointer",
+          boxShadow: isRecording ? "0 0 14px #ef4444" : "0 2px 8px rgba(99, 102, 241, 0.4)",
+          transition: "all 0.2s ease",
+          flexShrink: 0,
+        }}
+      >
+        <MicIcon width={16} height={16} />
+      </button>
+
+      {state === "recording" ? (
+        <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+          <span style={{ color: "#ef4444", fontSize: "12px", fontWeight: 700, fontFamily: "monospace" }}>
+            {mm}:{ss}
+          </span>
+          <div style={{ display: "flex", alignItems: "center", gap: "2px", height: "16px" }}>
+            {audioLevels.map((lvl, i) => (
+              <span
+                key={i}
+                style={{
+                  width: "3px",
+                  height: `${Math.max(4, lvl)}px`,
+                  background: "#ef4444",
+                  borderRadius: "2px",
+                  transition: "height 0.1s ease",
+                }}
+              />
+            ))}
+          </div>
+          <span style={{ fontSize: "12px", color: "var(--text)", fontWeight: 500 }}>
+            Сонсож байна...
+          </span>
+        </div>
+      ) : state === "processing" ? (
+        <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+          <span style={{ width: "8px", height: "8px", borderRadius: "50%", background: "#f59e0b" }} />
+          <span style={{ fontSize: "12px", color: "var(--text)", fontWeight: 500 }}>
+            Хөрвүүлж байна...
+          </span>
+        </div>
+      ) : state === "success" ? (
+        <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+          <CheckIcon width={14} height={14} style={{ color: "#10b981" }} />
+          <span style={{ fontSize: "12px", color: "#10b981", fontWeight: 600 }}>
+            {copiedBadge ? "Хуулагдлаа!" : "Амжилттай!"}
+          </span>
+          <span style={{ fontSize: "11px", color: "var(--muted)", maxWidth: "160px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {lastDictated}
+          </span>
+        </div>
+      ) : state === "error" ? (
+        <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+          <span style={{ color: "#ef4444", fontSize: "12px" }}>Дахин оролдоно уу</span>
+        </div>
+      ) : (
+        <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+          <b style={{ fontSize: "12px", color: "var(--text)", letterSpacing: "0.5px" }}>VOICE FLOW</b>
+          <span
+            style={{
+              fontSize: "10px",
+              padding: "2px 6px",
+              background: "rgba(99, 102, 241, 0.18)",
+              color: "#a5b4fc",
+              borderRadius: "6px",
+              fontWeight: 700,
+            }}
+          >
+            {settings.language.toUpperCase()}
+          </span>
+          <span style={{ fontSize: "11px", color: "var(--muted)" }}>
+            Дарж ярих
+          </span>
+        </div>
+      )}
+
+      {/* Share button on mobile when text is ready */}
+      {lastDictated && state !== "recording" && typeof navigator !== "undefined" && typeof navigator.share === "function" && (
+        <button
+          type="button"
+          className="flowbar-share"
+          onClick={(e) => {
+            e.stopPropagation();
+            navigator.share({ title: "VOICE Текст", text: lastDictated }).catch(() => {});
+          }}
+          style={{
+            background: "none",
+            border: "none",
+            color: "var(--muted)",
+            cursor: "pointer",
+            padding: "4px",
+            display: "flex",
+            alignItems: "center",
+          }}
+          title="Facebook / Messenger / Утас руу хуваалцах"
+        >
+          <ShareIcon width={13} height={13} />
+        </button>
+      )}
+
+      {/* Dismiss / Hide button */}
+      <button
+        type="button"
+        className="flowbar-dismiss"
+        onClick={(e) => {
+          e.stopPropagation();
+          toggleFlowBar();
+        }}
+        style={{
+          background: "none",
+          border: "none",
+          color: "var(--muted)",
+          cursor: "pointer",
+          padding: "2px 6px",
+          fontSize: "12px",
+          lineHeight: 1,
+        }}
+        title="FlowBar-ийг нуух (Дээд цэснээс буцааж гаргаж болно)"
+      >
+        ✕
+      </button>
     </div>
   );
 }

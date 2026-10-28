@@ -93,3 +93,31 @@ export function resampleTo16kMono(audioBuffer: AudioBuffer): Float32Array {
 
   return result;
 }
+
+/**
+ * Resamples a raw Float32Array from sourceRate to targetRate (e.g. 48kHz/44.1kHz -> 16kHz)
+ * without needing an extra OfflineAudioContext, which is prone to crashing on iOS Safari.
+ */
+export function resampleFloat32Array(
+  samples: Float32Array,
+  sourceRate: number,
+  targetRate: number = 16000
+): Float32Array {
+  if (sourceRate === targetRate || samples.length === 0) {
+    return samples;
+  }
+
+  const ratio = sourceRate / targetRate;
+  const targetLength = Math.round(samples.length / ratio);
+  const result = new Float32Array(targetLength);
+
+  for (let i = 0; i < targetLength; i++) {
+    const srcIndex = i * ratio;
+    const indexLow = Math.floor(srcIndex);
+    const indexHigh = Math.min(indexLow + 1, samples.length - 1);
+    const weight = srcIndex - indexLow;
+    result[i] = samples[indexLow] * (1 - weight) + samples[indexHigh] * weight;
+  }
+
+  return result;
+}

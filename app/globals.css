@@ -948,3 +948,44 @@ kbd {
     min-height: 120px;
   }
 }
+
+/* Floating Web/Mobile FlowBar Capsule */
+.floating-web-flowbar {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 99999;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: rgba(15, 20, 32, 0.94);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1.5px solid rgba(99, 102, 241, 0.45);
+  box-shadow: 0 10px 32px rgba(0, 0, 0, 0.55), 0 0 18px rgba(99, 102, 241, 0.22);
+  border-radius: 9999px;
+  padding: 6px 14px 6px 8px;
+  user-select: none;
+  transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+  max-width: calc(100vw - 32px);
+  box-sizing: border-box;
+}
+
+.floating-web-flowbar.recording {
+  border-color: #ef4444;
+  box-shadow: 0 10px 36px rgba(239, 68, 68, 0.4), 0 0 24px rgba(239, 68, 68, 0.25);
+  animation: flowbarPulse 1.8s infinite;
+}
+
+@keyframes flowbarPulse {
+  0% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4); }
+  70% { box-shadow: 0 0 0 12px rgba(239, 68, 68, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
+}
+
+@media (max-width: 768px) {
+  .floating-web-flowbar {
+    bottom: calc(env(safe-area-inset-bottom, 0px) + 72px);
+  }
+}
