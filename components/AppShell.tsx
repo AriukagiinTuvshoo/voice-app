@@ -295,24 +295,33 @@ export function Workspace() {
 
         if (browserRecognizerRef.current) {
           transcript = await browserRecognizerRef.current.stop();
-        } else if (audioRecorderRef.current) {
+          browserRecognizerRef.current = null;
+        }
+
+        if (audioRecorderRef.current) {
           const wavBlob = await audioRecorderRef.current.stop();
+          audioRecorderRef.current = null;
 
-          const formData = new FormData();
-          formData.append("audio", wavBlob, "speech.wav");
-          formData.append("punctuate", String(settings.autoPunctuation));
+          if (!transcript || !transcript.trim()) {
+            const formData = new FormData();
+            formData.append("audio", wavBlob, "speech.wav");
+            formData.append("punctuate", String(settings.autoPunctuation));
 
-          const res = await fetch("/api/chimege/transcribe", {
-            method: "POST",
-            body: formData,
-          });
+            const res = await fetch("/api/chimege/transcribe", {
+              method: "POST",
+              body: formData,
+            });
 
-          const data = await res.json();
-          transcript = data.text || "";
+            const data = await res.json();
+            transcript = data.text || "";
+            if (data.engine) usedEngine = data.engine;
+          }
         }
 
         if (!transcript || !transcript.trim()) {
-          transcript = "Монгол хэлний яриа амжилттай текст боллоо.";
+          setState("idle");
+          setErrorMessage("Яриа сонсогдсонгүй. Микрофондоо чанга, тод ярина уу.");
+          return;
         }
 
         const processed = processTranscriptText(transcript, {
@@ -366,35 +375,35 @@ export function Workspace() {
     setSeconds(0);
 
     try {
-      if (isBrowserSpeechSupported() && settings.sttEngine === "browser") {
+      if (isBrowserSpeechSupported() && settings.sttEngine !== "chimege") {
         const recognizer = new BrowserSpeechRecognizer({
           language: settings.language,
           onInterim: (interim) => {
             setRawText((prev) => (prev ? prev + " " + interim : interim));
           },
           onError: (err) => {
-            setErrorMessage(err);
+            console.warn("Browser Speech warning:", err);
           },
         });
         browserRecognizerRef.current = recognizer;
         recognizer.start();
-      } else {
-        const recorder = new AudioRecorder({
-          deviceId: settings.selectedAudioDevice,
-          autoStop: settings.autoStop,
-          onAudioLevel: (lvl) => {
-            setAudioLevels((prev) => [
-              ...prev.slice(1),
-              Math.max(6, Math.round(lvl * 36)),
-            ]);
-          },
-          onSilenceDetected: () => {
-            stopAndTranscribe(seconds);
-          },
-        });
-        audioRecorderRef.current = recorder;
-        await recorder.start();
       }
+
+      const recorder = new AudioRecorder({
+        deviceId: settings.selectedAudioDevice,
+        autoStop: settings.autoStop,
+        onAudioLevel: (lvl) => {
+          setAudioLevels((prev) => [
+            ...prev.slice(1),
+            Math.max(6, Math.round(lvl * 36)),
+          ]);
+        },
+        onSilenceDetected: () => {
+          stopAndTranscribe(seconds);
+        },
+      });
+      audioRecorderRef.current = recorder;
+      await recorder.start();
 
       setState("recording");
     } catch (err: unknown) {

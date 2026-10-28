@@ -1,5 +1,6 @@
 const { app, BrowserWindow, globalShortcut, Tray, Menu, ipcMain, clipboard, screen } = require("electron");
 const path = require("path");
+const fs = require("fs");
 const { spawn } = require("child_process");
 
 let mainWindow = null;
@@ -170,21 +171,23 @@ function handleGlobalTrigger() {
 
 // IPC: Insert text into active window
 ipcMain.on("insert-transcribed-text", (event, text) => {
-  if (!text) return;
+  if (!text || !text.trim()) return;
   clipboard.writeText(text);
 
-  // Paste text into active window on Windows using PowerShell SendKeys
+  // Paste text into active window (e.g. Word, Telegram, Chrome) on Windows
   if (process.platform === "win32") {
-    setTimeout(() => {
-      const ps = spawn("powershell", [
-        "-NoProfile",
-        "-Command",
-        `Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.SendKeys]::SendWait('^v')`,
-      ]);
-      ps.on("close", () => {
+    try {
+      const vbsPath = path.join(app.getPath("temp"), "voice_paste.vbs");
+      if (!fs.existsSync(vbsPath)) {
+        fs.writeFileSync(vbsPath, 'Set WshShell = CreateObject("WScript.Shell")\r\nWshShell.SendKeys "^v"\r\n');
+      }
+      setTimeout(() => {
+        spawn("wscript.exe", ["//B", "//Nologo", vbsPath], { detached: true, stdio: "ignore" });
         console.log("Pasted text into active window:", text);
-      });
-    }, 150);
+      }, 100);
+    } catch (e) {
+      console.warn("Paste error:", e);
+    }
   }
 });
 

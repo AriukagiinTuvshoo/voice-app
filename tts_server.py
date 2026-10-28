@@ -2,13 +2,14 @@ import io
 import os
 import re
 import asyncio
+import tempfile
 from typing import Optional
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response, JSONResponse
 from pydantic import BaseModel
 
-app = FastAPI(title="Mongolian AI Voice Server (Edge Neural & MMS)", version="2.0.0")
+app = FastAPI(title="Mongolian AI Voice Server (TTS & STT)", version="2.5.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -55,6 +56,15 @@ except ImportError:
     HAS_EDGE_TTS = False
     print("[-] edge-tts not installed")
 
+# Check if speech_recognition is available for STT
+try:
+    import speech_recognition as sr
+    HAS_SR = True
+    print("[+] SpeechRecognition (STT) is ready")
+except ImportError:
+    HAS_SR = False
+    print("[-] SpeechRecognition not installed")
+
 # Check if torch and transformers are available for optional MMS-TTS
 mms_tokenizer = None
 mms_model = None
@@ -65,13 +75,12 @@ try:
     import numpy as np
 
     mms_model_id = "facebook/mms-tts-khk"
-    print(f"[*] Attempting to load MMS model ({mms_model_id})...")
     mms_tokenizer = AutoTokenizer.from_pretrained(mms_model_id)
     mms_model = VitsModel.from_pretrained(mms_model_id)
     mms_model.eval()
     print("[+] MMS-TTS model loaded successfully!")
 except Exception as e:
-    print(f"[*] MMS-TTS torch engine skipped (using high-speed Edge Neural): {e}")
+    print(f"[*] MMS-TTS torch engine skipped: {e}")
 
 
 class TTSRequest(BaseModel):
@@ -84,9 +93,10 @@ class TTSRequest(BaseModel):
 @app.get("/")
 def index():
     return {
-        "service": "Mongolian AI Voice Engine",
+        "service": "Mongolian AI Voice Engine (TTS & STT)",
         "engines": {
-            "edge_neural": HAS_EDGE_TTS,
+            "edge_neural_tts": HAS_EDGE_TTS,
+            "stt_speech_recognition": HAS_SR,
             "mms_vits": mms_model is not None,
         },
         "voices": VOICES,
@@ -99,6 +109,7 @@ def health():
     return {
         "status": "ok",
         "has_edge": HAS_EDGE_TTS,
+        "has_stt": HAS_SR,
         "has_mms": mms_model is not None,
     }
 
@@ -141,7 +152,6 @@ async def tts(req: TTSRequest):
         if "bataa" in voice_id.lower() or "male" in voice_id.lower():
             selected_voice = "mn-MN-BataaNeural"
 
-        # Format rate and pitch for edge-tts (e.g. +10%, -5%)
         rate_percent = int((req.speed - 1.0) * 100) if req.speed else 0
         rate_str = f"{rate_percent:+d}%"
 
@@ -175,6 +185,42 @@ async def tts(req: TTSRequest):
             raise HTTPException(status_code=500, detail=f"Edge-TTS synthesis error: {str(e)}")
 
     raise HTTPException(status_code=503, detail="No TTS engine available")
+
+
+@app.post("/transcribe")
+async def transcribe(audio: UploadFile = File(...)):
+    """Transcribe audio (WAV) to Mongolian text using SpeechRecognition (Google STT mn-MN)."""
+    if not HAS_SR:
+        raise HTTPException(status_code=503, detail="SpeechRecognition engine is not installed")
+
+    content = await audio.read()
+    if not content or len(content) < 1000:
+        return {"text": "", "error": "Аудио хэт богино эсвэл хоосон байна."}
+
+    # Write temporary wav file to decode
+    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+        tmp.write(content)
+        tmp_path = tmp.name
+
+    try:
+        r = sr.Recognizer()
+        with sr.AudioFile(tmp_path) as source:
+            audio_data = r.record(source)
+
+        try:
+            # Recognize Mongolian speech
+            transcript = r.recognize_google(audio_data, language="mn-MN")
+            return {"text": transcript.strip(), "engine": "Google STT (mn-MN)"}
+        except sr.UnknownValueError:
+            return {"text": "", "error": "Яриа танигдсангүй. Микрофондоо чанга, тод ярина уу."}
+        except sr.RequestError as e:
+            return {"text": "", "error": f"Таних үйлчилгээнд холбогдож чадсангүй: {e}"}
+    finally:
+        if os.path.exists(tmp_path):
+            try:
+                os.remove(tmp_path)
+            except Exception:
+                pass
 
 
 if __name__ == "__main__":

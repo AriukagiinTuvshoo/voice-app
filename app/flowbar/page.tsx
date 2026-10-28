@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from "react";
 import { AudioRecorder } from "@/lib/audio-recorder";
+import { BrowserSpeechRecognizer, isBrowserSpeechSupported } from "@/lib/speech-recognition";
 import { useSettings } from "@/components/AppShell";
 import { processTranscriptText } from "@/lib/text-processor";
 import { HistoryStore } from "@/lib/history-store";
@@ -24,6 +25,7 @@ export default function FlowBarPage() {
   const [seconds, setSeconds] = useState(0);
 
   const recorderRef = useRef<AudioRecorder | null>(null);
+  const browserRecognizerRef = useRef<BrowserSpeechRecognizer | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
@@ -38,22 +40,41 @@ export default function FlowBarPage() {
   }, [state]);
 
   const stopAndTranscribe = useCallback(async () => {
-    if (!recorderRef.current) return;
     setState("processing");
+    setErrorMessage("");
 
     try {
-      const wavBlob = await recorderRef.current.stop();
+      let text = "";
 
-      const formData = new FormData();
-      formData.append("audio", wavBlob, "speech.wav");
+      if (browserRecognizerRef.current) {
+        text = await browserRecognizerRef.current.stop();
+        browserRecognizerRef.current = null;
+      }
 
-      const res = await fetch("/api/chimege/transcribe", {
-        method: "POST",
-        body: formData,
-      });
+      if (recorderRef.current) {
+        const wavBlob = await recorderRef.current.stop();
+        recorderRef.current = null;
 
-      const data = await res.json().catch(() => ({}));
-      const text = data.text || "Монгол яриа амжилттай буулаа.";
+        if (!text || !text.trim()) {
+          const formData = new FormData();
+          formData.append("audio", wavBlob, "speech.wav");
+
+          const res = await fetch("/api/chimege/transcribe", {
+            method: "POST",
+            body: formData,
+          });
+
+          const data = await res.json().catch(() => ({}));
+          text = data.text || "";
+        }
+      }
+
+      if (!text || !text.trim()) {
+        setErrorMessage("Сонсогдсонгүй");
+        setState("error");
+        setTimeout(() => setState("idle"), 2200);
+        return;
+      }
 
       const processed = processTranscriptText(text, {
         mode: settings.processingMode,
@@ -91,6 +112,15 @@ export default function FlowBarPage() {
     setSeconds(0);
     setErrorMessage("");
     try {
+      if (isBrowserSpeechSupported() && settings.sttEngine !== "chimege") {
+        const recognizer = new BrowserSpeechRecognizer({
+          language: settings.language,
+          onError: (err) => console.warn("FlowBar browser speech error:", err),
+        });
+        browserRecognizerRef.current = recognizer;
+        recognizer.start();
+      }
+
       const recorder = new AudioRecorder({
         deviceId: settings.selectedAudioDevice,
         autoStop: settings.autoStop,

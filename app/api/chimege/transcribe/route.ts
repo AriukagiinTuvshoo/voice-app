@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
-const STT_URL = "https://api.chimege.com/v1.2/transcribe";
+const CHIMEGE_STT_URL = "https://api.chimege.com/v1.2/transcribe";
+const LOCAL_STT_URL = process.env.LOCAL_STT_URL || "http://127.0.0.1:8000/transcribe";
 
 export async function POST(req: NextRequest) {
   try {
@@ -28,33 +29,71 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Хоосон аудио файл байна." }, { status: 400 });
     }
 
-    // If token is available, attempt Chimege STT
+    // 1. If Chimege token is available, attempt Chimege STT
     if (token) {
       try {
-        const transcript = await transcribeStandard(audioBuffer, token);
-        return NextResponse.json({ text: transcript, engine: "AI Voice Engine" });
+        const transcript = await transcribeChimege(audioBuffer, token);
+        if (transcript) {
+          return NextResponse.json({ text: transcript, engine: "Chimege STT" });
+        }
       } catch (apiErr) {
-        console.warn("STT API call warning:", apiErr);
+        console.warn("Chimege STT API call warning:", apiErr);
       }
     }
 
-    // Seamless fallback so the user is never blocked
+    // 2. Try Local Python Server STT (Google mn-MN)
+    try {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 20000);
+
+      const pyForm = new FormData();
+      const pyBlob = new Blob([audioBuffer], { type: "audio/wav" });
+      pyForm.append("audio", pyBlob, "audio.wav");
+
+      const pyRes = await fetch(LOCAL_STT_URL, {
+        method: "POST",
+        body: pyForm,
+        signal: ctrl.signal,
+      });
+
+      clearTimeout(timer);
+
+      if (pyRes.ok) {
+        const pyData = await pyRes.json();
+        if (pyData.text) {
+          return NextResponse.json({
+            text: pyData.text,
+            engine: pyData.engine || "AI Voice STT",
+          });
+        }
+        if (pyData.error) {
+          return NextResponse.json({
+            text: "",
+            error: pyData.error,
+          });
+        }
+      }
+    } catch (e: unknown) {
+      console.warn("Local STT server warning:", e);
+    }
+
+    // 3. If neither worked, return empty text with informative message
     return NextResponse.json({
-      text: "Яриа амжилттай бүртгэгдлээ. Текст боловсруулалт бэлэн.",
-      engine: "Voice System",
+      text: "",
+      error: "Яриа танигдсангүй. Микрофондоо тод ярина уу эсвэл Browser Web Speech сонгоно уу.",
     });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : "Яриа танихад алдаа гарлаа";
-    return NextResponse.json({ error: message }, { status: 500 });
+    return NextResponse.json({ error: message, text: "" }, { status: 500 });
   }
 }
 
-async function transcribeStandard(audio: Buffer, token: string): Promise<string> {
+async function transcribeChimege(audio: Buffer, token: string): Promise<string> {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 20000);
 
   try {
-    const res = await fetch(STT_URL, {
+    const res = await fetch(CHIMEGE_STT_URL, {
       method: "POST",
       headers: {
         Token: token,
@@ -67,7 +106,7 @@ async function transcribeStandard(audio: Buffer, token: string): Promise<string>
 
     const body = await res.text();
     if (!res.ok) {
-      throw new Error(`API response status ${res.status}`);
+      throw new Error(`API status ${res.status}`);
     }
 
     try {
@@ -77,7 +116,7 @@ async function transcribeStandard(audio: Buffer, token: string): Promise<string>
       }
     } catch {}
 
-    return body.trim() || "Яриа танигдсангүй";
+    return body.trim();
   } catch (err: unknown) {
     clearTimeout(timer);
     throw err;

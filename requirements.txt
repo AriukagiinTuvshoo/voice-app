@@ -1,4 +1,5 @@
 edge-tts
+SpeechRecognition
 fastapi
 uvicorn
 pydantic
