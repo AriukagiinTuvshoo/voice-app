@@ -8,14 +8,21 @@ document.addEventListener("DOMContentLoaded", () => {
   const saveBtn = document.getElementById("save");
   const statusDiv = document.getElementById("status");
 
-  // Load saved settings
+  // Load saved settings with auto-migration to Local
   chrome.storage?.sync?.get(
     ["shortcut", "language", "showFloatingMic", "serverURL"],
     (items) => {
       if (items?.shortcut) shortcutSelect.value = items.shortcut;
       if (items?.language) langSelect.value = items.language;
       if (items?.showFloatingMic !== undefined) showFloatingMic.checked = items.showFloatingMic;
-      if (items?.serverURL) serverInput.value = items.serverURL;
+      
+      let sUrl = items?.serverURL || "http://localhost:3000";
+      // Auto-migrate old render cloud URL to local
+      if (sUrl.includes("onrender.com")) {
+        sUrl = "http://localhost:3000";
+        chrome.storage.sync.set({ serverURL: sUrl });
+      }
+      serverInput.value = sUrl;
     }
   );
 
@@ -55,11 +62,11 @@ document.addEventListener("DOMContentLoaded", () => {
       shortcut: shortcutSelect.value,
       language: langSelect.value,
       showFloatingMic: showFloatingMic.checked,
-      serverURL: serverInput.value.trim().replace(/\/$/, ""),
+      serverURL: serverInput.value.trim().replace(/\/$/, "") || "http://localhost:3000",
     };
 
     chrome.storage?.sync?.set(newSettings, () => {
-      statusDiv.textContent = "Тохиргоо амжилттай хадгалагдлаа!";
+      statusDiv.textContent = "Тохиргоо хадгалагдлаа (Local)!";
 
       // Notify active tab of updated settings
       chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
