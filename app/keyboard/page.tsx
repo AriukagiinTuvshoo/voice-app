@@ -4,7 +4,7 @@ import { useState, useEffect } from "react";
 import { MicIcon, CheckIcon, CopyIcon, SparklesIcon } from "@/components/Icons";
 
 export default function KeyboardPage() {
-  const [activeOs, setActiveOs] = useState<"android" | "ios">("android");
+  const [activeOs, setActiveOs] = useState<"android" | "ios" | "windows">("android");
   const [originUrl, setOriginUrl] = useState("https://voice-app.onrender.com");
   const [copiedUrl, setCopiedUrl] = useState(false);
 
@@ -13,6 +13,8 @@ export default function KeyboardPage() {
       setOriginUrl(window.location.origin);
       if (/iPhone|iPad|iPod/i.test(navigator.userAgent)) {
         setActiveOs("ios");
+      } else if (!/Android/i.test(navigator.userAgent)) {
+        setActiveOs("windows");
       }
     }
   }, []);
@@ -50,6 +52,21 @@ export default function KeyboardPage() {
       >
         <button
           type="button"
+          onClick={() => setActiveOs("windows")}
+          className="btn-secondary"
+          style={{
+            background: activeOs === "windows" ? "var(--accent)" : "var(--surface)",
+            color: activeOs === "windows" ? "#fff" : "var(--text)",
+            padding: "10px 20px",
+            borderRadius: "12px",
+            fontWeight: 700,
+          }}
+        >
+          💻 Windows Компьютер (Ctrl+Alt)
+        </button>
+
+        <button
+          type="button"
           onClick={() => setActiveOs("android")}
           className="btn-secondary"
           style={{
@@ -60,7 +77,7 @@ export default function KeyboardPage() {
             fontWeight: 700,
           }}
         >
-          🤖 Android Гар (VOICE-Keyboard.apk)
+          🤖 Android Гар (APK)
         </button>
 
         <button
@@ -75,9 +92,63 @@ export default function KeyboardPage() {
             fontWeight: 700,
           }}
         >
-          🍎 iPhone / iOS Гар
+          🍎 iPhone / iOS
         </button>
       </div>
+
+      {/* WINDOWS TAB */}
+      {activeOs === "windows" && (
+        <div style={{ display: "grid", gap: "18px", marginTop: "20px" }}>
+          <div
+            className="settings"
+            style={{
+              background: "linear-gradient(135deg, rgba(99, 102, 241, 0.12), rgba(15, 23, 42, 0.95))",
+              border: "1px solid rgba(99, 102, 241, 0.4)",
+            }}
+          >
+            <h2 style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}>
+              <MicIcon width={18} height={18} style={{ color: "var(--accent)" }} />
+              <span>VOICE Windows Helper — Chrome, Word, Excel дээр шууд бичих</span>
+            </h2>
+            <p style={{ marginBottom: "16px" }}>
+              Вэб хуудас браузерын аюулгүй байдлын үүднээс Word, Excel зэрэг өөр програмууд руу дур мэдэн бичиж чаддаггүй.
+              Тиймээс компьютер дээрээ доорх <b>1 товшилтоор татах</b> файлыг ажиллуулахад л та Chrome-ийн хайлтын талбар эсвэл Word дээр{" "}
+              <b>Ctrl + Alt</b> (эсвэл <b>F8</b>) дараад шууд ярьж бичих боломжтой болно!
+            </p>
+
+            <div style={{ display: "flex", gap: "12px", flexWrap: "wrap", alignItems: "center" }}>
+              <a
+                href="/api/download/helper"
+                download="VOICE-Windows-Helper.bat"
+                className="btn-primary"
+                style={{
+                  textDecoration: "none",
+                  padding: "12px 24px",
+                  fontSize: "15px",
+                  borderRadius: "14px",
+                }}
+              >
+                ⬇️ 1 Товшилтоор Windows Helper татах (.bat)
+              </a>
+            </div>
+          </div>
+
+          <div className="settings">
+            <h2>Хэрхэн ашиглах вэ?</h2>
+            <div style={{ display: "grid", gap: "12px", marginTop: "12px", fontSize: "14px", lineHeight: 1.6 }}>
+              <div style={{ padding: "12px 16px", background: "var(--subtle)", borderRadius: "12px" }}>
+                <b>1. Файлыг татах:</b> Дээрх товч дээр дараад <code>VOICE-Windows-Helper.bat</code> файлыг татаж авна.
+              </div>
+              <div style={{ padding: "12px 16px", background: "var(--subtle)", borderRadius: "12px" }}>
+                <b>2. Ажиллуулах:</b> Татсан файлаа 1 удаа давхар товшино. Энэ нь Windows асах бүрт цаанаа далд ажиллахаар бүртгэгдэнэ. Ямар ч Python, нэмэлт сан суулгах шаардлагагүй.
+              </div>
+              <div style={{ padding: "12px 16px", background: "var(--subtle)", borderRadius: "12px" }}>
+                <b>3. Шууд ярьж бичих:</b> Одоо Chrome-ийн хайлтын нүд, Word, Excel, Facebook, Telegram дээр курсороо тавиад гар дээрээ <kbd>Ctrl</kbd> + <kbd>Alt</kbd> (эсвэл <kbd>F8</kbd>) дараад ярина. Ярьж дуусахад текст шууд бичигдэнэ!
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ANDROID TAB */}
       {activeOs === "android" && (
