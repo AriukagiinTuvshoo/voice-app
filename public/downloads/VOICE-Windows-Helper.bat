@@ -1,29 +1,29 @@
 <# :
 @echo off
 chcp 65001 >nul
-title VOICE Windows Helper
+title VOICE Windows Local Helper
 cd /d "%~dp0"
 
 echo ============================================================
-echo   🎤 VOICE Windows Global Dictation Helper
-echo   Word, Excel, Chrome, Facebook дээр Ctrl+Alt дарж шууд бичих
+echo   🎤 VOICE Windows Global Dictation Helper (Local)
+echo   Word, Excel, Chrome, Facebook дээр F8 / Ctrl+Alt дарж шууд бичих
 echo ============================================================
 echo.
 
 set "STARTUP=%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup"
 
-> "%STARTUP%\VOICE-Online-Helper.vbs" (
+> "%STARTUP%\VOICE-Local-Helper.vbs" (
     echo Set s = CreateObject^("WScript.Shell"^)
     echo s.Run "powershell -WindowStyle Hidden -ExecutionPolicy Bypass -Command ""Invoke-Expression ([System.IO.File]::ReadAllText('%~f0'))""", 0, False
 )
 
 start "" /b powershell -WindowStyle Hidden -ExecutionPolicy Bypass -Command "Invoke-Expression ([System.IO.File]::ReadAllText('%~f0'))"
 
-echo  [АМЖИЛТТАЙ] VOICE Helper далд аслаа!
+echo  [АМЖИЛТТАЙ] VOICE Local Helper далд аслаа!
 echo.
-echo  Одоо Chrome, Word, Facebook дээр курсороо тавиад:
-echo  1. Гар дээрээ [Ctrl] + [Alt] (эсвэл F8) дараад ярина.
-echo  2. Дахин товчоо дарах эсвэл чимээгүй болоход текст шууд бичигдэнэ!
+echo  Одоо Chrome, Word, Facebook, Excel дээр курсороо тавиад:
+echo  1. Гар дээрээ F8 (эсвэл Ctrl + Alt) дараад ярина.
+echo  2. Дахин товчоо дарахад ярьсан үг тань курсор дээр автоматаар бичигдэнэ!
 echo.
 echo  (Windows асах бүрт цаанаа автоматаар ажиллахаар тохируулагдлаа)
 timeout /t 5
@@ -70,7 +70,8 @@ public class SoundRecorder {
 }
 "@
 
-$SERVER_URL = "https://voice-app.onrender.com"
+$SERVER_URL = "http://localhost:3000"
+$LOCAL_BACKEND = "http://127.0.0.1:8000"
 $VK_CONTROL = 0x11
 $VK_MENU = 0x12
 $VK_F8 = 0x77
@@ -100,21 +101,31 @@ while ($true) {
             [SoundRecorder]::SaveRecording($tempWav)
 
             if (Test-Path $tempWav) {
+                $text = ""
                 try {
                     $form = @{
                         audio = Get-Item $tempWav
                         language = "mn"
                     }
-                    $response = Invoke-RestMethod -Uri "$SERVER_URL/api/chimege/transcribe" -Method Post -Form $form -TimeoutSec 25
+                    $response = Invoke-RestMethod -Uri "$SERVER_URL/api/chimege/transcribe" -Method Post -Form $form -TimeoutSec 15
                     $text = $response.text
-                    if ($text) {
-                        if ($targetHwnd -ne [IntPtr]::Zero) {
-                            [WinAPI]::SetForegroundWindow($targetHwnd)
-                            Start-Sleep -Milliseconds 60
-                        }
-                        [System.Windows.Forms.SendKeys]::SendWait($text + " ")
-                    }
                 } catch {
+                    try {
+                        $form = @{
+                            audio = Get-Item $tempWav
+                            language = "mn"
+                        }
+                        $pyRes = Invoke-RestMethod -Uri "$LOCAL_BACKEND/transcribe" -Method Post -Form $form -TimeoutSec 15
+                        $text = $pyRes.text
+                    } catch {}
+                }
+
+                if ($text) {
+                    if ($targetHwnd -ne [IntPtr]::Zero) {
+                        [WinAPI]::SetForegroundWindow($targetHwnd)
+                        Start-Sleep -Milliseconds 60
+                    }
+                    [System.Windows.Forms.SendKeys]::SendWait($text + " ")
                 }
                 Remove-Item $tempWav -Force -ErrorAction SilentlyContinue
             }

@@ -1,5 +1,5 @@
-// VOICE Chrome Extension - Content Script
-// Injects voice-to-text directly into Facebook, Google, YouTube, Messenger, etc.
+// VOICE Chrome Extension - Content Script (100% Local First)
+// Injects voice-to-text directly into Facebook, Google, YouTube, Messenger, Word Online, etc.
 
 (function () {
   if (window.__voiceExtensionLoaded) return;
@@ -16,21 +16,27 @@
     shortcut: "F8",
     language: "mn",
     showFloatingMic: true,
-    serverURL: "https://voice-app.onrender.com",
+    serverURL: "http://localhost:3000",
   };
 
-  // Load settings
+  // Load settings with auto-migration to Local
   if (typeof chrome !== "undefined" && chrome.storage?.sync) {
     chrome.storage.sync.get(
       ["shortcut", "language", "showFloatingMic", "serverURL"],
       (items) => {
-        if (items) currentSettings = { ...currentSettings, ...items };
+        if (items) {
+          currentSettings = { ...currentSettings, ...items };
+          if (currentSettings.serverURL && currentSettings.serverURL.includes("onrender.com")) {
+            currentSettings.serverURL = "http://localhost:3000";
+            chrome.storage.sync.set({ serverURL: "http://localhost:3000" });
+          }
+        }
         renderFloatingMic();
       }
     );
   }
 
-  // Keep track of the active text field
+  // Keep track of the active text field (inputs, textareas, and contenteditable like Facebook)
   document.addEventListener("focusin", (e) => {
     if (isEditable(e.target)) {
       lastFocusedInput = e.target;
@@ -41,6 +47,7 @@
     if (!el) return false;
     if (el.tagName === "INPUT" || el.tagName === "TEXTAREA") return true;
     if (el.isContentEditable) return true;
+    if (el.getAttribute && el.getAttribute("role") === "textbox") return true;
     return false;
   }
 
@@ -70,14 +77,19 @@
       return;
     }
 
-    // Facebook / Messenger / Gmail contenteditable support
-    if (target && target.isContentEditable) {
+    // Facebook / Messenger / Gmail / Docs contenteditable support
+    if (target && (target.isContentEditable || target.getAttribute("role") === "textbox")) {
       target.focus();
     }
 
+    let inserted = false;
     if (document.queryCommandSupported && document.queryCommandSupported("insertText")) {
-      document.execCommand("insertText", false, text + " ");
-    } else {
+      try {
+        inserted = document.execCommand("insertText", false, text + " ");
+      } catch {}
+    }
+
+    if (!inserted) {
       const sel = window.getSelection();
       if (sel && sel.rangeCount > 0) {
         const range = sel.getRangeAt(0);
@@ -170,12 +182,15 @@
           return;
         }
 
-        try {
-          const formData = new FormData();
-          formData.append("audio", audioBlob, "speech.webm");
-          formData.append("language", currentSettings.language || "mn");
+        const formData = new FormData();
+        formData.append("audio", audioBlob, "speech.webm");
+        formData.append("language", currentSettings.language || "mn");
 
-          const res = await fetch(`${currentSettings.serverURL}/api/chimege/transcribe`, {
+        // 1. Try Local Next.js Server (http://localhost:3000)
+        let successText = "";
+        try {
+          const sUrl = (currentSettings.serverURL || "http://localhost:3000").replace(/\/$/, "");
+          const res = await fetch(`${sUrl}/api/chimege/transcribe`, {
             method: "POST",
             body: formData,
           });
@@ -183,17 +198,36 @@
           if (res.ok) {
             const data = await res.json();
             if (data.text && data.text.trim()) {
-              insertTextAtCursor(data.text.trim());
-              updateIndicator(`✅ "${data.text.trim().slice(0, 20)}..."`, "success");
-              hideIndicator(1500);
-              return;
+              successText = data.text.trim();
             }
           }
-          updateIndicator("Тод ярина уу", "error");
-          hideIndicator();
         } catch {
-          updateIndicator("Сервертэй холбогдож чадсангүй", "error");
-          hideIndicator();
+          // If port 3000 fails, try direct python backend
+        }
+
+        // 2. Fallback to Local Python STT Server directly (http://127.0.0.1:8000)
+        if (!successText) {
+          try {
+            const pyRes = await fetch("http://127.0.0.1:8000/transcribe", {
+              method: "POST",
+              body: formData,
+            });
+            if (pyRes.ok) {
+              const pyData = await pyRes.json();
+              if (pyData.text && pyData.text.trim()) {
+                successText = pyData.text.trim();
+              }
+            }
+          } catch {}
+        }
+
+        if (successText) {
+          insertTextAtCursor(successText);
+          updateIndicator(`✅ "${successText.slice(0, 22)}..."`, "success");
+          hideIndicator(1500);
+        } else {
+          updateIndicator("Тод ярина уу эсвэл сервер асаагаарай", "error");
+          hideIndicator(2200);
         }
       };
 

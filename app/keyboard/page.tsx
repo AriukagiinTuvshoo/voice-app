@@ -1,335 +1,226 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { MicIcon, CheckIcon, CopyIcon, SparklesIcon } from "@/components/Icons";
+import { MicIcon, CheckIcon, SparklesIcon, FlowBarIcon } from "@/components/Icons";
 
-export default function KeyboardPage() {
-  const [activeOs, setActiveOs] = useState<"android" | "ios" | "windows">("android");
-  const [originUrl, setOriginUrl] = useState("https://voice-app.onrender.com");
-  const [copiedUrl, setCopiedUrl] = useState(false);
+export default function ComputerVoicePage() {
+  const [copiedKey, setCopiedKey] = useState<string | null>(null);
+  const [localStatus, setLocalStatus] = useState<{
+    nextServer: boolean;
+    pyEngine: boolean;
+    checking: boolean;
+  }>({
+    nextServer: true,
+    pyEngine: false,
+    checking: true,
+  });
 
   useEffect(() => {
-    if (typeof window !== "undefined") {
-      setOriginUrl(window.location.origin);
-      if (/iPhone|iPad|iPod/i.test(navigator.userAgent)) {
-        setActiveOs("ios");
-      } else if (!/Android/i.test(navigator.userAgent)) {
-        setActiveOs("windows");
+    // Check local servers
+    async function checkHealth() {
+      let py = false;
+      try {
+        const res = await fetch("http://127.0.0.1:8000/docs", { method: "HEAD", mode: "no-cors" });
+        py = true;
+      } catch {
+        py = false;
       }
+      setLocalStatus({
+        nextServer: true,
+        pyEngine: py,
+        checking: false,
+      });
     }
+    checkHealth();
   }, []);
 
-  const dictateEndpoint = `${originUrl}/api/ios-dictate`;
-  const apkDownloadUrl =
-    "https://github.com/AriukagiinTuvshoo/voice-app/releases/download/v1.0.0/VOICE-Keyboard.apk";
-  const ipaDownloadUrl =
-    "https://github.com/AriukagiinTuvshoo/voice-app/releases/download/v1.0.0/VOICE-Keyboard-iOS.ipa";
-
-  const copyEndpoint = () => {
-    navigator.clipboard?.writeText(dictateEndpoint);
-    setCopiedUrl(true);
-    setTimeout(() => setCopiedUrl(false), 2000);
+  const copyToClipboard = (text: string, key: string) => {
+    navigator.clipboard?.writeText(text);
+    setCopiedKey(key);
+    setTimeout(() => setCopiedKey(null), 2000);
   };
 
   return (
-    <section className="page">
-      <h1>💻 Компьютерын VOICE & Chrome Өргөтгөл</h1>
-      <p>
-        Facebook, Google хайлт, Word, Excel зэрэг дурын програм дээр{" "}
-        <b>F8 товчоор эсвэл 1 товшилтоор шууд ярьж бичих</b> шийдэл.
-      </p>
-
-      {/* OS Selector Tabs */}
-      <div
-        style={{
-          display: "flex",
-          gap: "10px",
-          marginTop: "20px",
-          borderBottom: "1px solid var(--border)",
-          paddingBottom: "14px",
-          flexWrap: "wrap",
-        }}
-      >
-        <button
-          type="button"
-          onClick={() => setActiveOs("windows")}
-          className="btn-secondary"
+    <section className="page" style={{ maxWidth: "900px", margin: "0 auto" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: "12px", marginBottom: "8px" }}>
+        <div
           style={{
-            background: activeOs === "windows" ? "var(--accent)" : "var(--surface)",
-            color: activeOs === "windows" ? "#fff" : "var(--text)",
-            padding: "10px 20px",
+            width: "42px",
+            height: "42px",
             borderRadius: "12px",
-            fontWeight: 700,
+            background: "linear-gradient(135deg, #6366f1, #8b5cf6)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            color: "#fff",
           }}
         >
-          💻 Windows Компьютер (Ctrl+Alt)
-        </button>
-
-        <button
-          type="button"
-          onClick={() => setActiveOs("android")}
-          className="btn-secondary"
-          style={{
-            background: activeOs === "android" ? "var(--accent)" : "var(--surface)",
-            color: activeOs === "android" ? "#fff" : "var(--text)",
-            padding: "10px 20px",
-            borderRadius: "12px",
-            fontWeight: 700,
-          }}
-        >
-          🤖 Android Гар (APK)
-        </button>
-
-        <button
-          type="button"
-          onClick={() => setActiveOs("ios")}
-          className="btn-secondary"
-          style={{
-            background: activeOs === "ios" ? "var(--accent)" : "var(--surface)",
-            color: activeOs === "ios" ? "#fff" : "var(--text)",
-            padding: "10px 20px",
-            borderRadius: "12px",
-            fontWeight: 700,
-          }}
-        >
-          🍎 iPhone / iOS
-        </button>
+          <FlowBarIcon width={24} height={24} />
+        </div>
+        <div>
+          <h1 style={{ margin: 0, fontSize: "24px" }}>💻 Компьютерын Local VOICE</h1>
+          <p style={{ margin: 0, color: "var(--muted)", fontSize: "14px" }}>
+            Facebook, Google хайлт, Word, Excel зэрэг бүх цонхонд <b>F8</b> дараад шууд ярьж бичих
+          </p>
+        </div>
       </div>
 
-      {/* WINDOWS TAB */}
-      {activeOs === "windows" && (
-        <div style={{ display: "grid", gap: "18px", marginTop: "20px" }}>
-          {/* Method 1: Chrome Extension - Recommended & Block-free */}
-          <div
-            className="settings"
+      {/* Local Server Status Banner */}
+      <div
+        style={{
+          marginTop: "16px",
+          marginBottom: "24px",
+          padding: "12px 18px",
+          borderRadius: "14px",
+          background: "var(--surface)",
+          border: "1px solid var(--border)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          flexWrap: "wrap",
+          gap: "12px",
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+          <span
             style={{
-              background: "linear-gradient(135deg, rgba(16, 185, 129, 0.12), rgba(15, 23, 42, 0.95))",
-              border: "1px solid rgba(16, 185, 129, 0.4)",
+              width: "10px",
+              height: "10px",
+              borderRadius: "50%",
+              background: "#10b981",
+              boxShadow: "0 0 10px #10b981",
             }}
-          >
-            <h2 style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}>
-              <SparklesIcon width={18} height={18} style={{ color: "#10b981" }} />
-              <span>Шилдэг арга: Google Chrome Өргөтгөл (100% Аюулгүй, Windows хэзээ ч блоклохгүй)</span>
-            </h2>
-            <p style={{ marginBottom: "16px" }}>
-              Chrome, Edge хөтөч дээрээ суулгаснаар <b>Google хайлт, Facebook, YouTube, Messenger, Gmail, Word Online</b> зэрэг бүх вэбсайт дээр курсороо тавиад л гар дээрээ <kbd>Alt + Shift + V</kbd> дарж шууд ярьж бичнэ.
-            </p>
-
-            <div style={{ display: "flex", gap: "12px", flexWrap: "wrap", alignItems: "center", marginBottom: "16px" }}>
-              <a
-                href="/api/download/extension"
-                download="VOICE-Chrome-Extension.zip"
-                className="btn-primary"
-                style={{
-                  textDecoration: "none",
-                  padding: "12px 24px",
-                  fontSize: "15px",
-                  borderRadius: "14px",
-                  background: "linear-gradient(135deg, #10b981, #059669)",
-                }}
-              >
-                ⬇️ Chrome Өргөтгөл татах (.zip)
-              </a>
-            </div>
-
-            <div style={{ display: "grid", gap: "8px", fontSize: "13px", lineHeight: 1.6 }}>
-              <div style={{ padding: "8px 12px", background: "var(--subtle)", borderRadius: "10px" }}>
-                <b>1. Татаж задлах:</b> Дээрх ногоон товчоор zip файлаа татаад хавтсанд нь задална.
-              </div>
-              <div style={{ padding: "8px 12px", background: "var(--subtle)", borderRadius: "10px" }}>
-                <b>2. Chrome-д оруулах:</b> Chrome хөтчийн хаягийн мөрөнд <code>chrome://extensions</code> гэж бичиж ороод баруун дээд талын <b>Developer mode</b> асаана. Тэгээд <b>Load unpacked</b> товч дарж задалсан хавтсаа сонгоно.
-              </div>
-              <div style={{ padding: "8px 12px", background: "var(--subtle)", borderRadius: "10px" }}>
-                <b>3. Шууд ярьж бичих:</b> Google хайлтын нүд, Facebook коммент дээр курсороо тавиад <kbd>Alt</kbd> + <kbd>Shift</kbd> + <kbd>V</kbd> дараад ярина!
-              </div>
-            </div>
-          </div>
-
-          {/* Method 2: Windows System-wide Helper (.bat) */}
-          <div className="settings">
-            <h2>Арга 2: Word, Excel офлайн програмд бичих (Windows Helper)</h2>
-            <p style={{ marginBottom: "14px" }}>
-              Хэрэв та зөвхөн хөтөч биш, офлайн <b>Microsoft Word, Excel, Notepad</b> зэрэг бүх цонхонд шууд ярьж бичихийг хүсвэл Windows Helper-ийг ашиглана:
-            </p>
-
-            <div style={{ display: "flex", gap: "12px", flexWrap: "wrap", alignItems: "center", marginBottom: "14px" }}>
-              <a
-                href="/api/download/helper"
-                download="VOICE-Windows-Helper.bat"
-                className="btn-secondary"
-                style={{ textDecoration: "none" }}
-              >
-                ⬇️ Windows Helper татах (.bat)
-              </a>
-            </div>
-
-            <div style={{ padding: "12px 14px", background: "rgba(245, 158, 11, 0.1)", border: "1px solid rgba(245, 158, 11, 0.3)", borderRadius: "12px", fontSize: "13px", lineHeight: 1.6 }}>
-              <b style={{ color: "#f59e0b" }}>⚠️ Windows Smart App Control блоколбол:</b>
-              <br />Windows 11 нь интернетээс татсан үл мэдэгдэх .bat файлыг анхааруулдаг.
-              <br />1. Татсан <code>VOICE-Windows-Helper.bat</code> файл дээрээ <b>Хулганы баруун товч (Right-click) → Properties (Шинж чанар)</b> дарна.
-              <br />2. Доод хэсэгт байх <b>"Unblock" (Блок гаргах)</b> нүдийг чагтлаад <b>OK</b> дарна.
-              <br />3. Одоо файл дээрээ давхар товшиж ажиллуулаад <kbd>Ctrl + Alt</kbd> дарж чөлөөтэй бичнэ!
-            </div>
-          </div>
+          />
+          <span style={{ fontSize: "13px", fontWeight: 600 }}>
+            Локал горим (100% Local PC): Вэб сервер <span style={{ color: "#10b981" }}>Бэлэн</span>
+          </span>
         </div>
-      )}
 
-      {/* ANDROID TAB */}
-      {activeOs === "android" && (
-        <div style={{ display: "grid", gap: "18px", marginTop: "20px" }}>
-          {/* Visual Mockup of the Android Keyboard */}
-          <div
-            className="settings"
-            style={{
-              background: "linear-gradient(135deg, rgba(99, 102, 241, 0.12), rgba(15, 23, 42, 0.95))",
-              border: "1px solid rgba(99, 102, 241, 0.4)",
-            }}
-          >
-            <h2 style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}>
-              <MicIcon width={18} height={18} style={{ color: "var(--accent)" }} />
-              <span>VOICE Keyboard (Android Системийн Гар)</span>
-            </h2>
-            <p style={{ marginBottom: "16px" }}>
-              Суулгасны дараа таны утасны гар дээр <b>🇲🇳 Монгол Кирилл үсэгнүүд</b> болон дээд хэсэгт нь{" "}
-              <b>🎤 Дарж ярих (VOICE AI)</b> товч гарч ирнэ. Chrome эсвэл Google-ийн хайлтын хэсэг дээр дараад{" "}
-              <b>🎤</b> товчоо дарж ярихад текст шууд бичигдэнэ!
-            </p>
-
-            <div style={{ display: "flex", gap: "12px", flexWrap: "wrap", alignItems: "center" }}>
-              <a
-                href={apkDownloadUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="btn-primary"
-                style={{
-                  textDecoration: "none",
-                  padding: "12px 24px",
-                  fontSize: "15px",
-                  borderRadius: "14px",
-                }}
-              >
-                ⬇️ VOICE-Keyboard.apk Татах (Android)
-              </a>
-
-              <a
-                href="https://github.com/AriukagiinTuvshoo/voice-app/actions"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="btn-secondary"
-                style={{ textDecoration: "none", fontSize: "13px" }}
-              >
-                ⚙️ GitHub Build Төлөв харах
-              </a>
-            </div>
-          </div>
-
-          <div className="settings">
-            <h2>Android утсанд суулгах 3 алхам:</h2>
-            <div style={{ display: "grid", gap: "12px", marginTop: "12px", fontSize: "14px", lineHeight: 1.6 }}>
-              <div style={{ padding: "12px 16px", background: "var(--subtle)", borderRadius: "12px" }}>
-                <b>1. APK татаж суулгах:</b> Дээрх <b>VOICE-Keyboard.apk Татах</b> товч дээр дарж татаад утсандаа{" "}
-                <i>Install</i> хийнэ.
-              </div>
-              <div style={{ padding: "12px 16px", background: "var(--subtle)", borderRadius: "12px" }}>
-                <b>2. Зөвшөөрөл ба Идэвхжүүлэх:</b> Суусан <b>VOICE Keyboard</b> аппыг нээгээд:
-                <br />• <b>1-р алхам:</b> Микрофон зөвшөөрөх
-                <br />• <b>2-р алхам:</b> Гарын тохиргоо руу орж <i>VOICE Keyboard</i>-ийг асаах
-                <br />• <b>3-р алхам:</b> Үндсэн гараар <i>VOICE Keyboard</i> сонгох
-              </div>
-              <div style={{ padding: "12px 16px", background: "var(--subtle)", borderRadius: "12px" }}>
-                <b>3. Серверийн хаяг тохируулах:</b> Апп доторх серверийн хаяг дээр таны онлайн хаяг (
-                <code>{originUrl}</code>) байгаа эсэхийг шалгаад <b>Хадгалах</b> дарна. Одоо Chrome, Google, Messenger дээр шууд ярьж бичээрэй!
-              </div>
-            </div>
-          </div>
+        <div style={{ fontSize: "12px", color: "var(--muted)" }}>
+          Шууд ажиллуулах: <code>Start-VOICE-App.bat</code>
         </div>
-      )}
+      </div>
 
-      {/* iOS / iPHONE TAB */}
-      {activeOs === "ios" && (
-        <div style={{ display: "grid", gap: "18px", marginTop: "20px" }}>
-          {/* Method 1: Instant iPhone Shortcut + Back Tap / Action Button */}
-          <div
-            className="settings"
-            style={{
-              background: "linear-gradient(135deg, rgba(16, 185, 129, 0.10), rgba(15, 23, 42, 0.95))",
-              border: "1px solid rgba(16, 185, 129, 0.4)",
-            }}
-          >
-            <h2 style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}>
-              <SparklesIcon width={18} height={18} style={{ color: "#10b981" }} />
-              <span>Арга 1: iPhone дээр 30 секундэд шууд ажиллуулах (App Store шаардлагагүй)</span>
+      {/* 2 Main Solutions for PC */}
+      <div style={{ display: "grid", gap: "20px" }}>
+        
+        {/* Solution 1: Chrome & Edge Extension */}
+        <div
+          className="settings"
+          style={{
+            background: "linear-gradient(135deg, rgba(16, 185, 129, 0.12), rgba(15, 23, 42, 0.95))",
+            border: "1px solid rgba(16, 185, 129, 0.4)",
+            padding: "24px",
+            borderRadius: "18px",
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "12px", marginBottom: "12px" }}>
+            <h2 style={{ display: "flex", alignItems: "center", gap: "10px", margin: 0, fontSize: "18px" }}>
+              <SparklesIcon width={20} height={20} style={{ color: "#10b981" }} />
+              <span>1. Google Chrome Өргөтгөл (Хамгийн хялбар - Вэб сайтуудад)</span>
             </h2>
-            <p style={{ marginBottom: "14px" }}>
-              iPhone-ийн өөрийн <b>Shortcuts (Богино холбоос)</b> болон <b>Back Tap (Утасны ар талд 2 товших)</b> эсвэл{" "}
-              <b>Action Button</b> ашиглан Chrome, Safari, Google, Messenger-ийн аль ч бичих нүдэн дээр ярьж бичих боломжтой:
-            </p>
-
-            <div
+            <span
               style={{
-                padding: "12px 14px",
-                background: "var(--subtle)",
-                borderRadius: "12px",
-                border: "1px solid var(--border)",
-                marginBottom: "14px",
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "center",
-                gap: "10px",
-                flexWrap: "wrap",
+                fontSize: "11px",
+                fontWeight: 700,
+                color: "#10b981",
+                padding: "4px 10px",
+                background: "rgba(16, 185, 129, 0.2)",
+                borderRadius: "20px",
               }}
             >
-              <div style={{ fontSize: "13px" }}>
-                <div style={{ color: "var(--muted)", fontSize: "11px" }}>iPhone Dictation API хаяг:</div>
-                <code style={{ color: "var(--accent)", fontWeight: 700, wordBreak: "break-all" }}>
-                  {dictateEndpoint}
-                </code>
-              </div>
-              <button type="button" onClick={copyEndpoint} className="btn-secondary" style={{ fontSize: "12px" }}>
-                {copiedUrl ? <CheckIcon width={14} height={14} /> : <CopyIcon width={14} height={14} />}
-                <span>{copiedUrl ? "Хуулагдлаа!" : "Хаяг хуулах"}</span>
-              </button>
-            </div>
-
-            <div style={{ display: "grid", gap: "10px", fontSize: "13px", lineHeight: 1.6 }}>
-              <div style={{ padding: "10px 14px", background: "var(--subtle)", borderRadius: "10px" }}>
-                <b>Алхам 1:</b> iPhone дээрх <b>Shortcuts</b> апп руу ороод <b>+</b> дарж шинэ Shortcut үүсгэнэ.
-              </div>
-              <div style={{ padding: "10px 14px", background: "var(--subtle)", borderRadius: "10px" }}>
-                <b>Алхам 2:</b> <b>Record Audio</b> үйлдэл нэмнэ (<i>Stop Recording: On Tap</i>).
-              </div>
-              <div style={{ padding: "10px 14px", background: "var(--subtle)", borderRadius: "10px" }}>
-                <b>Алхам 3:</b> <b>Get Contents of URL</b> нэмээд URL дээр дээрх хуулсан хаягаа тавина:{" "}
-                <br />• <i>Method:</i> <b>POST</b>
-                <br />• <i>Request Body:</i> <b>Form</b> → <code>audio</code> (Type: <b>File</b> = Recorded Audio)
-              </div>
-              <div style={{ padding: "10px 14px", background: "var(--subtle)", borderRadius: "10px" }}>
-                <b>Алхам 4:</b> <b>Copy to Clipboard</b> үйлдэл нэмээд хадгална. Дараа нь iPhone-ийн{" "}
-                <b>Settings → Accessibility → Touch → Back Tap → Double Tap</b> дээр энэ Shortcut-аа сонгоход та Chrome/Google дээр байхдаа утасныхаа ар талд 2 товшоод л шууд ярьж бичнэ!
-              </div>
-            </div>
+              100% Аюулгүй / Блокгүй
+            </span>
           </div>
 
-          {/* Method 2: Native iOS Keyboard Extension (.ipa) */}
-          <div className="settings">
-            <h2>Арга 2: iPhone Системийн Гар (VOICE-Keyboard-iOS.ipa)</h2>
-            <p style={{ marginBottom: "14px" }}>
-              Бид iPhone-д зориулсан бүрэн <b>iOS Keyboard Extension (Swift)</b> эх код болон <code>.ipa</code> файлыг мөн бэлдсэн. Хэрэв танд <b>AltStore / Sideloadly</b> эсвэл <b>Xcode</b> байгаа бол утсандаа системийн гар болгон суулгаж болно:
-            </p>
-            <div style={{ display: "flex", gap: "12px", flexWrap: "wrap" }}>
-              <a
-                href={ipaDownloadUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="btn-secondary"
-                style={{ textDecoration: "none" }}
-              >
-                ⬇️ VOICE-Keyboard-iOS.ipa Татах
-              </a>
+          <p style={{ color: "var(--muted)", fontSize: "14px", lineHeight: 1.6, marginBottom: "16px" }}>
+            Chrome болон Edge хөтөч дээрээ суулгаснаар <b>Facebook, Google хайлт, YouTube, Messenger, Gmail</b> зэрэг бүх сайт дээр курсороо тавиад л гар дээрх <b>F8</b> товчоор эсвэл дэлгэцийн баруун доод буланд гарах <b>🎤 VOICE</b> товч дээр товшиж шууд ярьж бичнэ.
+          </p>
+
+          <div style={{ display: "flex", gap: "12px", flexWrap: "wrap", alignItems: "center", marginBottom: "20px" }}>
+            <a
+              href="/api/download/extension"
+              download="VOICE-Chrome-Extension.zip"
+              className="btn-primary"
+              style={{
+                textDecoration: "none",
+                padding: "12px 24px",
+                fontSize: "14px",
+                borderRadius: "14px",
+                background: "linear-gradient(135deg, #10b981, #059669)",
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "8px",
+                fontWeight: 700,
+              }}
+            >
+              ⬇️ Chrome Өргөтгөл татах (.zip)
+            </a>
+          </div>
+
+          <div style={{ display: "grid", gap: "10px", fontSize: "13px", lineHeight: 1.6 }}>
+            <div style={{ padding: "10px 14px", background: "var(--subtle)", borderRadius: "12px", display: "flex", gap: "10px" }}>
+              <span style={{ fontWeight: 700, color: "#10b981" }}>1.</span>
+              <div>
+                <b>Задлах:</b> Татсан <code>VOICE-Chrome-Extension.zip</code> файлыг компьютерынхоо дурын хавтсанд задлана (Extract).
+              </div>
+            </div>
+
+            <div style={{ padding: "10px 14px", background: "var(--subtle)", borderRadius: "12px", display: "flex", gap: "10px" }}>
+              <span style={{ fontWeight: 700, color: "#10b981" }}>2.</span>
+              <div>
+                <b>Chrome-д оруулах:</b> Chrome-ын хаягийн мөрөнд <code>chrome://extensions</code> гэж бичиж ороод баруун дээд буланд байх <b>Developer mode</b>-ийг асаана. Тэгээд <b>Load unpacked</b> товч дарж задалсан хавтсаа сонгоно.
+              </div>
+            </div>
+
+            <div style={{ padding: "10px 14px", background: "var(--subtle)", borderRadius: "12px", display: "flex", gap: "10px" }}>
+              <span style={{ fontWeight: 700, color: "#10b981" }}>3.</span>
+              <div>
+                <b>Шууд ярьж бичих:</b> Facebook коммент, Google хайлт дээр курсороо тавиад л <b>F8</b> товчоо дараад ярина!
+              </div>
             </div>
           </div>
         </div>
-      )}
+
+        {/* Solution 2: Offline Windows Desktop Helper */}
+        <div
+          className="settings"
+          style={{
+            background: "var(--surface)",
+            border: "1px solid var(--border)",
+            padding: "24px",
+            borderRadius: "18px",
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "12px", marginBottom: "12px" }}>
+            <h2 style={{ display: "flex", alignItems: "center", gap: "10px", margin: 0, fontSize: "18px" }}>
+              <MicIcon width={20} height={20} style={{ color: "var(--accent)" }} />
+              <span>2. Windows Бүх Програмд Бичих (Microsoft Word, Excel, Notepad)</span>
+            </h2>
+          </div>
+
+          <p style={{ color: "var(--muted)", fontSize: "14px", lineHeight: 1.6, marginBottom: "16px" }}>
+            Хэрэв та Microsoft Word, Excel, Notepad, Telegram зэрэг компьютерынхаа ямар ч цонхонд шууд ярьж бичихийг хүсвэл төслийн үндсэн хавтас дахь файлыг ашиглана:
+          </p>
+
+          <div style={{ display: "grid", gap: "12px", fontSize: "13px" }}>
+            <div style={{ padding: "12px 16px", background: "var(--subtle)", borderRadius: "12px" }}>
+              <b>📌 Ажиллуулах арга:</b>
+              <br />
+              Төслийн хавтас доторх <code>Install-VOICE-Helper.bat</code> файл дээр 1 удаа давхар товшиж ажиллуулна.
+              <br />
+              Одоо Word эсвэл дурын програм дээр курсороо тавиад <b>F8</b> (эсвэл <kbd>Ctrl + Alt</kbd>) дарж шууд ярина.
+            </div>
+
+            <div style={{ padding: "12px 16px", background: "rgba(99, 102, 241, 0.1)", border: "1px solid rgba(99, 102, 241, 0.3)", borderRadius: "12px" }}>
+              <b style={{ color: "#a5b4fc" }}>🚀 Аппликейшнийг 1 даралтаар эхлүүлэх:</b>
+              <br />
+              <code>Start-VOICE-App.bat</code> файл дээр товшвол яриа таних хиймэл оюун болон дэлгэцийн цонх автоматаар нээгдэнэ.
+            </div>
+          </div>
+        </div>
+
+      </div>
     </section>
   );
 }
