@@ -11,6 +11,7 @@ export async function GET() {
     const res = await fetch(LOCAL_HEALTH_URL, {
       method: "GET",
       signal: ctrl.signal,
+      cache: "no-store",
     });
     clearTimeout(timeout);
 
@@ -37,6 +38,8 @@ export async function POST(req: NextRequest) {
     const voice = body.voice || body.voiceId || "mn-MN-YesuiNeural";
     const speed = body.speed ?? 1.0;
     const pitch = body.pitch ?? 1.0;
+    const preset = body.preset ?? "broadcast";
+    const timbreStrength = body.timbreStrength ?? 0.92;
 
     if (!text) {
       return NextResponse.json(
@@ -45,28 +48,35 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 1. Try local Python TTS server
+    // 1. Try local Python VoiceStudio TTS server
     try {
       const ctrl = new AbortController();
-      const timeout = setTimeout(() => ctrl.abort(), 20000);
+      const timeout = setTimeout(() => ctrl.abort(), 25000);
 
       const pyRes = await fetch(LOCAL_TTS_URL, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text, voice, speed, pitch }),
+        body: JSON.stringify({
+          text,
+          voice,
+          speed,
+          pitch,
+          preset,
+          timbreStrength,
+        }),
         signal: ctrl.signal,
       });
 
       clearTimeout(timeout);
 
       if (pyRes.ok) {
-        const contentType = pyRes.headers.get("content-type") || "audio/mpeg";
+        const contentType = pyRes.headers.get("content-type") || "audio/wav";
         const audioBuffer = await pyRes.arrayBuffer();
         return new NextResponse(audioBuffer, {
           headers: {
             "Content-Type": contentType,
-            "Content-Disposition": 'inline; filename="speech.mp3"',
-            "X-TTS-Source": "local-python-server",
+            "Content-Disposition": 'inline; filename="speech.wav"',
+            "X-TTS-Source": "local-voicestudio-server",
           },
         });
       }
@@ -74,11 +84,14 @@ export async function POST(req: NextRequest) {
       console.warn("Local TTS server not responding, using preview chime:", e);
     }
 
-    // 2. Fallback: Friendly sound preview if local server is not running yet
+    // 2. Fallback preview chime if local server is offline
     const duration = Math.min(2.5, Math.max(0.8, text.length * 0.05));
     const samplesCount = Math.floor(16000 * duration);
     const samples = new Float32Array(samplesCount);
-    const baseFreq = voice.toLowerCase().includes("bataa") || voice.toLowerCase().includes("male") ? 330 : 520;
+    const baseFreq =
+      voice.toLowerCase().includes("bataa") || voice.toLowerCase().includes("male")
+        ? 330
+        : 520;
 
     for (let i = 0; i < samplesCount; i++) {
       const t = i / 16000;

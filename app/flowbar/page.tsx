@@ -44,10 +44,11 @@ export default function FlowBarPage() {
     setErrorMessage("");
 
     try {
-      let text = "";
+      let browserText = "";
+      let serverText = "";
 
       if (browserRecognizerRef.current) {
-        text = await browserRecognizerRef.current.stop();
+        browserText = await browserRecognizerRef.current.stop();
         browserRecognizerRef.current = null;
       }
 
@@ -55,19 +56,23 @@ export default function FlowBarPage() {
         const wavBlob = await recorderRef.current.stop();
         recorderRef.current = null;
 
-        if (!text || !text.trim()) {
-          const formData = new FormData();
-          formData.append("audio", wavBlob, "speech.wav");
+        const formData = new FormData();
+        formData.append("audio", wavBlob, "speech.wav");
+        formData.append("language", settings.language);
 
-          const res = await fetch("/api/chimege/transcribe", {
-            method: "POST",
-            body: formData,
-          });
+        const res = await fetch("/api/chimege/transcribe", {
+          method: "POST",
+          body: formData,
+        });
 
-          const data = await res.json().catch(() => ({}));
-          text = data.text || "";
-        }
+        const data = await res.json().catch(() => ({}));
+        serverText = (data.text || "").trim();
       }
+
+      const text =
+        serverText.length >= browserText.length
+          ? serverText || browserText
+          : browserText || serverText;
 
       if (!text || !text.trim()) {
         setErrorMessage("Сонсогдсонгүй");
@@ -80,23 +85,30 @@ export default function FlowBarPage() {
         mode: settings.processingMode,
         autoPunctuation: settings.autoPunctuation,
         removeFillers: settings.removeFillers,
+        language: settings.language,
       });
 
       HistoryStore.add({
         text: processed,
         rawText: text,
         durationSeconds: seconds,
-        language: "mn",
+        language: settings.language,
         engine: "Voice FlowBar",
         wordCount: processed.split(/\s+/).length,
         charCount: processed.length,
       });
 
+      // Type directly into active window via Python Win32 SendInput + Electron + Clipboard
+      navigator.clipboard?.writeText(processed).catch(() => {});
+      await fetch("/api/flowbar", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ insertText: processed }),
+      }).catch(() => {});
+
       const win = typeof window !== "undefined" ? (window as unknown as IWindowWithElectron) : null;
       if (win?.electron?.insertText) {
         win.electron.insertText(processed);
-      } else {
-        navigator.clipboard?.writeText(processed);
       }
 
       setState("success");
@@ -169,11 +181,11 @@ export default function FlowBarPage() {
         onClick={toggleRecording}
         style={{
           cursor: "pointer",
-          borderRadius: state === "idle" ? "14px" : "20px",
-          transition: "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
+          borderRadius: "999px",
+          transition: "all 0.25s cubic-bezier(0.4, 0, 0.2, 1)",
           background:
             state === "idle"
-              ? "rgba(15, 19, 26, 0.88)"
+              ? "rgba(15, 19, 26, 0.92)"
               : state === "recording"
               ? "linear-gradient(135deg, #ef4444 0%, #dc2626 100%)"
               : state === "processing"
@@ -186,34 +198,34 @@ export default function FlowBarPage() {
           alignItems: "center",
           justifyContent: "center",
           gap: "8px",
-          padding: state === "idle" ? "6px 16px" : "8px 20px",
+          padding: "8px 18px",
           boxShadow:
             state === "recording"
               ? "0 0 35px rgba(239, 68, 68, 0.6)"
               : state === "processing"
               ? "0 0 30px rgba(99, 102, 241, 0.5)"
               : "0 10px 30px rgba(0, 0, 0, 0.35)",
-          border: "1px solid rgba(255, 255, 255, 0.12)",
+          border: "1px solid rgba(255, 255, 255, 0.16)",
           backdropFilter: "blur(20px)",
           WebkitBackdropFilter: "blur(20px)",
-          minWidth: state === "idle" ? "120px" : "200px",
-          height: state === "idle" ? "28px" : "36px",
+          minWidth: "160px",
+          height: "38px",
           userSelect: "none",
         }}
       >
         {state === "idle" && (
           <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-            <MicIcon width={13} height={13} style={{ color: "var(--accent)" }} />
-            <span style={{ fontSize: "11px", fontWeight: 700, letterSpacing: "0.08em" }}>
-              VOICE FLOW
+            <MicIcon width={14} height={14} style={{ color: "#818cf8" }} />
+            <span style={{ fontSize: "11px", fontWeight: 700, letterSpacing: "0.06em" }}>
+              VOICE FLOW (Ctrl+Alt)
             </span>
           </div>
         )}
 
         {state === "recording" && (
           <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-            <span style={{ width: "7px", height: "7px", borderRadius: "50%", background: "#fff", animation: "pulse 1s infinite" }} />
-            <span style={{ fontSize: "12px", fontWeight: 700 }}>{seconds}s</span>
+            <span style={{ width: "7px", height: "7px", borderRadius: "50%", background: "#fff" }} />
+            <span style={{ fontSize: "12px", fontWeight: 700 }}>{seconds}с</span>
             <div style={{ display: "flex", alignItems: "center", gap: "2px", height: "18px" }}>
               {audioLevels.map((lvl, i) => (
                 <div
@@ -233,7 +245,7 @@ export default function FlowBarPage() {
 
         {state === "processing" && (
           <span style={{ fontSize: "12px", fontWeight: 600 }}>
-            Боловсруулж байна...
+            Текст болгож байна...
           </span>
         )}
 

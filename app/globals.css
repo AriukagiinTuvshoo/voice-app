@@ -216,6 +216,7 @@ a {
 .main {
   margin-left: 240px;
   flex: 1;
+  width: calc(100% - 240px);
   min-height: 100vh;
   display: flex;
   flex-direction: column;
@@ -223,16 +224,19 @@ a {
 
 .topbar {
   height: 64px;
+  width: 100%;
+  flex-shrink: 0;
   padding: 0 36px;
   border-bottom: 1px solid var(--border);
   background: var(--surface-glass);
-  backdrop-filter: blur(16px);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
   display: flex;
   align-items: center;
-  justify-content: flex-end;
+  justify-content: space-between;
   position: sticky;
   top: 0;
-  z-index: 10;
+  z-index: 25;
 }
 
 .mobile-brand {
@@ -241,11 +245,24 @@ a {
   font-size: 18px;
 }
 
+.mobile-nav {
+  display: none;
+}
+
+nextjs-portal {
+  display: none !important;
+}
+
+input[type="range"] {
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
 .workspace, .page {
-  max-width: 1040px;
+  max-width: 1080px;
   width: 100%;
   margin: 0 auto;
-  padding: 40px 32px 80px;
+  padding: 36px 36px 80px;
 }
 
 .heading {
@@ -861,7 +878,7 @@ kbd {
 /* Mobile Responsive */
 @media (max-width: 767px) {
   .sidebar { display: none; }
-  .main { margin-left: 0; padding-bottom: 84px; }
+  .main { margin-left: 0; width: 100%; padding-bottom: 84px; }
   .topbar { height: 60px; padding: 0 18px; justify-content: space-between; }
   .mobile-brand { display: flex; align-items: center; gap: 8px; }
   .workspace, .page { padding: 28px 18px 40px; }

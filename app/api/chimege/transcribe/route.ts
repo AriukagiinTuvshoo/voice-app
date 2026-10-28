@@ -8,6 +8,7 @@ export async function POST(req: NextRequest) {
     const contentType = req.headers.get("content-type") || "";
     let audioBuffer: Buffer;
     let token = req.headers.get("x-chimege-token") || process.env.CHIMEGE_API_TOKEN || "";
+    let language = "mn";
 
     if (contentType.includes("multipart/form-data")) {
       const formData = await req.formData();
@@ -20,6 +21,9 @@ export async function POST(req: NextRequest) {
 
       const formToken = formData.get("token") as string | null;
       if (formToken) token = formToken.trim();
+
+      const formLang = formData.get("language") as string | null;
+      if (formLang) language = formLang.trim();
     } else {
       const arrayBuffer = await req.arrayBuffer();
       audioBuffer = Buffer.from(arrayBuffer);
@@ -41,7 +45,7 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // 2. Try Local Python Server STT (Google mn-MN)
+    // 2. Try Local Python Server STT (Google Neural STT mn-MN / en-US / ja-JP with audio normalization)
     try {
       const ctrl = new AbortController();
       const timer = setTimeout(() => ctrl.abort(), 20000);
@@ -49,6 +53,7 @@ export async function POST(req: NextRequest) {
       const pyForm = new FormData();
       const pyBlob = new Blob([audioBuffer], { type: "audio/wav" });
       pyForm.append("audio", pyBlob, "audio.wav");
+      pyForm.append("language", language);
 
       const pyRes = await fetch(LOCAL_STT_URL, {
         method: "POST",
@@ -77,10 +82,9 @@ export async function POST(req: NextRequest) {
       console.warn("Local STT server warning:", e);
     }
 
-    // 3. If neither worked, return empty text with informative message
     return NextResponse.json({
       text: "",
-      error: "Яриа танигдсангүй. Микрофондоо тод ярина уу эсвэл Browser Web Speech сонгоно уу.",
+      error: "Яриа танигдсангүй. Микрофондоо тод ярина уу.",
     });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : "Яриа танихад алдаа гарлаа";

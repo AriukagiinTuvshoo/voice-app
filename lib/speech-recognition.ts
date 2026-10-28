@@ -1,6 +1,5 @@
 import type { Language } from "./types";
 
-// Type definitions for Web Speech API
 interface SpeechRecognitionErrorEvent extends Event {
   error: string;
   message?: string;
@@ -41,12 +40,14 @@ export function isBrowserSpeechSupported(): boolean {
 export class BrowserSpeechRecognizer {
   private recognition: ISpeechRecognition | null = null;
   private isListening: boolean = false;
+  private shouldContinue: boolean = false;
   private finalTranscript: string = "";
+  private lastInterim: string = "";
 
   constructor(
     private options: {
       language: Language;
-      onInterim?: (text: string) => void;
+      onInterim?: (fullPreviewText: string) => void;
       onFinal?: (text: string) => void;
       onError?: (error: string) => void;
     }
@@ -67,9 +68,9 @@ export class BrowserSpeechRecognizer {
       this.recognition.continuous = true;
       this.recognition.interimResults = true;
 
-      // Map language code
       switch (this.options.language) {
         case "mn":
+        case "auto":
           this.recognition.lang = "mn-MN";
           break;
         case "en":
@@ -79,25 +80,36 @@ export class BrowserSpeechRecognizer {
           this.recognition.lang = "ja-JP";
           break;
         default:
-          this.recognition.lang = navigator.language || "en-US";
+          this.recognition.lang = "mn-MN";
           break;
       }
 
       this.finalTranscript = "";
+      this.lastInterim = "";
       this.isListening = true;
+      this.shouldContinue = true;
 
       this.recognition.onresult = (e: SpeechRecognitionEvent) => {
         let interim = "";
         for (let i = e.resultIndex; i < e.results.length; i++) {
           const item = e.results[i];
           if (item.isFinal) {
-            this.finalTranscript += (this.finalTranscript ? " " : "") + item[0].transcript.trim();
+            const seg = item[0].transcript.trim();
+            if (seg) {
+              this.finalTranscript += (this.finalTranscript ? " " : "") + seg;
+            }
           } else {
             interim += item[0].transcript;
           }
         }
-        if (interim) {
-          this.options.onInterim?.(interim);
+        this.lastInterim = interim.trim();
+        const combined = [this.finalTranscript, this.lastInterim]
+          .filter(Boolean)
+          .join(" ")
+          .trim();
+
+        if (combined) {
+          this.options.onInterim?.(combined);
         }
         if (this.finalTranscript) {
           this.options.onFinal?.(this.finalTranscript);
@@ -105,12 +117,20 @@ export class BrowserSpeechRecognizer {
       };
 
       this.recognition.onerror = (e: SpeechRecognitionErrorEvent) => {
-        if (e.error !== "no-speech") {
+        if (e.error !== "no-speech" && e.error !== "aborted") {
           this.options.onError?.(`Speech алдаа: ${e.error}`);
         }
       };
 
       this.recognition.onend = () => {
+        if (this.shouldContinue && this.recognition) {
+          try {
+            this.recognition.start();
+            return;
+          } catch {
+            // Ignore restart error if already stopping
+          }
+        }
         this.isListening = false;
       };
 
@@ -122,24 +142,38 @@ export class BrowserSpeechRecognizer {
   }
 
   stop(): Promise<string> {
+    this.shouldContinue = false;
     return new Promise((resolve) => {
+      const getBestText = () =>
+        [this.finalTranscript, this.lastInterim].filter(Boolean).join(" ").trim();
+
       if (!this.recognition || !this.isListening) {
-        resolve(this.finalTranscript.trim());
+        resolve(getBestText());
         return;
       }
-      this.recognition.onend = () => {
+
+      const timeout = setTimeout(() => {
         this.isListening = false;
-        resolve(this.finalTranscript.trim());
+        resolve(getBestText());
+      }, 600);
+
+      this.recognition.onend = () => {
+        clearTimeout(timeout);
+        this.isListening = false;
+        resolve(getBestText());
       };
+
       try {
         this.recognition.stop();
       } catch {
-        resolve(this.finalTranscript.trim());
+        clearTimeout(timeout);
+        resolve(getBestText());
       }
     });
   }
 
   abort(): void {
+    this.shouldContinue = false;
     if (this.recognition) {
       try {
         this.recognition.abort();

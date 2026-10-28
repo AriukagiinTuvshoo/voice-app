@@ -1,14 +1,12 @@
 const { app, BrowserWindow, globalShortcut, Tray, Menu, ipcMain, clipboard, screen } = require("electron");
 const path = require("path");
-const fs = require("fs");
-const { spawn } = require("child_process");
+const http = require("http");
 
 let mainWindow = null;
 let flowBarWindow = null;
 let tray = null;
 let isRecording = false;
 
-// Ensure single instance like DuudlagaFlow
 const gotTheLock = app.requestSingleInstanceLock();
 if (!gotTheLock) {
   app.quit();
@@ -39,11 +37,11 @@ function initApp() {
 
 function createMainWindow() {
   mainWindow = new BrowserWindow({
-    width: 1200,
-    height: 800,
+    width: 1240,
+    height: 820,
     minWidth: 900,
     minHeight: 600,
-    title: "VOICE — Multilingual Voice & Spellcheck",
+    title: "VOICE — Speak. Clean. Write.",
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
@@ -55,7 +53,6 @@ function createMainWindow() {
   mainWindow.loadURL(url);
 
   mainWindow.on("close", (e) => {
-    // Hide to tray instead of quitting if user closes window
     if (!app.isQuitting) {
       e.preventDefault();
       mainWindow.hide();
@@ -68,15 +65,15 @@ function createFlowBarWindow() {
   const { width, height } = primaryDisplay.workAreaSize;
 
   const barWidth = 240;
-  const barHeight = 48;
+  const barHeight = 52;
   const x = Math.round((width - barWidth) / 2);
-  const y = height - barHeight - 24; // 24px above taskbar
+  const y = height - barHeight - 20;
 
   flowBarWindow = new BrowserWindow({
     width: barWidth,
     height: barHeight,
-    x: x,
-    y: y,
+    x,
+    y,
     frame: false,
     transparent: true,
     alwaysOnTop: true,
@@ -97,9 +94,12 @@ function createFlowBarWindow() {
 }
 
 function createTray() {
-  // Use default or simple tray icon
   const iconPath = path.join(__dirname, "..", "public", "icon.svg");
-  tray = new Tray(iconPath);
+  try {
+    tray = new Tray(iconPath);
+  } catch {
+    return;
+  }
 
   const contextMenu = Menu.buildFromTemplate([
     {
@@ -132,64 +132,55 @@ function createTray() {
 
   tray.setToolTip("VOICE — Duudlaga Flow горим");
   tray.setContextMenu(contextMenu);
-
-  tray.on("double-click", () => {
-    if (mainWindow) {
-      mainWindow.show();
-      mainWindow.focus();
-    }
-  });
 }
 
-function registerGlobalHotkey(hotkey = "CommandOrControl+Alt") {
+function registerGlobalHotkey() {
   globalShortcut.unregisterAll();
-
-  // Register hotkey (like DuudlagaFlow Ctrl+Alt)
-  const ret = globalShortcut.register(hotkey, () => {
-    handleGlobalTrigger();
-  });
-
-  if (!ret) {
-    console.warn(`Global shortcut ${hotkey} registration failed.`);
+  // Note: Ctrl+Alt is handled natively by tts_server.py's Win32 GetAsyncKeyState hook.
+  // Also register Ctrl+Space and Alt+Space in Electron as extra accelerators.
+  for (const accel of ["CommandOrControl+Space", "Alt+Space"]) {
+    try {
+      globalShortcut.register(accel, () => handleGlobalTrigger());
+    } catch {}
   }
 }
 
 function handleGlobalTrigger() {
   if (!isRecording) {
     isRecording = true;
-    // Tell flowBarWindow to start recording
     if (flowBarWindow && flowBarWindow.webContents) {
       flowBarWindow.webContents.send("trigger-recording-start");
     }
   } else {
     isRecording = false;
-    // Tell flowBarWindow to stop and transcribe
     if (flowBarWindow && flowBarWindow.webContents) {
       flowBarWindow.webContents.send("trigger-recording-stop");
     }
   }
 }
 
-// IPC: Insert text into active window
 ipcMain.on("insert-transcribed-text", (event, text) => {
   if (!text || !text.trim()) return;
   clipboard.writeText(text);
 
-  // Paste text into active window (e.g. Word, Telegram, Chrome) on Windows
-  if (process.platform === "win32") {
-    try {
-      const vbsPath = path.join(app.getPath("temp"), "voice_paste.vbs");
-      if (!fs.existsSync(vbsPath)) {
-        fs.writeFileSync(vbsPath, 'Set WshShell = CreateObject("WScript.Shell")\r\nWshShell.SendKeys "^v"\r\n');
-      }
-      setTimeout(() => {
-        spawn("wscript.exe", ["//B", "//Nologo", vbsPath], { detached: true, stdio: "ignore" });
-        console.log("Pasted text into active window:", text);
-      }, 100);
-    } catch (e) {
-      console.warn("Paste error:", e);
-    }
-  }
+  // Forward to tts_server.py Win32 SendInput(KEYEVENTF_UNICODE) endpoint
+  const payload = Buffer.from(JSON.stringify({ text }), "utf-8");
+  const req = http.request(
+    {
+      hostname: "127.0.0.1",
+      port: 8000,
+      path: "/insert-text",
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Content-Length": payload.length,
+      },
+    },
+    () => {}
+  );
+  req.on("error", () => {});
+  req.write(payload);
+  req.end();
 });
 
 app.on("will-quit", () => {

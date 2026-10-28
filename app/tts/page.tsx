@@ -7,7 +7,6 @@ import {
   SparklesIcon,
   CheckIcon,
   WavesIcon,
-  ZapIcon,
   MicIcon,
   TrashIcon,
 } from "@/components/Icons";
@@ -17,6 +16,7 @@ interface GeneratedAudio {
   id: string;
   text: string;
   voiceName: string;
+  presetLabel: string;
   audioUrl: string;
   timestamp: number;
 }
@@ -29,10 +29,23 @@ export interface ClonedVoice {
   pitch: number;
   speed: number;
   f0?: number;
+  formant_centroid?: number;
+  duration?: number;
+  refText?: string;
+  sampleUrl?: string;
   description: string;
   tag: string;
   createdAt: number;
 }
+
+const VOICESTUDIO_PRESETS = [
+  { id: "broadcast", label: "Broadcast", icon: "📻", desc: "Радио/Подкаст жигд стандарт" },
+  { id: "podcast", label: "Podcast", icon: "🎙️", desc: "Ойрын микрофон, гүн баргил" },
+  { id: "warm", label: "Warm", icon: "☀️", desc: "Дулаан, зөөлөн нам давтамж" },
+  { id: "bright", label: "Bright", icon: "✨", desc: "Тод цэвэр, өндөр нягтралтай" },
+  { id: "cinematic", label: "Cinematic", icon: "🎬", desc: "Студийн орон зайн цуурайтай" },
+  { id: "raw", label: "Raw", icon: "🔇", desc: "Нэмэлт эффектгүй" },
+];
 
 const DEFAULT_VOICES = [
   {
@@ -44,33 +57,38 @@ const DEFAULT_VOICES = [
     pitch: 1.0,
     speed: 1.0,
     baseVoice: "mn-MN-YesuiNeural",
+    sampleUrl: "",
+    refText: "",
   },
   {
     id: "mn-MN-BataaNeural",
     name: "Батаа",
     gender: "male" as const,
     description: "Тод цэвэр, өөртөө итгэлтэй, баргил (Эрэгтэй)",
-    tag: "Эрэгтэй",
+    tag: "Үндсэн • Эрэгтэй",
     pitch: 1.0,
     speed: 1.0,
     baseVoice: "mn-MN-BataaNeural",
+    sampleUrl: "",
+    refText: "",
   },
 ];
 
 export default function TTSPage() {
   const [activeTab, setActiveTab] = useState<"standard" | "clone">("standard");
 
-  // Standard TTS State
+  // Synthesis State
   const [text, setText] = useState(
     "Сайн байна уу? Монгол хэлний хиймэл оюуны дуу хоолойн студид тавтай морилно уу."
   );
   const [selectedVoiceId, setSelectedVoiceId] = useState("mn-MN-YesuiNeural");
+  const [selectedPreset, setSelectedPreset] = useState("broadcast");
+  const [timbreStrength, setTimbreStrength] = useState(0.95);
   const [speed, setSpeed] = useState(1.0);
   const [pitch, setPitch] = useState(1.0);
   const [loading, setLoading] = useState(false);
   const [currentAudioUrl, setCurrentAudioUrl] = useState<string | null>(null);
   const [history, setHistory] = useState<GeneratedAudio[]>([]);
-  const [copiedId, setCopiedId] = useState<string | null>(null);
   const [serverOnline, setServerOnline] = useState<boolean | null>(null);
   const [checkingServer, setCheckingServer] = useState(false);
 
@@ -85,18 +103,42 @@ export default function TTSPage() {
   const [recordSeconds, setRecordSeconds] = useState(0);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
-  const sampleAudioRef = useRef<HTMLAudioElement | null>(null);
+  const previewSampleRef = useRef<HTMLAudioElement | null>(null);
   const sampleRecorderRef = useRef<AudioRecorder | null>(null);
   const sampleTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // Load saved cloned voices from localStorage
+  // Load saved cloned voices from server + localStorage
   useEffect(() => {
-    try {
-      const saved = localStorage.getItem("voice_clones");
-      if (saved) {
-        setClonedVoices(JSON.parse(saved));
-      }
-    } catch {}
+    const loadClones = async () => {
+      let localList: ClonedVoice[] = [];
+      try {
+        const saved = localStorage.getItem("voice_clones");
+        if (saved) localList = JSON.parse(saved);
+      } catch {}
+
+      try {
+        const res = await fetch("/api/tts/clone");
+        if (res.ok) {
+          const serverList: ClonedVoice[] = await res.json();
+          if (Array.isArray(serverList) && serverList.length > 0) {
+            const mergedMap = new Map<string, ClonedVoice>();
+            for (const item of serverList) mergedMap.set(item.id, item);
+            for (const item of localList) {
+              if (!mergedMap.has(item.id)) mergedMap.set(item.id, item);
+            }
+            const merged = Array.from(mergedMap.values()).sort(
+              (a, b) => (b.createdAt || 0) - (a.createdAt || 0)
+            );
+            setClonedVoices(merged);
+            localStorage.setItem("voice_clones", JSON.stringify(merged));
+            return;
+          }
+        }
+      } catch {}
+
+      setClonedVoices(localList);
+    };
+    loadClones();
   }, []);
 
   const saveClonedVoices = (voices: ClonedVoice[]) => {
@@ -130,37 +172,43 @@ export default function TTSPage() {
     return () => clearInterval(interval);
   }, []);
 
-  // All voices = default + cloned
   const allVoices = [
     ...DEFAULT_VOICES,
     ...clonedVoices.map((c) => ({
       id: c.id,
       name: c.name,
       gender: c.gender,
-      description: `${c.description} • Хувилсан хоолой`,
-      tag: "Хувилсан",
-      pitch: c.pitch,
-      speed: c.speed,
+      description: c.description || "Хувилсан хоолой",
+      tag: "Хувилсан (Voice Clone)",
+      pitch: c.pitch || 1.0,
+      speed: c.speed || 1.0,
       baseVoice: c.baseVoice,
+      sampleUrl: c.sampleUrl || `/api/tts/clone?id=${c.id}`,
+      refText: c.refText || "",
     })),
   ];
 
   const selectedVoice =
     allVoices.find((v) => v.id === selectedVoiceId) || allVoices[0];
 
+  const isSelectedCloned = selectedVoice.id.startsWith("cloned_");
+
   const handleSynthesize = async () => {
     if (!text.trim()) return;
     setLoading(true);
 
     try {
+      // IMPORTANT: Send selectedVoice.id (e.g. "cloned_xxxx") so tts_server.py applies Cepstral Vocal Tract Timbre Transfer!
       const res = await fetch("/api/tts", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           text: text.trim(),
-          voice: selectedVoice.baseVoice || selectedVoice.id,
-          speed: speed * (selectedVoice.speed || 1.0),
-          pitch: pitch * (selectedVoice.pitch || 1.0),
+          voice: selectedVoice.id,
+          speed,
+          pitch,
+          preset: selectedPreset,
+          timbreStrength,
         }),
       });
 
@@ -173,10 +221,15 @@ export default function TTSPage() {
 
       setCurrentAudioUrl(url);
 
+      const presetObj =
+        VOICESTUDIO_PRESETS.find((p) => p.id === selectedPreset) ||
+        VOICESTUDIO_PRESETS[0];
+
       const newEntry: GeneratedAudio = {
         id: "tts_" + Date.now(),
         text: text.trim(),
         voiceName: selectedVoice.name,
+        presetLabel: `${presetObj.icon} ${presetObj.label}`,
         audioUrl: url,
         timestamp: Date.now(),
       };
@@ -186,12 +239,21 @@ export default function TTSPage() {
         if (audioRef.current) {
           audioRef.current.play().catch(() => {});
         }
-      }, 100);
+      }, 80);
     } catch (err: unknown) {
       console.warn("TTS error:", err);
     } finally {
       setLoading(false);
     }
+  };
+
+  const playReferenceSample = (sampleUrl: string) => {
+    if (!sampleUrl) return;
+    if (!previewSampleRef.current) {
+      previewSampleRef.current = new Audio();
+    }
+    previewSampleRef.current.src = sampleUrl;
+    previewSampleRef.current.play().catch(() => {});
   };
 
   // Recording Sample for Voice Cloning
@@ -274,7 +336,7 @@ export default function TTSPage() {
 
       setSelectedVoiceId(clonedProfile.id);
       setActiveTab("standard");
-      setCloneName("");
+      setCloneName("Миний хоолой");
       setSampleBlob(null);
       setSampleAudioUrl(null);
     } catch (err: unknown) {
@@ -285,12 +347,17 @@ export default function TTSPage() {
     }
   };
 
-  const handleDeleteClonedVoice = (id: string) => {
+  const handleDeleteClonedVoice = async (id: string) => {
     const updated = clonedVoices.filter((v) => v.id !== id);
     saveClonedVoices(updated);
     if (selectedVoiceId === id) {
       setSelectedVoiceId("mn-MN-YesuiNeural");
     }
+    try {
+      await fetch(`/api/tts/clone?id=${encodeURIComponent(id)}`, {
+        method: "DELETE",
+      });
+    } catch {}
   };
 
   const samplePhrases = [
@@ -302,7 +369,7 @@ export default function TTSPage() {
 
   return (
     <section className="page">
-      <small>AI VOICE & CLONING STUDIO</small>
+      <small>VOICESTUDIO AI • ZERO-SHOT TIMBRE & DSP ENGINE</small>
       <div
         style={{
           display: "flex",
@@ -313,9 +380,9 @@ export default function TTSPage() {
         }}
       >
         <div>
-          <h1 style={{ margin: "4px 0 8px" }}>Дуу Хоолойн Студи (VoiceStudio)</h1>
-          <p style={{ maxWidth: "620px" }}>
-            Монгол дуу хоолойгоор уншуулах, эсвэл <b>өөрийн болон дурын хүний хоолойг хувилж (Voice Clone)</b> хүссэн бичвэрээ уншуулаарай.
+          <h1 style={{ margin: "6px 0 10px" }}>Дуу Хоолойн Студи (VoiceStudio)</h1>
+          <p style={{ maxWidth: "660px" }}>
+            Монгол дуу хоолойгоор уншуулах, <b>хүний хоолойн тембр ба формантыг (F₁–F₄) хувилах (Voice Clone)</b> болон студийн <b>Broadcast DSP</b> эффектээр баяжуулах систем.
           </p>
         </div>
 
@@ -359,7 +426,7 @@ export default function TTSPage() {
             {checkingServer
               ? "Шалгаж байна..."
               : serverOnline
-              ? "Voice Сервер Бэлэн (localhost:8000)"
+              ? "VoiceStudio Сервер Бэлэн (localhost:8000)"
               : "Сервер унтарсан (run-tts.bat)"}
           </span>
         </div>
@@ -370,9 +437,10 @@ export default function TTSPage() {
         style={{
           display: "flex",
           gap: "10px",
-          marginTop: "20px",
+          marginTop: "24px",
           borderBottom: "1px solid var(--border)",
-          paddingBottom: "12px",
+          paddingBottom: "14px",
+          flexWrap: "wrap",
         }}
       >
         <button
@@ -381,7 +449,7 @@ export default function TTSPage() {
           style={{
             background: activeTab === "standard" ? "var(--text)" : "var(--surface)",
             color: activeTab === "standard" ? "var(--bg)" : "var(--text)",
-            padding: "8px 18px",
+            padding: "9px 18px",
             borderRadius: "12px",
             fontWeight: 600,
             display: "inline-flex",
@@ -399,7 +467,7 @@ export default function TTSPage() {
           style={{
             background: activeTab === "clone" ? "var(--accent)" : "var(--surface)",
             color: activeTab === "clone" ? "#fff" : "var(--text)",
-            padding: "8px 18px",
+            padding: "9px 18px",
             borderRadius: "12px",
             fontWeight: 600,
             display: "inline-flex",
@@ -421,12 +489,12 @@ export default function TTSPage() {
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px", flexWrap: "wrap", gap: "8px" }}>
               <h2 style={{ margin: 0, display: "flex", alignItems: "center", gap: "8px" }}>
                 <VolumeIcon width={18} height={18} style={{ color: "var(--accent)" }} />
-                <span>Дуу хоолой сонгох</span>
+                <span>1. Дуу хоолой сонгох</span>
               </h2>
               <button
                 onClick={() => setActiveTab("clone")}
                 className="btn-secondary"
-                style={{ fontSize: "12px", padding: "6px 12px", display: "inline-flex", alignItems: "center", gap: "6px" }}
+                style={{ fontSize: "12px", padding: "6px 14px", display: "inline-flex", alignItems: "center", gap: "6px" }}
               >
                 <SparklesIcon width={14} height={14} style={{ color: "var(--accent)" }} />
                 <span>+ Шинэ хоолой хувилах</span>
@@ -436,14 +504,14 @@ export default function TTSPage() {
             <div
               style={{
                 display: "grid",
-                gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
+                gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))",
                 gap: "14px",
               }}
             >
               {allVoices.map((voice) => {
                 const isSelected = selectedVoiceId === voice.id;
                 const isFemale = voice.gender === "female";
-                const isCloned = voice.tag === "Хувилсан";
+                const isCloned = voice.id.startsWith("cloned_");
                 return (
                   <div
                     key={voice.id}
@@ -460,7 +528,6 @@ export default function TTSPage() {
                         : "var(--shadow-sm)",
                       cursor: "pointer",
                       transition: "all 0.2s cubic-bezier(0.4, 0, 0.2, 1)",
-                      transform: isSelected ? "scale(1.02)" : "scale(1)",
                       position: "relative",
                     }}
                   >
@@ -474,8 +541,8 @@ export default function TTSPage() {
                       <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
                         <div
                           style={{
-                            width: "36px",
-                            height: "36px",
+                            width: "38px",
+                            height: "38px",
                             borderRadius: "50%",
                             background: isCloned
                               ? "linear-gradient(135deg, #8b5cf6, #d946ef)"
@@ -486,7 +553,7 @@ export default function TTSPage() {
                             alignItems: "center",
                             justifyContent: "center",
                             color: "#fff",
-                            fontSize: "15px",
+                            fontSize: "16px",
                             fontWeight: 700,
                             boxShadow: isCloned ? "0 0 12px rgba(217, 70, 239, 0.4)" : "none",
                           }}
@@ -521,49 +588,118 @@ export default function TTSPage() {
                         />
                       )}
                     </div>
+
                     <p
                       style={{
-                        margin: "12px 0 0",
-                        fontSize: "13px",
+                        margin: "10px 0 0",
+                        fontSize: "12px",
                         color: "var(--muted)",
-                        lineHeight: 1.4,
+                        lineHeight: 1.45,
                       }}
                     >
                       {voice.description}
                     </p>
 
-                    {isCloned && (
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleDeleteClonedVoice(voice.id);
-                        }}
+                    {isCloned && voice.refText && (
+                      <div
                         style={{
-                          position: "absolute",
-                          bottom: "10px",
-                          right: "12px",
-                          background: "none",
+                          marginTop: "6px",
+                          fontSize: "11px",
                           color: "var(--muted)",
-                          padding: "4px",
-                          borderRadius: "6px",
+                          fontStyle: "italic",
                         }}
-                        title="Хоолойг устгах"
                       >
-                        <TrashIcon width={14} height={14} />
-                      </button>
+                        Эх дээж: &ldquo;{voice.refText.slice(0, 48)}&rdquo;
+                      </div>
+                    )}
+
+                    {isCloned && (
+                      <div
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "space-between",
+                          marginTop: "10px",
+                          paddingTop: "8px",
+                          borderTop: "1px solid var(--border)",
+                        }}
+                      >
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            playReferenceSample(voice.sampleUrl || `/api/tts/clone?id=${voice.id}`);
+                          }}
+                          className="btn-secondary"
+                          style={{ fontSize: "11px", padding: "4px 10px" }}
+                          title="Таны бичсэн эх дуу хоолойн дээжийг сонсох"
+                        >
+                          <PlayIcon width={12} height={12} />
+                          <span>Эх хоолой сонсох</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleDeleteClonedVoice(voice.id);
+                          }}
+                          style={{
+                            background: "none",
+                            color: "var(--muted)",
+                            padding: "4px 6px",
+                            borderRadius: "6px",
+                          }}
+                          title="Хоолойг устгах"
+                        >
+                          <TrashIcon width={14} height={14} />
+                        </button>
+                      </div>
                     )}
                   </div>
                 );
               })}
             </div>
 
-            {/* Speed & Pitch Controls */}
+            {/* VoiceStudio Audio DSP Presets */}
+            <div style={{ marginTop: "20px", paddingTop: "16px", borderTop: "1px solid var(--border)" }}>
+              <div style={{ fontSize: "13px", fontWeight: 600, marginBottom: "10px" }}>
+                🎚️ VoiceStudio Аудио Мастеринг & Эффект (DSP Preset):
+              </div>
+              <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+                {VOICESTUDIO_PRESETS.map((p) => {
+                  const active = selectedPreset === p.id;
+                  return (
+                    <button
+                      key={p.id}
+                      type="button"
+                      onClick={() => setSelectedPreset(p.id)}
+                      className="btn-secondary"
+                      style={{
+                        padding: "7px 14px",
+                        borderRadius: "10px",
+                        fontSize: "12px",
+                        borderColor: active ? "var(--accent)" : undefined,
+                        background: active ? "rgba(99, 102, 241, 0.14)" : undefined,
+                        fontWeight: active ? 700 : 500,
+                      }}
+                      title={p.desc}
+                    >
+                      <span>{p.icon}</span>
+                      <span>{p.label}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Speed, Pitch & Timbre Strength Controls */}
             <div
               style={{
                 display: "grid",
                 gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
-                gap: "16px",
-                marginTop: "20px",
+                gap: "18px",
+                marginTop: "18px",
                 paddingTop: "16px",
                 borderTop: "1px solid var(--border)",
               }}
@@ -582,14 +718,15 @@ export default function TTSPage() {
                 </div>
                 <input
                   type="range"
-                  min="0.5"
-                  max="1.5"
-                  step="0.1"
+                  min="0.6"
+                  max="1.4"
+                  step="0.05"
                   value={speed}
                   onChange={(e) => setSpeed(parseFloat(e.target.value))}
                   style={{ width: "100%" }}
                 />
               </div>
+
               <div>
                 <div
                   style={{
@@ -604,14 +741,39 @@ export default function TTSPage() {
                 </div>
                 <input
                   type="range"
-                  min="0.7"
-                  max="1.3"
+                  min="0.75"
+                  max="1.25"
                   step="0.05"
                   value={pitch}
                   onChange={(e) => setPitch(parseFloat(e.target.value))}
                   style={{ width: "100%" }}
                 />
               </div>
+
+              {isSelectedCloned && (
+                <div>
+                  <div
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      fontSize: "13px",
+                      marginBottom: "8px",
+                    }}
+                  >
+                    <span>Хоолойн тембр ижилсэлт</span>
+                    <b>{Math.round(timbreStrength * 100)}%</b>
+                  </div>
+                  <input
+                    type="range"
+                    min="0.3"
+                    max="1.0"
+                    step="0.05"
+                    value={timbreStrength}
+                    onChange={(e) => setTimbreStrength(parseFloat(e.target.value))}
+                    style={{ width: "100%" }}
+                  />
+                </div>
+              )}
             </div>
           </div>
 
@@ -638,7 +800,7 @@ export default function TTSPage() {
                   height={18}
                   style={{ color: "var(--accent)" }}
                 />
-                <span>Уншуулах бичвэр</span>
+                <span>2. Уншуулах бичвэр</span>
               </h2>
               <span style={{ fontSize: "12px", color: "var(--muted)" }}>
                 {text.length} тэмдэгт • ~{Math.ceil(text.length / 15)} сек
@@ -688,7 +850,7 @@ export default function TTSPage() {
                   className="suggestion-pill"
                   onClick={() => setText(phrase)}
                 >
-                  {phrase.slice(0, 30)}...
+                  {phrase.slice(0, 32)}...
                 </button>
               ))}
             </div>
@@ -716,24 +878,12 @@ export default function TTSPage() {
                   borderRadius: "14px",
                 }}
               >
-                {loading ? (
-                  <>
-                    <span
-                      className="spinner"
-                      style={{
-                        width: "16px",
-                        height: "16px",
-                        borderWidth: "2px",
-                      }}
-                    />
-                    <span>Дуу үүсгэж байна...</span>
-                  </>
-                ) : (
-                  <>
-                    <VolumeIcon width={20} height={20} />
-                    <span>Яриулах ({selectedVoice.name})</span>
-                  </>
-                )}
+                <VolumeIcon width={20} height={20} />
+                <span>
+                  {loading
+                    ? "Дуу үүсгэж байна..."
+                    : `Яриулах (${selectedVoice.name})`}
+                </span>
               </button>
 
               {currentAudioUrl && (
@@ -765,9 +915,9 @@ export default function TTSPage() {
             <div
               className="settings"
               style={{
-                border: "1px solid rgba(99, 102, 241, 0.3)",
+                border: "1px solid rgba(99, 102, 241, 0.35)",
                 background:
-                  "linear-gradient(135deg, rgba(99, 102, 241, 0.05), rgba(168, 85, 247, 0.05))",
+                  "linear-gradient(135deg, rgba(99, 102, 241, 0.07), rgba(168, 85, 247, 0.07))",
               }}
             >
               <div
@@ -775,7 +925,7 @@ export default function TTSPage() {
                   display: "flex",
                   justifyContent: "space-between",
                   alignItems: "center",
-                  marginBottom: "16px",
+                  marginBottom: "14px",
                   flexWrap: "wrap",
                   gap: "12px",
                 }}
@@ -786,60 +936,40 @@ export default function TTSPage() {
                       width: "44px",
                       height: "44px",
                       borderRadius: "14px",
-                      background:
-                        "linear-gradient(135deg, var(--accent), var(--accent-gradient-to))",
+                      background: "var(--accent-gradient)",
                       display: "flex",
                       alignItems: "center",
                       justifyContent: "center",
                       color: "#fff",
-                      boxShadow: "0 8px 16px rgba(99, 102, 241, 0.3)",
                     }}
                   >
                     <WavesIcon width={22} height={22} />
                   </div>
                   <div>
-                    <h3 style={{ margin: 0, fontSize: "16px" }}>
-                      {selectedVoice.name} хоолойгоор үүссэн аудио
-                    </h3>
-                    <p
-                      style={{
-                        margin: "2px 0 0",
-                        fontSize: "12px",
-                        color: "var(--muted)",
-                      }}
-                    >
-                      Амжилттай бэлэн боллоо
-                    </p>
+                    <div style={{ fontWeight: 700, fontSize: "15px" }}>
+                      {selectedVoice.name} • VoiceStudio Гаралт
+                    </div>
+                    <div style={{ fontSize: "12px", color: "var(--muted)" }}>
+                      24kHz Broadcast WAV • Cepstral Timbre Engine
+                    </div>
                   </div>
                 </div>
 
                 <a
                   href={currentAudioUrl}
-                  download={`voice-${selectedVoice.name}-${Date.now()}.mp3`}
+                  download={`${selectedVoice.name}-speech.wav`}
                   className="btn-secondary"
-                  style={{
-                    padding: "8px 16px",
-                    fontSize: "13px",
-                    borderRadius: "10px",
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: "6px",
-                  }}
+                  style={{ textDecoration: "none", fontSize: "12px" }}
                 >
-                  Татаж авах (.mp3)
+                  ⬇️ WAV татах
                 </a>
               </div>
 
               <audio
                 ref={audioRef}
-                src={currentAudioUrl}
                 controls
-                style={{
-                  width: "100%",
-                  height: "48px",
-                  borderRadius: "12px",
-                  outline: "none",
-                }}
+                src={currentAudioUrl}
+                style={{ width: "100%", height: "42px", borderRadius: "10px" }}
               />
             </div>
           )}
@@ -847,108 +977,32 @@ export default function TTSPage() {
           {/* History */}
           {history.length > 0 && (
             <div className="settings">
-              <h2
-                style={{
-                  margin: "0 0 16px",
-                  display: "flex",
-                  alignItems: "center",
-                  gap: "8px",
-                }}
-              >
-                <VolumeIcon width={18} height={18} style={{ color: "var(--accent)" }} />
-                <span>Үүсгэсэн ярианы түүх ({history.length})</span>
-              </h2>
-
+              <h2 style={{ marginBottom: "14px" }}>Саяхан үүсгэсэн дуунууд</h2>
               <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
                 {history.map((item) => (
                   <div
                     key={item.id}
                     style={{
-                      padding: "14px 16px",
-                      borderRadius: "14px",
-                      background: "var(--subtle)",
                       display: "flex",
                       justifyContent: "space-between",
                       alignItems: "center",
-                      gap: "14px",
+                      gap: "12px",
+                      padding: "12px 14px",
+                      background: "var(--subtle)",
+                      borderRadius: "12px",
+                      border: "1px solid var(--border)",
                       flexWrap: "wrap",
                     }}
                   >
-                    <div style={{ flex: 1, minWidth: "220px" }}>
-                      <p
-                        style={{
-                          margin: 0,
-                          fontSize: "14px",
-                          fontWeight: 500,
-                          lineHeight: 1.5,
-                        }}
-                      >
-                        &ldquo;{item.text}&rdquo;
-                      </p>
-                      <span
-                        style={{
-                          fontSize: "12px",
-                          color: "var(--muted)",
-                          marginTop: "4px",
-                          display: "inline-block",
-                        }}
-                      >
-                        {new Date(item.timestamp).toLocaleTimeString([], {
-                          hour: "2-digit",
-                          minute: "2-digit",
-                        })}{" "}
-                        • Хоолой: {item.voiceName}
-                      </span>
+                    <div style={{ flex: 1, minWidth: "200px" }}>
+                      <div style={{ fontSize: "12px", fontWeight: 700, color: "var(--accent)" }}>
+                        {item.voiceName} • {item.presetLabel}
+                      </div>
+                      <div style={{ fontSize: "13px", marginTop: "2px" }}>
+                        {item.text}
+                      </div>
                     </div>
-
-                    <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
-                      <button
-                        className="icon-btn"
-                        onClick={() => {
-                          const a = new Audio(item.audioUrl);
-                          a.play().catch(() => {});
-                        }}
-                        title="Тоглуулах"
-                        style={{ padding: "8px", borderRadius: "10px" }}
-                      >
-                        <PlayIcon width={16} height={16} />
-                      </button>
-
-                      <button
-                        className="icon-btn"
-                        onClick={() => {
-                          navigator.clipboard.writeText(item.text);
-                          setCopiedId(item.id);
-                          setTimeout(() => setCopiedId(null), 2000);
-                        }}
-                        title="Текст хуулах"
-                        style={{ padding: "8px", borderRadius: "10px" }}
-                      >
-                        {copiedId === item.id ? (
-                          <CheckIcon
-                            width={16}
-                            height={16}
-                            style={{ color: "#10b981" }}
-                          />
-                        ) : (
-                          <span style={{ fontSize: "12px" }}>Хуулах</span>
-                        )}
-                      </button>
-
-                      <a
-                        href={item.audioUrl}
-                        download={`speech-${item.id}.mp3`}
-                        className="icon-btn"
-                        title="Аудио татах"
-                        style={{
-                          padding: "8px 12px",
-                          borderRadius: "10px",
-                          fontSize: "12px",
-                        }}
-                      >
-                        MP3
-                      </a>
-                    </div>
+                    <audio controls src={item.audioUrl} style={{ height: "34px" }} />
                   </div>
                 ))}
               </div>
@@ -957,102 +1011,78 @@ export default function TTSPage() {
         </div>
       )}
 
-      {/* TAB 2: VOICE CLONING STUDIO (VoiceStudio Style) */}
+      {/* TAB 2: VOICE CLONING STUDIO */}
       {activeTab === "clone" && (
-        <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: "24px", marginTop: "20px" }}>
-          <div className="settings">
-            <h2 style={{ margin: "0 0 8px", display: "flex", alignItems: "center", gap: "8px" }}>
-              <SparklesIcon width={20} height={20} style={{ color: "var(--accent)" }} />
-              <span>Шинэ дуу хоолой хувилах (Zero-Shot Voice Cloning)</span>
-            </h2>
-            <p style={{ margin: "0 0 20px", fontSize: "14px", color: "var(--muted)" }}>
-              Өөрийн эсвэл дурын хүний <b>3-10 секундийн дууны бичлэгийг</b> микрофоноор бичих эсвэл файлаар оруулж, хиймэл оюунаар өнгө аясыг нь шинжлэн хувийн хоолой болгон хадгалаарай.
-            </p>
+        <div className="settings" style={{ marginTop: "20px" }}>
+          <h2 style={{ fontSize: "18px", marginBottom: "8px" }}>
+            ✨ Хүний дуу хоолой хувилах (VoiceStudio Acoustic Cloner)
+          </h2>
+          <p style={{ marginBottom: "20px" }}>
+            Өөрийн эсвэл дурын хүний хоолойг 4–10 секунд бичих (эсвэл аудио файл оруулах) замаар тухайн хүний <b>хоолойн тембр, формант (F₁–F₄), үндсэн давтамж ($f_0$) болон ярианы хэмнэлийг</b> хувилж авна.
+          </p>
 
-            {cloneError && (
-              <div className="error" style={{ marginBottom: "16px" }}>
-                <b>Алдаа:</b> {cloneError}
-              </div>
-            )}
-
-            {/* Step 1: Voice Name */}
-            <div style={{ marginBottom: "20px" }}>
-              <label style={{ display: "block", fontSize: "13px", fontWeight: 600, marginBottom: "8px" }}>
-                1. Хоолойн нэр (Voice Name):
+          <div style={{ display: "grid", gap: "18px", maxWidth: "640px" }}>
+            <div>
+              <label style={{ display: "block", fontSize: "13px", fontWeight: 600, marginBottom: "6px" }}>
+                1. Шинэ хоолойн нэр:
               </label>
               <input
                 type="text"
                 value={cloneName}
                 onChange={(e) => setCloneName(e.target.value)}
-                placeholder="Жишээ: Миний хоолой, Багшийн хоолой, Зоригоо..."
+                placeholder="Жишээ нь: Миний хоолой, Аавын хоолой..."
                 style={{
                   width: "100%",
-                  maxWidth: "400px",
                   padding: "12px 16px",
                   borderRadius: "12px",
                   border: "1px solid var(--border)",
                   background: "var(--subtle)",
                   color: "var(--text)",
-                  outline: "none",
                 }}
               />
             </div>
 
-            {/* Step 2: Record or Upload Audio Sample */}
-            <div style={{ marginBottom: "24px" }}>
-              <label style={{ display: "block", fontSize: "13px", fontWeight: 600, marginBottom: "8px" }}>
-                2. Дууны бичлэг хийх (3-10 секунд тайван ярина уу):
-              </label>
+            <div
+              style={{
+                padding: "18px",
+                borderRadius: "16px",
+                border: "1px dashed var(--border-focus)",
+                background: "var(--subtle)",
+              }}
+            >
+              <div style={{ fontSize: "13px", fontWeight: 600, marginBottom: "6px" }}>
+                2. Дээж өгүүлбэр уншиж бичих (4–10 секунд):
+              </div>
+              <p style={{ fontSize: "13px", color: "var(--text)", fontStyle: "italic", marginBottom: "14px" }}>
+                &ldquo;Сайн байна уу? Өнөөдөр цаг агаар маш сайхан байна. Би өөрийн дуу хоолойг хиймэл оюунд таниулж, шинэ хоолойн загвар үүсгэж байна.&rdquo;
+              </p>
 
-              <div style={{ display: "flex", gap: "12px", flexWrap: "wrap", alignItems: "center" }}>
+              <div style={{ display: "flex", gap: "12px", alignItems: "center", flexWrap: "wrap" }}>
                 {!isRecordingSample ? (
                   <button
-                    className="btn-primary"
+                    type="button"
                     onClick={startRecordingSample}
-                    style={{
-                      display: "inline-flex",
-                      alignItems: "center",
-                      gap: "8px",
-                      padding: "12px 20px",
-                      borderRadius: "12px",
-                      background: "linear-gradient(135deg, #ef4444, #f43f5e)",
-                    }}
+                    className="btn-primary"
                   >
-                    <MicIcon width={18} height={18} />
-                    <span>Микрофоноор бичих</span>
+                    <MicIcon width={16} height={16} />
+                    <span>Микрофоноор хоолой бичих</span>
                   </button>
                 ) : (
                   <button
-                    className="btn-primary"
+                    type="button"
                     onClick={stopRecordingSample}
-                    style={{
-                      display: "inline-flex",
-                      alignItems: "center",
-                      gap: "8px",
-                      padding: "12px 20px",
-                      borderRadius: "12px",
-                      background: "#ef4444",
-                    }}
+                    className="btn-danger"
+                    style={{ background: "#ef4444", color: "#fff" }}
                   >
-                    <span className="spinner" style={{ width: "14px", height: "14px" }} />
-                    <span>Бичиж байна ({recordSeconds}с) — Зогсоох</span>
+                    <span>⏹ Зогсоох ({recordSeconds} сек)</span>
                   </button>
                 )}
 
-                <span style={{ fontSize: "13px", color: "var(--muted)" }}>эсвэл</span>
-
                 <label
                   className="btn-secondary"
-                  style={{
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: "8px",
-                    padding: "12px 18px",
-                    borderRadius: "12px",
-                    cursor: "pointer",
-                  }}
+                  style={{ cursor: "pointer", margin: 0 }}
                 >
-                  <span>📁 Аудио файл оруулах (.wav, .mp3)</span>
+                  <span>📂 Эсвэл аудио файл (WAV/MP3) оруулах</span>
                   <input
                     type="file"
                     accept="audio/*"
@@ -1063,123 +1093,37 @@ export default function TTSPage() {
               </div>
 
               {sampleAudioUrl && (
-                <div style={{ marginTop: "16px", padding: "14px", borderRadius: "14px", background: "var(--subtle)", border: "1px solid var(--border)", maxWidth: "460px" }}>
-                  <div style={{ fontSize: "12px", fontWeight: 600, color: "var(--accent)", marginBottom: "8px" }}>
-                    ✓ Бэлтгэгдсэн аудио бичлэг:
+                <div style={{ marginTop: "14px" }}>
+                  <div style={{ fontSize: "12px", color: "#10b981", fontWeight: 600, marginBottom: "6px" }}>
+                    ✅ Дууны дээж бэлэн боллоо — сонсож шалгана уу:
                   </div>
-                  <audio ref={sampleAudioRef} src={sampleAudioUrl} controls style={{ width: "100%", height: "40px" }} />
+                  <audio controls src={sampleAudioUrl} style={{ width: "100%", height: "38px" }} />
                 </div>
               )}
             </div>
 
-            {/* Step 3: Action Button */}
-            <div style={{ paddingTop: "12px", borderTop: "1px solid var(--border)" }}>
-              <button
-                className="btn-primary"
-                onClick={handleCloneSubmit}
-                disabled={isCloning || !sampleBlob || !cloneName.trim()}
-                style={{
-                  padding: "12px 28px",
-                  fontSize: "15px",
-                  borderRadius: "14px",
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: "10px",
-                  background: "linear-gradient(135deg, #6366f1, #d946ef)",
-                  boxShadow: "0 4px 20px rgba(99, 102, 241, 0.4)",
-                }}
-              >
-                {isCloning ? (
-                  <>
-                    <span className="spinner" style={{ width: "16px", height: "16px" }} />
-                    <span>Хоолойг шинжлэн хувилж байна...</span>
-                  </>
-                ) : (
-                  <>
-                    <SparklesIcon width={18} height={18} />
-                    <span>Хоолойг шинжлэх & Хувилах</span>
-                  </>
-                )}
-              </button>
-            </div>
-          </div>
-
-          {/* List of Cloned Voices */}
-          <div className="settings">
-            <h2 style={{ margin: "0 0 16px", display: "flex", alignItems: "center", gap: "8px" }}>
-              <VolumeIcon width={18} height={18} style={{ color: "var(--accent)" }} />
-              <span>Миний хувилсан хоолойнууд ({clonedVoices.length})</span>
-            </h2>
-
-            {clonedVoices.length === 0 ? (
-              <p style={{ color: "var(--muted)", fontSize: "14px" }}>
-                Одоогоор хувилсан хоолой үүсгээгүй байна. Дээрх зааврын дагуу микрофоноороо ярьж эсвэл дууны файл оруулан шинэ хоолой үүсгээрэй.
-              </p>
-            ) : (
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: "14px" }}>
-                {clonedVoices.map((v) => (
-                  <div
-                    key={v.id}
-                    style={{
-                      padding: "16px 18px",
-                      borderRadius: "16px",
-                      background: "var(--subtle)",
-                      border: "1px solid var(--border)",
-                      display: "flex",
-                      flexDirection: "column",
-                      justifyContent: "space-between",
-                      gap: "12px",
-                    }}
-                  >
-                    <div>
-                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                        <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                          <span style={{ fontSize: "18px" }}>✨</span>
-                          <b style={{ fontSize: "16px" }}>{v.name}</b>
-                        </div>
-                        <span
-                          style={{
-                            fontSize: "11px",
-                            padding: "2px 8px",
-                            borderRadius: "6px",
-                            background: "rgba(139, 92, 246, 0.15)",
-                            color: "#8b5cf6",
-                            fontWeight: 700,
-                          }}
-                        >
-                          {v.gender === "female" ? "Эмэгтэй" : "Эрэгтэй"}
-                        </span>
-                      </div>
-                      <p style={{ margin: "6px 0 0", fontSize: "13px", color: "var(--muted)" }}>
-                        {v.description}
-                      </p>
-                    </div>
-
-                    <div style={{ display: "flex", gap: "8px", alignItems: "center", borderTop: "1px solid var(--border)", paddingTop: "10px" }}>
-                      <button
-                        className="btn-secondary"
-                        onClick={() => {
-                          setSelectedVoiceId(v.id);
-                          setActiveTab("standard");
-                        }}
-                        style={{ flex: 1, fontSize: "12px", padding: "8px 12px", justifyContent: "center" }}
-                      >
-                        Энэ хоолойгоор яриулах →
-                      </button>
-
-                      <button
-                        className="icon-btn"
-                        onClick={() => handleDeleteClonedVoice(v.id)}
-                        title="Устгах"
-                        style={{ padding: "8px", borderRadius: "10px" }}
-                      >
-                        <TrashIcon width={16} height={16} />
-                      </button>
-                    </div>
-                  </div>
-                ))}
+            {cloneError && (
+              <div className="error" style={{ marginTop: 0 }}>
+                {cloneError}
               </div>
             )}
+
+            <div style={{ display: "flex", gap: "12px" }}>
+              <button
+                type="button"
+                onClick={handleCloneSubmit}
+                disabled={isCloning || !sampleBlob}
+                className="btn-primary"
+                style={{ padding: "12px 24px", fontSize: "14px" }}
+              >
+                <SparklesIcon width={18} height={18} />
+                <span>
+                  {isCloning
+                    ? "Хоолойн формант & тембр шинжилж байна..."
+                    : "Хоолойг хувилж хадгалах"}
+                </span>
+              </button>
+            </div>
           </div>
         </div>
       )}

@@ -18,7 +18,6 @@ import {
   shortcuts,
   modes,
   themes,
-  sttEngines,
   defaultSettings,
 } from "@/lib/constants";
 import type {
@@ -47,12 +46,19 @@ import {
   ShareIcon,
 } from "@/components/Icons";
 
-// Global Shared Context for Settings & Active Workspace Text
 interface Ctx {
   settings: Settings;
   update: <K extends keyof Settings>(k: K, v: Settings[K]) => void;
   workspaceText: string;
   setWorkspaceText: (t: string) => void;
+  flowbarStatus: {
+    status: string;
+    visible: boolean;
+    last_text: string;
+    last_timestamp: number;
+  };
+  toggleFlowBar: () => Promise<void>;
+  triggerFlowBarRecording: () => Promise<void>;
 }
 
 const SettingsContext = createContext<Ctx | null>(null);
@@ -66,6 +72,13 @@ export function useSettings() {
 function Provider({ children }: { children: ReactNode }) {
   const [settings, setSettings] = useState<Settings>(defaultSettings);
   const [workspaceText, setWorkspaceText] = useState<string>("");
+  const [flowbarStatus, setFlowbarStatus] = useState({
+    status: "idle",
+    visible: true,
+    last_text: "",
+    last_timestamp: 0,
+  });
+  const lastSeenTimestampRef = useRef<number>(0);
 
   useEffect(() => {
     try {
@@ -79,6 +92,54 @@ function Provider({ children }: { children: ReactNode }) {
       localStorage.setItem("voice-settings", JSON.stringify(settings));
     } catch {}
   }, [settings]);
+
+  // Sync language selection with Native Windows FlowBar
+  useEffect(() => {
+    fetch("/api/flowbar", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "set_language", language: settings.language }),
+    }).catch(() => {});
+  }, [settings.language]);
+
+  // Poll Native Windows FlowBar status (so Ctrl+Alt dictations in Word/Facebook also sync into Workspace & History)
+  useEffect(() => {
+    const timer = setInterval(async () => {
+      try {
+        const res = await fetch("/api/flowbar");
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data && typeof data.status === "string") {
+          setFlowbarStatus({
+            status: data.status,
+            visible: Boolean(data.visible),
+            last_text: data.last_text || "",
+            last_timestamp: data.last_timestamp || 0,
+          });
+
+          if (
+            data.last_timestamp &&
+            data.last_timestamp > lastSeenTimestampRef.current &&
+            data.last_text
+          ) {
+            lastSeenTimestampRef.current = data.last_timestamp;
+            setWorkspaceText(data.last_text);
+            const stats = getTextStats(data.last_text);
+            HistoryStore.add({
+              text: data.last_text,
+              rawText: data.last_text,
+              durationSeconds: data.seconds || 3,
+              language: settings.language,
+              engine: "Duudlaga Flow (Ctrl+Alt)",
+              wordCount: stats.wordCount,
+              charCount: stats.charCount,
+            });
+          }
+        }
+      } catch {}
+    }, 1200);
+    return () => clearInterval(timer);
+  }, [settings.language]);
 
   useEffect(() => {
     const root = document.documentElement;
@@ -97,6 +158,43 @@ function Provider({ children }: { children: ReactNode }) {
     return () => m.removeEventListener("change", apply);
   }, [settings.theme]);
 
+  const toggleFlowBar = useCallback(async () => {
+    try {
+      const res = await fetch("/api/flowbar", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "toggle_visibility" }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setFlowbarStatus((prev) => ({
+          ...prev,
+          visible: Boolean(data.visible),
+          status: data.status || prev.status,
+        }));
+      }
+    } catch {}
+  }, []);
+
+  const triggerFlowBarRecording = useCallback(async () => {
+    try {
+      const nextAct = flowbarStatus.status === "recording" ? "stop" : "start";
+      const res = await fetch("/api/flowbar", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: nextAct }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setFlowbarStatus((prev) => ({
+          ...prev,
+          visible: true,
+          status: data.status || prev.status,
+        }));
+      }
+    } catch {}
+  }, [flowbarStatus.status]);
+
   const value = useMemo(
     () => ({
       settings,
@@ -104,8 +202,11 @@ function Provider({ children }: { children: ReactNode }) {
         setSettings((s) => ({ ...s, [k]: v })),
       workspaceText,
       setWorkspaceText,
+      flowbarStatus,
+      toggleFlowBar,
+      triggerFlowBarRecording,
     }),
-    [settings, workspaceText]
+    [settings, workspaceText, flowbarStatus, toggleFlowBar, triggerFlowBarRecording]
   );
 
   return <SettingsContext.Provider value={value}>{children}</SettingsContext.Provider>;
@@ -113,7 +214,7 @@ function Provider({ children }: { children: ReactNode }) {
 
 const navItems = [
   { href: "/dashboard", label: "Шинэ яриа", icon: PlusIcon },
-  { href: "/tts", label: "TTS Studio", icon: VolumeIcon },
+  { href: "/tts", label: "VoiceStudio", icon: VolumeIcon },
   { href: "/history", label: "Түүх", icon: HistoryIcon },
   { href: "/settings", label: "Тохиргоо", icon: SettingsIcon },
 ];
@@ -128,7 +229,14 @@ export function AppShell({ children }: { children: ReactNode }) {
 
 function Shell({ children }: { children: ReactNode }) {
   const path = usePathname();
-  const { settings, update } = useSettings();
+  const { settings, update, flowbarStatus, toggleFlowBar } = useSettings();
+
+  // Standalone floating pill route — render WITHOUT sidebar or topbar
+  if (path === "/flowbar") {
+    return <>{children}</>;
+  }
+
+  const isFlowRecording = flowbarStatus.status === "recording";
 
   return (
     <div className="shell">
@@ -159,9 +267,14 @@ function Shell({ children }: { children: ReactNode }) {
           })}
         </nav>
 
-        <div className="side-note">
-          <span className="status-dot" />
-          <span>AI Voice Engine Ready</span>
+        <div className="side-note" style={{ flexDirection: "column", alignItems: "flex-start", gap: "6px" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+            <span className="status-dot" />
+            <b style={{ color: "var(--text)", fontSize: "12px" }}>VoiceStudio AI Бэлэн</b>
+          </div>
+          <span style={{ fontSize: "11px", lineHeight: 1.4 }}>
+            Word / Facebook дээр <kbd>Ctrl+Alt</kbd> дарж шууд ярьж бичнэ.
+          </span>
         </div>
       </aside>
 
@@ -174,17 +287,56 @@ function Shell({ children }: { children: ReactNode }) {
             VOICE
           </b>
 
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "8px",
+              fontSize: "12px",
+              color: "var(--muted)",
+            }}
+          >
+            <span
+              style={{
+                width: "8px",
+                height: "8px",
+                borderRadius: "50%",
+                background: isFlowRecording
+                  ? "#ef4444"
+                  : flowbarStatus.visible
+                  ? "#10b981"
+                  : "#64748b",
+                boxShadow: isFlowRecording
+                  ? "0 0 10px #ef4444"
+                  : flowbarStatus.visible
+                  ? "0 0 8px #10b981"
+                  : "none",
+              }}
+            />
+            <span>
+              {isFlowRecording
+                ? "🔴 Систем дээр яриа бичиж байна..."
+                : "Шууд бичих товчлуур:"}
+            </span>
+            <kbd>Ctrl + Alt</kbd>
+          </div>
+
           <div style={{ display: "flex", gap: "10px", alignItems: "center" }}>
-            <Link
-              href="/flowbar"
-              target="_blank"
+            <button
+              type="button"
+              onClick={toggleFlowBar}
               className="btn-secondary"
-              style={{ fontSize: "12px", padding: "6px 14px", textDecoration: "none" }}
-              title="Дэлгэц дээр хөвөх FlowBar цонх нээх"
+              style={{
+                fontSize: "12px",
+                padding: "7px 14px",
+                borderColor: flowbarStatus.visible ? "rgba(16, 185, 129, 0.4)" : undefined,
+                background: flowbarStatus.visible ? "rgba(16, 185, 129, 0.08)" : undefined,
+              }}
+              title="Дэлгэцийн доод хэсэгт хөвөх жижиг FlowBar цонхыг харуулах / нуух"
             >
               <FlowBarIcon width={16} height={16} />
-              <span>FlowBar</span>
-            </Link>
+              <span>{flowbarStatus.visible ? "FlowBar: Идэвхтэй" : "FlowBar: Нуусан"}</span>
+            </button>
 
             <LanguageSelect
               value={settings.language}
@@ -241,10 +393,11 @@ function LanguageSelect({
 }
 
 export function Workspace() {
-  const { settings, update, workspaceText, setWorkspaceText } = useSettings();
+  const { settings, workspaceText, setWorkspaceText } = useSettings();
   const [state, setState] = useState<RecordingState>("idle");
   const [seconds, setSeconds] = useState(0);
   const [rawText, setRawText] = useState("");
+  const [livePreview, setLivePreview] = useState("");
   const [editing, setEditing] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const [audioLevels, setAudioLevels] = useState<number[]>([12, 18, 26, 18, 12]);
@@ -268,10 +421,10 @@ export function Workspace() {
   const pttActiveRef = useRef(false);
 
   useEffect(() => {
-    if (workspaceText && !rawText) {
+    if (workspaceText && workspaceText !== rawText && state !== "recording") {
       setRawText(workspaceText);
     }
-  }, [workspaceText, rawText]);
+  }, [workspaceText, rawText, state]);
 
   useEffect(() => {
     if (state === "recording") {
@@ -289,13 +442,15 @@ export function Workspace() {
     async (currentDuration: number) => {
       setState("processing");
       setErrorMessage("");
+      setLivePreview("");
 
       try {
-        let transcript = "";
-        let usedEngine = "AI Voice Engine";
+        let browserTranscript = "";
+        let serverTranscript = "";
+        let usedEngine = "Google Neural STT (mn-MN)";
 
         if (browserRecognizerRef.current) {
-          transcript = await browserRecognizerRef.current.stop();
+          browserTranscript = await browserRecognizerRef.current.stop();
           browserRecognizerRef.current = null;
         }
 
@@ -303,9 +458,11 @@ export function Workspace() {
           const wavBlob = await audioRecorderRef.current.stop();
           audioRecorderRef.current = null;
 
-          if (!transcript || !transcript.trim()) {
+          // Always send WAV to enhanced Python STT server for high-accuracy recognition
+          try {
             const formData = new FormData();
             formData.append("audio", wavBlob, "speech.wav");
+            formData.append("language", settings.language);
             formData.append("punctuate", String(settings.autoPunctuation));
 
             const res = await fetch("/api/chimege/transcribe", {
@@ -313,15 +470,27 @@ export function Workspace() {
               body: formData,
             });
 
-            const data = await res.json();
-            transcript = data.text || "";
-            if (data.engine) usedEngine = data.engine;
+            if (res.ok) {
+              const data = await res.json();
+              if (data.text && data.text.trim()) {
+                serverTranscript = data.text.trim();
+                if (data.engine) usedEngine = data.engine;
+              }
+            }
+          } catch (e) {
+            console.warn("Server STT fallback to browser STT:", e);
           }
         }
 
+        // Prefer serverTranscript (normalized whole-utterance WAV) or longer transcript
+        const transcript =
+          serverTranscript.length >= browserTranscript.length
+            ? serverTranscript || browserTranscript
+            : browserTranscript || serverTranscript;
+
         if (!transcript || !transcript.trim()) {
           setState("idle");
-          setErrorMessage("Яриа сонсогдсонгүй. Микрофондоо чанга, тод ярина уу.");
+          setErrorMessage("Яриа сонсогдсонгүй. Микрофондоо ойрхон, тод ярина уу.");
           return;
         }
 
@@ -374,13 +543,14 @@ export function Workspace() {
   const startRecording = useCallback(async () => {
     setErrorMessage("");
     setSeconds(0);
+    setLivePreview("");
 
     try {
       if (isBrowserSpeechSupported() && settings.sttEngine !== "chimege") {
         const recognizer = new BrowserSpeechRecognizer({
           language: settings.language,
-          onInterim: (interim) => {
-            setRawText((prev) => (prev ? prev + " " + interim : interim));
+          onInterim: (previewText) => {
+            setLivePreview(previewText);
           },
           onError: (err) => {
             console.warn("Browser Speech warning:", err);
@@ -425,7 +595,7 @@ export function Workspace() {
     }
   }, [state, seconds, startRecording, stopAndTranscribe]);
 
-  // Keyboard shortcut
+  // Keyboard shortcut inside web app
   useEffect(() => {
     const isPushToTalk = settings.recordingMode === "push_to_talk";
 
@@ -532,11 +702,24 @@ export function Workspace() {
     setTtsLoading(true);
 
     try {
+      let preferredVoice = "mn-MN-YesuiNeural";
+      try {
+        const savedClones = localStorage.getItem("voice_clones");
+        if (savedClones) {
+          const parsed = JSON.parse(savedClones);
+          if (Array.isArray(parsed) && parsed.length > 0 && parsed[0].id) {
+            preferredVoice = parsed[0].id;
+          }
+        }
+      } catch {}
+
       const res = await fetch("/api/tts", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           text: textToSpeak.trim(),
+          voice: preferredVoice,
+          preset: "broadcast",
         }),
       });
 
@@ -570,7 +753,7 @@ export function Workspace() {
     state === "idle"
       ? "ЯРЬЖ ЭХЛЭХ"
       : state === "recording"
-      ? "ЯРИЖ БАЙНА..."
+      ? "ЯРЬЖ БАЙНА..."
       : state === "processing"
       ? "БОЛОВСРУУЛЖ БАЙНА..."
       : state === "error"
@@ -579,15 +762,18 @@ export function Workspace() {
 
   const mm = String(Math.floor(seconds / 60)).padStart(2, "0");
   const ss = String(seconds % 60).padStart(2, "0");
-  const stats = getTextStats(rawText);
+  const displayedText = state === "recording" && livePreview ? livePreview : rawText;
+  const stats = getTextStats(displayedText);
 
   return (
     <section className="workspace">
       <div className="heading">
         <div>
-          <small>VOICE AI WORKSPACE</small>
+          <small>VOICE AI & DUUDLAGA FLOW WORKSPACE</small>
           <h1>Ярихыг урлаг болго.</h1>
-          <p>Монгол болон олон улсын яриа таних, зөв бичих дүрэм ба дуу хоолой үүсгэгч систем.</p>
+          <p>
+            Монгол болон олон улсын яриа таних, зөв бичих дүрэм, дуу хоолой хувилах (VoiceStudio) болон Word/Facebook дээр <kbd>Ctrl+Alt</kbd> дарж шууд бичих систем.
+          </p>
         </div>
       </div>
 
@@ -607,7 +793,7 @@ export function Workspace() {
         <strong>{label}</strong>
 
         {state === "recording" && (
-          <div>
+          <div style={{ textAlign: "center" }}>
             <time>{mm}:{ss}</time>
             <div className="waveform-bars">
               {audioLevels.map((lvl, idx) => (
@@ -624,10 +810,12 @@ export function Workspace() {
           </div>
         )}
 
-        <p style={{ fontSize: "13px", color: "var(--muted)", margin: 0 }}>
+        <p style={{ fontSize: "13px", color: "var(--muted)", margin: 0, textAlign: "center" }}>
           {state === "recording"
-            ? "Дуу хоолойг бодит цагт бичиж байна..."
-            : "✨ AI Voice Engine Бэлэн • Модел: MMS-TTS (Офлайн)"}
+            ? livePreview
+              ? `Сонсож байна: "${livePreview}"`
+              : "Дуу хоолойг бодит цагт бичиж байна..."
+            : "✨ Word, Facebook, Chrome дээр курсороо байрлуулаад Ctrl+Alt дарж ярихад текст шууд бичигдэнэ"}
         </p>
       </div>
 
@@ -665,12 +853,14 @@ export function Workspace() {
               }}
               placeholder="Бичвэр энд харагдана..."
             />
-          ) : rawText ? (
-            <p className="transcript-text">{rawText}</p>
+          ) : displayedText ? (
+            <p className="transcript-text">{displayedText}</p>
           ) : (
             <div className="empty">
               <b>Таны текстийн үр дүн энд бууна.</b>
-              <small>Микрофон товчлуур дээр дарж эсвэл {settings.shortcut} товчийг дарж яриагаа эхлүүлнэ үү.</small>
+              <small>
+                Микрофон дээр дарж ярих эсвэл Facebook / Word дээр очоод <kbd>Ctrl+Alt</kbd> дарж шууд ярьж бичээрэй.
+              </small>
             </div>
           )}
         </div>
@@ -753,7 +943,7 @@ export function Workspace() {
             disabled={!rawText || ttsLoading}
           >
             <VolumeIcon width={15} height={15} />
-            <span>{ttsLoading ? "Уншиж байна..." : "Сонсох (MMS-TTS)"}</span>
+            <span>{ttsLoading ? "Уншиж байна..." : "Сонсох (VoiceStudio)"}</span>
           </button>
           <button
             className="btn-secondary"
@@ -792,6 +982,7 @@ export function Workspace() {
             className="btn-danger"
             onClick={() => {
               setRawText("");
+              setLivePreview("");
               setWorkspaceText("");
               setEditing(false);
               setState("idle");
@@ -808,15 +999,17 @@ export function Workspace() {
       </section>
 
       <div className="meta">
-        Shortcut <kbd>{settings.shortcut}</kbd>
+        <span>
+          Апп доторх товч <kbd>{settings.shortcut}</kbd>
+        </span>
+        <span>
+          Word / Facebook дээр шууд бичих <kbd>Ctrl+Alt</kbd>
+        </span>
         <span>
           Горим <b>{settings.recordingMode}</b>
         </span>
         <span>
-          Хоолой <b>MMS-TTS</b>
-        </span>
-        <span>
-          FlowBar <kbd>{settings.desktopHotkey}</kbd>
+          Студи <b>VoiceStudio AI</b>
         </span>
       </div>
     </section>
@@ -824,7 +1017,7 @@ export function Workspace() {
 }
 
 export function SettingsPanel() {
-  const { settings, update } = useSettings();
+  const { settings, update, flowbarStatus, toggleFlowBar, triggerFlowBarRecording } = useSettings();
   const [audioDevices, setAudioDevices] = useState<MediaDeviceInfo[]>([]);
 
   useEffect(() => {
@@ -859,48 +1052,62 @@ export function SettingsPanel() {
 
   return (
     <div className="settings-grid">
-      {/* Speech & AI Voice */}
+      {/* VoiceStudio AI & Voice Cloning */}
       <section className="settings">
-        <h2>Хиймэл Оюуны Дуу Хоолой (MMS-TTS)</h2>
-        <p>Компьютер дээрээ офлайн ажиллах Халх Монгол хэлний VITS дуу хоолой (facebook/mms-tts-khk).</p>
-        
+        <h2>VoiceStudio AI & Дуу Хоолой Хувилах</h2>
+        <p>
+          Хүний дууны өнгө төрх, формант (F₁–F₄), тембрийг шинжлэн хувилах болон Broadcast DSP эффектүүдээр уншуулах студи.
+        </p>
+
         <div style={{ display: "flex", alignItems: "center", gap: "8px", margin: "14px 0 16px" }}>
           <span style={{ width: "8px", height: "8px", borderRadius: "50%", background: "#10b981", boxShadow: "0 0 8px #10b981", display: "inline-block" }} />
-          <span style={{ fontSize: "13px", fontWeight: 600 }}>Офлайн Модел • 100% Үнэгүй, Хязгааргүй</span>
+          <span style={{ fontSize: "13px", fontWeight: 600 }}>
+            Voice Cloning + Broadcast DSP • 100% Үнэгүй, Хязгааргүй
+          </span>
         </div>
 
-        <Link href="/tts" className="btn-secondary" style={{ fontSize: "12px", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "8px" }}>
-          <VolumeIcon width={14} height={14} />
-          <span>MMS-TTS Studio нээх →</span>
+        <Link href="/tts" className="btn-primary" style={{ fontSize: "13px", textDecoration: "none" }}>
+          <VolumeIcon width={15} height={15} />
+          <span>VoiceStudio руу орох →</span>
         </Link>
       </section>
 
       {/* Desktop Mode like Duudlaga Flow */}
       <section className="settings">
-        <h2>Компьютер дээр ажиллах (Duudlaga Flow горим)</h2>
-        <p>Word, Chrome, Telegram зэрэг дурын програм дээр шууд ярьж бичих.</p>
-        
-        <div style={{ background: "var(--subtle)", padding: "14px", borderRadius: "14px", fontSize: "12px", lineHeight: 1.6, marginBottom: "14px", border: "1px solid var(--border)" }}>
-          <div><b>💻 Хөвөгч FlowBar:</b> Дэлгэцийн доод хэсэгт жижиг capsule хэлбэрээр хөвөн байрлана.</div>
-          <div style={{ marginTop: "4px" }}><b>⌨️ Системийн товчлуур:</b> <kbd>{settings.desktopHotkey}</kbd> (дэлгэцийн хаанаас ч ярьж эхлүүлнэ).</div>
-          <div style={{ marginTop: "4px" }}><b>✍️ Шууд бичих:</b> Ярьж дуусмагц тухайн идэвхтэй цонхонд текстийг автоматаар хуулж бичнэ.</div>
+        <h2>Facebook & Word дээр шууд бичих (Duudlaga Flow)</h2>
+        <p>Дэлгэцийн хаанаас ч товч дараад ярихад тухайн курсор байгаа газарт шууд текст болж бичигдэнэ.</p>
+
+        <div style={{ background: "var(--subtle)", padding: "14px", borderRadius: "14px", fontSize: "12px", lineHeight: 1.65, marginBottom: "14px", border: "1px solid var(--border)" }}>
+          <div><b>1. Курсороо байрлуулах:</b> Facebook, Word, Chrome, Telegram-ийн бичих нүдэн дээр дарна.</div>
+          <div style={{ marginTop: "4px" }}>
+            <b>2. Ярьж эхлэх:</b> Гар дээрээ <kbd>Ctrl</kbd> + <kbd>Alt</kbd> хоёрыг зэрэг дарна (эсвэл дэлгэцийн доод хэсэгт хөвөх <b>VOICE FLOW</b> товч дээр дарна).
+          </div>
+          <div style={{ marginTop: "4px" }}>
+            <b>3. Автомат бичих:</b> Ярьж дуусмагц (2.5с чимээгүй болоход эсвэл <kbd>Ctrl+Alt</kbd> дахин дарахад) текст шууд тухайн цонхонд бичигдэнэ!
+          </div>
         </div>
 
-        <Link
-          href="/flowbar"
-          target="_blank"
-          className="btn-primary"
-          style={{ textDecoration: "none" }}
-        >
-          <FlowBarIcon width={16} height={16} />
-          <span>FlowBar цонхыг нээх</span>
-        </Link>
+        <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
+          <button type="button" onClick={toggleFlowBar} className="btn-primary">
+            <FlowBarIcon width={16} height={16} />
+            <span>
+              {flowbarStatus.visible ? "Хөвөгч FlowBar нуух" : "Хөвөгч FlowBar харуулах"}
+            </span>
+          </button>
+
+          <button type="button" onClick={triggerFlowBarRecording} className="btn-secondary">
+            <MicIcon width={15} height={15} />
+            <span>
+              {flowbarStatus.status === "recording" ? "Бичлэг зогсоох" : "Шууд ярьж шалгах"}
+            </span>
+          </button>
+        </div>
 
         <div style={{ marginTop: "14px" }}>
           <Toggle
             k="autoInsertText"
-            label="Auto-insert text"
-            description="Яриаг таньмагц идэвхтэй цонхонд автоматаар буулгах."
+            label="Auto-insert text (Шууд бичих)"
+            description="Яриаг таньмагц идэвхтэй цонхонд Unicode-оор шууд бичих."
           />
         </div>
       </section>
@@ -965,7 +1172,7 @@ export function SettingsPanel() {
 
       {/* Keyboard Shortcut */}
       <section className="settings">
-        <h2>Keyboard Shortcut (Товчлол)</h2>
+        <h2>Keyboard Shortcut (Апп доторх товч)</h2>
         <p>Апп дотор бичлэг эхлүүлэх, зогсоох товч.</p>
         <select
           value={settings.shortcut}

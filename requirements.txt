@@ -6,3 +6,6 @@ fastapi
 uvicorn
 pydantic
 python-multipart
+miniaudio
+soundfile
+sounddevice

@@ -1,6 +1,34 @@
 import { NextRequest, NextResponse } from "next/server";
 
-const CLONE_URL = process.env.LOCAL_CLONE_URL || "http://127.0.0.1:8000/clone-voice";
+const BASE_PY_URL = process.env.LOCAL_PY_URL || "http://127.0.0.1:8000";
+
+export async function GET(req: NextRequest) {
+  try {
+    const id = req.nextUrl.searchParams.get("id");
+    if (id) {
+      const res = await fetch(`${BASE_PY_URL}/clones/${encodeURIComponent(id)}/sample`, {
+        cache: "no-store",
+      });
+      if (!res.ok) {
+        return NextResponse.json({ error: "Sample not found" }, { status: 404 });
+      }
+      const buf = await res.arrayBuffer();
+      return new NextResponse(buf, {
+        headers: {
+          "Content-Type": "audio/wav",
+          "Content-Disposition": `inline; filename="${id}.wav"`,
+        },
+      });
+    }
+
+    const res = await fetch(`${BASE_PY_URL}/clones`, { cache: "no-store" });
+    if (!res.ok) return NextResponse.json([]);
+    const list = await res.json();
+    return NextResponse.json(list);
+  } catch {
+    return NextResponse.json([]);
+  }
+}
 
 export async function POST(req: NextRequest) {
   try {
@@ -20,9 +48,9 @@ export async function POST(req: NextRequest) {
     pyForm.append("name", name);
 
     const ctrl = new AbortController();
-    const timeout = setTimeout(() => ctrl.abort(), 20000);
+    const timeout = setTimeout(() => ctrl.abort(), 25000);
 
-    const res = await fetch(CLONE_URL, {
+    const res = await fetch(`${BASE_PY_URL}/clone-voice`, {
       method: "POST",
       body: pyForm,
       signal: ctrl.signal,
@@ -42,5 +70,18 @@ export async function POST(req: NextRequest) {
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : "Сервертэй холбогдож чадсангүй.";
     return NextResponse.json({ error: msg }, { status: 500 });
+  }
+}
+
+export async function DELETE(req: NextRequest) {
+  try {
+    const id = req.nextUrl.searchParams.get("id");
+    if (!id) return NextResponse.json({ error: "Missing id" }, { status: 400 });
+    await fetch(`${BASE_PY_URL}/clones/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+    });
+    return NextResponse.json({ deleted: id });
+  } catch {
+    return NextResponse.json({ error: "Delete failed" }, { status: 500 });
   }
 }
