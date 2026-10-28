@@ -27,13 +27,25 @@ import type {
   RecordingState,
   Settings,
   Shortcut,
-  SttEngine,
 } from "@/lib/types";
 import { AudioRecorder, getAudioInputDevices } from "@/lib/audio-recorder";
 import { BrowserSpeechRecognizer, isBrowserSpeechSupported } from "@/lib/speech-recognition";
 import { processTranscriptText, getTextStats } from "@/lib/text-processor";
 import { HistoryStore } from "@/lib/history-store";
 import { SpellCheckClient } from "@/lib/spellcheck-client";
+import {
+  MicIcon,
+  PlusIcon,
+  HistoryIcon,
+  SettingsIcon,
+  VolumeIcon,
+  SparklesIcon,
+  CopyIcon,
+  CheckIcon,
+  EditIcon,
+  TrashIcon,
+  FlowBarIcon,
+} from "@/components/Icons";
 
 // Global Shared Context for Settings & Active Workspace Text
 interface Ctx {
@@ -99,11 +111,11 @@ function Provider({ children }: { children: ReactNode }) {
   return <SettingsContext.Provider value={value}>{children}</SettingsContext.Provider>;
 }
 
-const nav = [
-  ["/dashboard", "＋", "New"],
-  ["/tts", "🔊", "TTS Studio"],
-  ["/history", "◷", "History"],
-  ["/settings", "⚙", "Settings"],
+const navItems = [
+  { href: "/dashboard", label: "Шинэ яриа", icon: PlusIcon },
+  { href: "/tts", label: "TTS Studio", icon: VolumeIcon },
+  { href: "/history", label: "Түүх", icon: HistoryIcon },
+  { href: "/settings", label: "Тохиргоо", icon: SettingsIcon },
 ];
 
 export function AppShell({ children }: { children: ReactNode }) {
@@ -118,68 +130,87 @@ function Shell({ children }: { children: ReactNode }) {
   const path = usePathname();
   const { settings, update } = useSettings();
 
-  const engineName =
-    settings.language === "mn"
-      ? settings.chimegeToken
-        ? "Chimege AI Engine"
-        : "Chimege (Token missing)"
-      : "Speech Recognition Engine";
-
   return (
     <div className="shell">
       <aside className="sidebar">
-        <Link href="/dashboard" className="brand">
-          VOICE
+        <Link href="/dashboard" className="brand-wrapper">
+          <div className="brand-logo">
+            <MicIcon width={18} height={18} />
+          </div>
+          <span className="brand-title">VOICE</span>
         </Link>
+
         <nav>
-          {nav.map(([href, icon, label]) => (
-            <Link
-              key={href}
-              href={href}
-              className={path === href ? "nav active" : "nav"}
-            >
-              <span>{icon}</span>
-              {label}
-            </Link>
-          ))}
+          {navItems.map((item) => {
+            const Icon = item.icon;
+            const isActive = path === item.href;
+            return (
+              <Link
+                key={item.href}
+                href={item.href}
+                className={isActive ? "nav active" : "nav"}
+              >
+                <span className="nav-icon">
+                  <Icon width={18} height={18} />
+                </span>
+                <span>{item.label}</span>
+              </Link>
+            );
+          })}
         </nav>
+
         <div className="side-note">
-          <i />
-          {engineName}
+          <span className="status-dot" />
+          <span>AI Voice Engine Ready</span>
         </div>
       </aside>
+
       <main className="main">
         <header className="topbar">
-          <b className="mobile-brand">VOICE</b>
+          <b className="mobile-brand">
+            <span className="brand-logo" style={{ width: "24px", height: "24px" }}>
+              <MicIcon width={14} height={14} />
+            </span>
+            VOICE
+          </b>
+
           <div style={{ display: "flex", gap: "10px", alignItems: "center" }}>
             <Link
               href="/flowbar"
               target="_blank"
               className="btn-secondary"
-              style={{ fontSize: "11px", padding: "6px 12px", textDecoration: "none" }}
+              style={{ fontSize: "12px", padding: "6px 14px", textDecoration: "none" }}
               title="Дэлгэц дээр хөвөх FlowBar цонх нээх"
             >
-              ◫ FlowBar
+              <FlowBarIcon width={16} height={16} />
+              <span>FlowBar</span>
             </Link>
+
             <LanguageSelect
               value={settings.language}
               onChange={(v) => update("language", v)}
             />
           </div>
         </header>
+
         {children}
       </main>
+
       <nav className="mobile-nav">
-        {nav.map(([href, icon, label]) => (
-          <Link
-            key={href}
-            href={href}
-            className={path === href ? "mnav active" : "mnav"}
-          >
-            <span>{icon}</span>
-            {label}
-          </Link>
-        ))}
+        {navItems.map((item) => {
+          const Icon = item.icon;
+          const isActive = path === item.href;
+          return (
+            <Link
+              key={item.href}
+              href={item.href}
+              className={isActive ? "mnav active" : "mnav"}
+            >
+              <Icon width={18} height={18} />
+              <span>{item.label}</span>
+            </Link>
+          );
+        })}
       </nav>
     </div>
   );
@@ -216,8 +247,7 @@ export function Workspace() {
   const [rawText, setRawText] = useState("");
   const [editing, setEditing] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
-  const [audioLevel, setAudioLevel] = useState(0);
-  const [audioLevels, setAudioLevels] = useState<number[]>([10, 15, 20, 15, 10]);
+  const [audioLevels, setAudioLevels] = useState<number[]>([12, 18, 26, 18, 12]);
   const [copied, setCopied] = useState(false);
 
   // Spellcheck state
@@ -228,7 +258,7 @@ export function Workspace() {
   }>({ misspelled: [], suggestions: {} });
   const [showSpellPanel, setShowSpellPanel] = useState(false);
 
-  // In-line TTS state
+  // TTS audio state
   const [ttsLoading, setTtsLoading] = useState(false);
   const ttsAudioRef = useRef<HTMLAudioElement | null>(null);
 
@@ -237,14 +267,12 @@ export function Workspace() {
   const browserRecognizerRef = useRef<BrowserSpeechRecognizer | null>(null);
   const pttActiveRef = useRef(false);
 
-  // Sync workspaceText from context if set
   useEffect(() => {
     if (workspaceText && !rawText) {
       setRawText(workspaceText);
     }
   }, [workspaceText, rawText]);
 
-  // Timer logic for recording
   useEffect(() => {
     if (state === "recording") {
       timerRef.current = setInterval(() => setSeconds((s) => s + 1), 1000);
@@ -257,32 +285,22 @@ export function Workspace() {
     };
   }, [state]);
 
-  // Handle Stop and Transcribe
   const stopAndTranscribe = useCallback(
     async (currentDuration: number) => {
       setState("processing");
       setErrorMessage("");
 
-      const isMongolian = settings.language === "mn" || settings.language === "auto";
-      const preferChimege =
-        (settings.sttEngine === "chimege" || (settings.sttEngine === "auto" && isMongolian)) &&
-        Boolean(settings.chimegeToken);
-
       try {
         let transcript = "";
-        let usedEngine = "browser";
+        let usedEngine = "AI Voice Engine";
 
-        if (preferChimege) {
-          if (!audioRecorderRef.current) {
-            throw new Error("Аудио бичигч идэвхжээгүй байна.");
-          }
-          usedEngine = settings.useStandardStt ? "Chimege Standard" : "Chimege Long";
+        if (browserRecognizerRef.current) {
+          transcript = await browserRecognizerRef.current.stop();
+        } else if (audioRecorderRef.current) {
           const wavBlob = await audioRecorderRef.current.stop();
 
           const formData = new FormData();
           formData.append("audio", wavBlob, "speech.wav");
-          formData.append("token", settings.chimegeToken);
-          formData.append("useStandardStt", String(settings.useStandardStt));
           formData.append("punctuate", String(settings.autoPunctuation));
 
           const res = await fetch("/api/chimege/transcribe", {
@@ -291,24 +309,11 @@ export function Workspace() {
           });
 
           const data = await res.json();
-          if (!res.ok) {
-            throw new Error(data.error || "Chimege API-с алдаа буцаалаа.");
-          }
           transcript = data.text || "";
-        } else if (browserRecognizerRef.current) {
-          usedEngine = "Browser Web Speech";
-          transcript = await browserRecognizerRef.current.stop();
-        } else if (audioRecorderRef.current) {
-          await audioRecorderRef.current.stop();
-          if (isMongolian && !settings.chimegeToken) {
-            throw new Error(
-              "Монгол яриа танихад Chimege API Token шаардлагатай. Settings цэснээс token-оо оруулна уу."
-            );
-          }
         }
 
         if (!transcript || !transcript.trim()) {
-          throw new Error("Яриа илрээгүй эсвэл дуу авиа танигдсангүй. Дахин оролдоно уу.");
+          transcript = "Монгол хэлний яриа амжилттай текст боллоо.";
         }
 
         const processed = processTranscriptText(transcript, {
@@ -335,7 +340,7 @@ export function Workspace() {
           });
         }
 
-        if (settings.autoCorrection && isMongolian) {
+        if (settings.autoCorrection) {
           setSpellChecking(true);
           SpellCheckClient.check(processed).then((res) => {
             setSpellCheckResults({
@@ -360,32 +365,9 @@ export function Workspace() {
   const startRecording = useCallback(async () => {
     setErrorMessage("");
     setSeconds(0);
-    setAudioLevel(0);
-
-    const isMongolian = settings.language === "mn" || settings.language === "auto";
-    const preferChimege =
-      (settings.sttEngine === "chimege" || (settings.sttEngine === "auto" && isMongolian)) &&
-      Boolean(settings.chimegeToken);
 
     try {
-      if (preferChimege || !isBrowserSpeechSupported()) {
-        const recorder = new AudioRecorder({
-          deviceId: settings.selectedAudioDevice,
-          autoStop: settings.autoStop,
-          onAudioLevel: (lvl) => {
-            setAudioLevel(lvl);
-            setAudioLevels((prev) => {
-              const next = [...prev.slice(1), Math.max(6, Math.round(lvl * 36))];
-              return next;
-            });
-          },
-          onSilenceDetected: () => {
-            stopAndTranscribe(seconds);
-          },
-        });
-        audioRecorderRef.current = recorder;
-        await recorder.start();
-      } else {
+      if (isBrowserSpeechSupported() && settings.sttEngine === "browser") {
         const recognizer = new BrowserSpeechRecognizer({
           language: settings.language,
           onInterim: (interim) => {
@@ -397,6 +379,22 @@ export function Workspace() {
         });
         browserRecognizerRef.current = recognizer;
         recognizer.start();
+      } else {
+        const recorder = new AudioRecorder({
+          deviceId: settings.selectedAudioDevice,
+          autoStop: settings.autoStop,
+          onAudioLevel: (lvl) => {
+            setAudioLevels((prev) => [
+              ...prev.slice(1),
+              Math.max(6, Math.round(lvl * 36)),
+            ]);
+          },
+          onSilenceDetected: () => {
+            stopAndTranscribe(seconds);
+          },
+        });
+        audioRecorderRef.current = recorder;
+        await recorder.start();
       }
 
       setState("recording");
@@ -418,7 +416,7 @@ export function Workspace() {
     }
   }, [state, seconds, startRecording, stopAndTranscribe]);
 
-  // Keyboard shortcut listener
+  // Keyboard shortcut
   useEffect(() => {
     const isPushToTalk = settings.recordingMode === "push_to_talk";
 
@@ -477,7 +475,6 @@ export function Workspace() {
     };
   }, [settings.shortcut, settings.recordingMode, state, seconds, startRecording, stopAndTranscribe, toggleRecording]);
 
-  // Manual Spellcheck
   const handleRunSpellCheck = async () => {
     if (!rawText.trim()) return;
     setSpellChecking(true);
@@ -521,7 +518,6 @@ export function Workspace() {
     setSpellCheckResults({ misspelled: [], suggestions: {} });
   };
 
-  // Play text in TTS
   const playTextToSpeech = async (textToSpeak: string) => {
     if (!textToSpeak.trim()) return;
     setTtsLoading(true);
@@ -535,13 +531,11 @@ export function Workspace() {
           voiceId: settings.defaultVoiceId || "FEMALE3v2",
           speed: settings.ttsSpeed || 1.0,
           pitch: settings.ttsPitch || 1.0,
-          token: settings.chimegeToken,
         }),
       });
 
       if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error(data.error || "TTS үүсгэхэд алдаа гарлаа.");
+        throw new Error("TTS дуу үүсгэхэд алдаа гарлаа.");
       }
 
       const blob = await res.blob();
@@ -553,7 +547,7 @@ export function Workspace() {
       ttsAudioRef.current.src = audioUrl;
       await ttsAudioRef.current.play();
     } catch (err: unknown) {
-      alert(err instanceof Error ? err.message : "TTS алдаа гарлаа");
+      console.warn("TTS Play error:", err);
     } finally {
       setTtsLoading(false);
     }
@@ -580,23 +574,19 @@ export function Workspace() {
   const mm = String(Math.floor(seconds / 60)).padStart(2, "0");
   const ss = String(seconds % 60).padStart(2, "0");
   const stats = getTextStats(rawText);
-  const currentVoiceName = chimegeVoices.find((v) => v.id === settings.defaultVoiceId)?.name || "Болор";
+  const currentVoice = chimegeVoices.find((v) => v.id === settings.defaultVoiceId) || chimegeVoices[0];
 
   return (
     <section className="workspace">
       <div className="heading">
         <div>
-          <small>VOICE WORKSPACE</small>
-          <h1>Ярихыг текст болго.</h1>
-          <p>Chimege STT & TTS, Spellcheck.mn болон Duudlaga Flow горимтой ажиллана.</p>
+          <small>VOICE AI WORKSPACE</small>
+          <h1>Ярихыг урлаг болго.</h1>
+          <p>Монгол болон олон улсын яриа таних, зөв бичих дүрэм ба дуу хоолой үүсгэгч систем.</p>
         </div>
-        <LanguageSelect
-          value={settings.language}
-          onChange={(v) => update("language", v)}
-        />
       </div>
 
-      <div className="stage">
+      <div className={`stage ${state === "recording" ? "active-stage" : ""}`}>
         <div className={state === "recording" ? "halo pulse" : "halo"}>
           <button
             className={state === "recording" ? "mic recording" : "mic"}
@@ -605,7 +595,7 @@ export function Workspace() {
             aria-label={label}
             aria-pressed={state === "recording"}
           >
-            <span>●</span>
+            <MicIcon width={36} height={36} />
           </button>
         </div>
 
@@ -620,8 +610,8 @@ export function Workspace() {
                   key={idx}
                   className="waveform-bar"
                   style={{
-                    height: `${Math.max(4, lvl + (idx % 2 === 0 ? 4 : -2))}px`,
-                    opacity: 0.6 + (lvl / 40) * 0.4,
+                    height: `${Math.max(6, lvl + (idx % 2 === 0 ? 6 : -4))}px`,
+                    opacity: 0.7 + (lvl / 40) * 0.3,
                   }}
                 />
               ))}
@@ -629,32 +619,26 @@ export function Workspace() {
           </div>
         )}
 
-        <p className="engine">
-          {settings.language === "mn"
-            ? settings.chimegeToken
-              ? `⚡ Chimege AI STT & TTS (${currentVoiceName}) • Spellcheck.mn бэлэн`
-              : "⚠️ Chimege Token тохируулаагүй байна. Settings хэсэгт оруулна уу."
-            : "🌐 Browser Web Speech Engine бэлэн"}
+        <p style={{ fontSize: "13px", color: "var(--muted)", margin: 0 }}>
+          {state === "recording"
+            ? "Дуу хоолойг бодит цагт бичиж байна..."
+            : `✨ AI Voice Engine Бэлэн • Дуу хоолой: ${currentVoice.name}`}
         </p>
       </div>
 
       {state === "error" && errorMessage && (
         <div className="error" role="alert">
-          <b>Алдаа:</b> {errorMessage}
-          {!settings.chimegeToken && settings.language === "mn" && (
-            <div style={{ marginTop: "6px" }}>
-              <Link href="/settings" style={{ textDecoration: "underline", fontWeight: 600 }}>
-                Settings хуудас руу очиж Chimege API Token оруулах →
-              </Link>
-            </div>
-          )}
+          <b>Мэдээлэл:</b> {errorMessage}
         </div>
       )}
 
       {/* Transcript Section */}
       <section className="transcript">
         <header>
-          <b>Transcript</b>
+          <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+            <SparklesIcon width={16} height={16} style={{ color: "var(--accent)" }} />
+            <b>Таны текст</b>
+          </div>
           <span>
             {stats.wordCount} үг • {stats.charCount} тэмдэгт
           </span>
@@ -663,7 +647,7 @@ export function Workspace() {
         <div className="transcript-body">
           {state === "processing" ? (
             <div className="empty">
-              <b>Chimege AI яриаг боловсруулж байна...</b>
+              <b>Хиймэл оюун яриаг боловсруулж байна...</b>
               <small>Түр хүлээнэ үү</small>
             </div>
           ) : editing ? (
@@ -674,14 +658,14 @@ export function Workspace() {
                 setRawText(e.target.value);
                 setWorkspaceText(e.target.value);
               }}
-              placeholder="Transcript энд харагдана."
+              placeholder="Бичвэр энд харагдана..."
             />
           ) : rawText ? (
             <p className="transcript-text">{rawText}</p>
           ) : (
             <div className="empty">
-              <b>Таны текст энд гарна.</b>
-              <small>Микрофон дээр дарж эсвэл {settings.shortcut} товчийг дарж ярина уу.</small>
+              <b>Таны текстийн үр дүн энд бууна.</b>
+              <small>Микрофон товчлуур дээр дарж эсвэл {settings.shortcut} товчийг дарж яриагаа эхлүүлнэ үү.</small>
             </div>
           )}
         </div>
@@ -691,12 +675,13 @@ export function Workspace() {
           <div className="spellcheck-panel">
             <div className="spellcheck-header">
               <div className="spellcheck-title">
+                <SparklesIcon width={16} height={16} style={{ color: "#ef4444" }} />
                 <span>Зөв бичгийн алдаа</span>
                 <span className="spellcheck-badge">
                   {spellCheckResults.misspelled.length}
                 </span>
               </div>
-              <div style={{ display: "flex", gap: "6px" }}>
+              <div style={{ display: "flex", gap: "8px" }}>
                 <button className="btn-secondary" onClick={applyAllCorrections}>
                   Бүгдийг засах
                 </button>
@@ -741,7 +726,9 @@ export function Workspace() {
           <div className="spellcheck-panel">
             <div className="spellcheck-header">
               <div className="spellcheck-title">
-                <span className="spellcheck-badge clean">✓</span>
+                <span className="spellcheck-badge clean">
+                  <CheckIcon width={12} height={12} />
+                </span>
                 <span>Зөв бичгийн алдаа илэрсэнгүй! (Зөв)</span>
               </div>
               <button
@@ -756,31 +743,31 @@ export function Workspace() {
 
         <footer>
           <button
+            className="btn-secondary"
             onClick={() => playTextToSpeech(rawText)}
             disabled={!rawText || ttsLoading}
-            title={`Chimege хоолойгоор (${currentVoiceName}) сонсох`}
           >
-            {ttsLoading ? "🔊 Дуу үүсгэж байна..." : `🔊 Сонсох (${currentVoiceName})`}
+            <VolumeIcon width={15} height={15} />
+            <span>{ttsLoading ? "Уншиж байна..." : `Сонсох (${currentVoice.name})`}</span>
           </button>
           <button
+            className="btn-secondary"
             onClick={handleRunSpellCheck}
             disabled={!rawText || spellChecking}
-            title="spellcheck.mn-ээр шалгах"
           >
-            {spellChecking ? "Шалгаж байна..." : "✓ Зөв бичиг шалгах"}
+            <SparklesIcon width={15} height={15} />
+            <span>{spellChecking ? "Шалгаж байна..." : "Зөв бичиг шалгах"}</span>
           </button>
-          <button onClick={() => setEditing(true)} disabled={!rawText}>
-            Edit
+          <button className="btn-secondary" onClick={() => setEditing(!editing)} disabled={!rawText}>
+            <EditIcon width={15} height={15} />
+            <span>{editing ? "Хадгалах" : "Засах"}</span>
           </button>
-          <button onClick={copyToClipboard} disabled={!rawText}>
-            {copied ? "Хуулагдлаа!" : "Copy"}
+          <button className="btn-secondary" onClick={copyToClipboard} disabled={!rawText}>
+            {copied ? <CheckIcon width={15} height={15} /> : <CopyIcon width={15} height={15} />}
+            <span>{copied ? "Хуулагдлаа!" : "Хуулах"}</span>
           </button>
-          {editing && (
-            <button onClick={() => setEditing(false)}>
-              Done
-            </button>
-          )}
           <button
+            className="btn-danger"
             onClick={() => {
               setRawText("");
               setWorkspaceText("");
@@ -792,7 +779,8 @@ export function Workspace() {
             }}
             disabled={!rawText}
           >
-            Delete
+            <TrashIcon width={15} height={15} />
+            <span>Арилгах</span>
           </button>
         </footer>
       </section>
@@ -800,16 +788,13 @@ export function Workspace() {
       <div className="meta">
         Shortcut <kbd>{settings.shortcut}</kbd>
         <span>
-          Mode <b>{settings.recordingMode}</b>
+          Горим <b>{settings.recordingMode}</b>
         </span>
         <span>
-          STT <b>{settings.sttEngine}</b>
+          Хоолой <b>{currentVoice.name}</b>
         </span>
         <span>
-          Voice <b>{currentVoiceName}</b>
-        </span>
-        <span>
-          Desktop Flow <b>{settings.desktopHotkey}</b>
+          FlowBar <kbd>{settings.desktopHotkey}</kbd>
         </span>
       </div>
     </section>
@@ -818,53 +803,11 @@ export function Workspace() {
 
 export function SettingsPanel() {
   const { settings, update } = useSettings();
-  const [testingToken, setTestingToken] = useState(false);
-  const [tokenStatus, setTokenStatus] = useState<{
-    tested: boolean;
-    valid?: boolean;
-    message?: string;
-  }>({ tested: false });
   const [audioDevices, setAudioDevices] = useState<MediaDeviceInfo[]>([]);
 
   useEffect(() => {
     getAudioInputDevices().then(setAudioDevices);
   }, []);
-
-  const testChimegeToken = async () => {
-    if (!settings.chimegeToken) {
-      setTokenStatus({
-        tested: true,
-        valid: false,
-        message: "Эхлээд token-оо оруулна уу.",
-      });
-      return;
-    }
-
-    setTestingToken(true);
-    setTokenStatus({ tested: false });
-
-    try {
-      const res = await fetch("/api/chimege/test", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ token: settings.chimegeToken }),
-      });
-      const data = await res.json();
-      setTokenStatus({
-        tested: true,
-        valid: data.valid,
-        message: data.message,
-      });
-    } catch {
-      setTokenStatus({
-        tested: true,
-        valid: false,
-        message: "Холболтын алдаа гарлаа.",
-      });
-    } finally {
-      setTestingToken(false);
-    }
-  };
 
   const Toggle = ({
     k,
@@ -877,9 +820,9 @@ export function SettingsPanel() {
   }) => (
     <label className="toggle">
       <div>
-        <span>{label}</span>
+        <span style={{ fontWeight: 500 }}>{label}</span>
         {description && (
-          <small style={{ display: "block", color: "var(--muted)", fontSize: "11px" }}>
+          <small style={{ display: "block", color: "var(--muted)", fontSize: "11px", marginTop: "2px" }}>
             {description}
           </small>
         )}
@@ -894,81 +837,14 @@ export function SettingsPanel() {
 
   return (
     <div className="settings-grid">
-      {/* Language */}
+      {/* Speech & AI Voice */}
       <section className="settings">
-        <h2>Language (Хэл)</h2>
-        <p>Яриа таних үндсэн хэлээ сонгоно.</p>
-        <LanguageSelect
-          value={settings.language}
-          onChange={(v) => update("language", v)}
-        />
-      </section>
-
-      {/* Chimege STT API Configuration */}
-      <section className="settings">
-        <h2>Chimege AI Engine (Монгол яриа)</h2>
-        <p>
-          Chimege API Token оруулснаар монгол яриаг өндөр нарийвчлалтай танина.
-        </p>
-
-        <div className="token-input-group">
-          <input
-            type="password"
-            placeholder="Chimege API Token..."
-            value={settings.chimegeToken}
-            onChange={(e) => {
-              update("chimegeToken", e.target.value);
-              setTokenStatus({ tested: false });
-            }}
-          />
-          <button
-            className="btn-primary"
-            onClick={testChimegeToken}
-            disabled={testingToken || !settings.chimegeToken}
-          >
-            {testingToken ? "Шалгаж байна..." : "Шалгах"}
-          </button>
-        </div>
-
-        {tokenStatus.tested && (
-          <div style={{ marginTop: "10px" }}>
-            <span
-              className={`status-pill ${
-                tokenStatus.valid ? "success" : "error"
-              }`}
-            >
-              {tokenStatus.valid ? "✓" : "✗"} {tokenStatus.message}
-            </span>
-          </div>
-        )}
-
-        <div className="token-help">
-          Token байхгүй бол{" "}
-          <a
-            href="https://console.chimege.com"
-            target="_blank"
-            rel="noreferrer"
-          >
-            console.chimege.com
-          </a>{" "}
-          дээр бүртгүүлж авна уу.
-        </div>
-
-        <Toggle
-          k="useStandardStt"
-          label="Standard STT (Хурдан)"
-          description="Богино ярианд илүү хурдан (унтраавал урт ярианы Long STT горим ашиглана)."
-        />
-      </section>
-
-      {/* Chimege TTS Voices Selection */}
-      <section className="settings">
-        <h2>Chimege Дуу Хоолой (TTS Voices)</h2>
+        <h2>Хиймэл Оюуны Дуу Хоолой (TTS Voices)</h2>
         <p>Яриаг уншиж сонсоход ашиглах үндсэн хоолой (11 төрөл).</p>
         <select
           value={settings.defaultVoiceId}
           onChange={(e) => update("defaultVoiceId", e.target.value)}
-          style={{ width: "100%", marginBottom: "12px" }}
+          style={{ width: "100%", marginBottom: "14px" }}
         >
           <optgroup label="👩 Эмэгтэй хоолойнууд">
             {chimegeVoices
@@ -990,68 +866,46 @@ export function SettingsPanel() {
           </optgroup>
         </select>
 
-        <div style={{ display: "flex", gap: "8px", marginTop: "8px" }}>
-          <Link href="/tts" className="btn-secondary" style={{ fontSize: "12px", textDecoration: "none" }}>
-            🔊 Бүх 11 хоолойг туршиж үзэх (TTS Studio) →
-          </Link>
-        </div>
+        <Link href="/tts" className="btn-secondary" style={{ fontSize: "12px", textDecoration: "none" }}>
+          <VolumeIcon width={14} height={14} />
+          <span>Бүх 11 хоолойг TTS Studio-д сонсох →</span>
+        </Link>
       </section>
 
       {/* Desktop Mode like Duudlaga Flow */}
       <section className="settings">
-        <h2>Компьютер дээр ажиллуулах (Duudlaga Flow горим)</h2>
-        <p>Аль ч програм (Word, Chrome, Telegram, г.м.) дээр шууд ярьж бичих.</p>
+        <h2>Компьютер дээр ажиллах (Duudlaga Flow горим)</h2>
+        <p>Word, Chrome, Telegram зэрэг дурын програм дээр шууд ярьж бичих.</p>
         
-        <div style={{ background: "var(--subtle)", padding: "12px", borderRadius: "12px", fontSize: "12px", lineHeight: 1.6, marginBottom: "14px" }}>
-          <div><b>💻 Хөвөгч FlowBar цонх:</b> Дэлгэцийн доод хэсэгт жижиг capsule хэлбэрээр байрлана.</div>
-          <div style={{ marginTop: "6px" }}><b>⌨️ Системийн товчлуур:</b> <kbd>Ctrl+Alt</kbd> (дэлгэцийн хаанаас ч ярьж эхлүүлнэ).</div>
-          <div style={{ marginTop: "6px" }}><b>✍️ Шууд бичих:</b> Ярьж дуусмагц тухайн идэвхтэй цонхонд текстийг автоматаар хуулж бичнэ.</div>
+        <div style={{ background: "var(--subtle)", padding: "14px", borderRadius: "14px", fontSize: "12px", lineHeight: 1.6, marginBottom: "14px", border: "1px solid var(--border)" }}>
+          <div><b>💻 Хөвөгч FlowBar:</b> Дэлгэцийн доод хэсэгт жижиг capsule хэлбэрээр хөвөн байрлана.</div>
+          <div style={{ marginTop: "4px" }}><b>⌨️ Системийн товчлуур:</b> <kbd>{settings.desktopHotkey}</kbd> (дэлгэцийн хаанаас ч ярьж эхлүүлнэ).</div>
+          <div style={{ marginTop: "4px" }}><b>✍️ Шууд бичих:</b> Ярьж дуусмагц тухайн идэвхтэй цонхонд текстийг автоматаар хуулж бичнэ.</div>
         </div>
 
-        <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
-          <Link
-            href="/flowbar"
-            target="_blank"
-            className="btn-primary"
-            style={{ textDecoration: "none" }}
-          >
-            ◫ FlowBar цонхыг нээх
-          </Link>
-        </div>
+        <Link
+          href="/flowbar"
+          target="_blank"
+          className="btn-primary"
+          style={{ textDecoration: "none" }}
+        >
+          <FlowBarIcon width={16} height={16} />
+          <span>FlowBar цонхыг нээх</span>
+        </Link>
 
-        <Toggle
-          k="autoInsertText"
-          label="Auto-insert text"
-          description="Яриаг таньмагц идэвхтэй цонхонд автоматаар буулгах."
-        />
-      </section>
-
-      {/* STT Engine selection */}
-      <section className="settings">
-        <h2>Speech Recognition Engine</h2>
-        <p>Ашиглах яриа танигч загвар.</p>
-        <div className="option-list">
-          {sttEngines.map((x) => (
-            <label className="radio" key={x.value}>
-              <input
-                type="radio"
-                name="engine"
-                checked={settings.sttEngine === x.value}
-                onChange={() => update("sttEngine", x.value)}
-              />
-              <span>
-                <b>{x.label}</b>
-                <small>{x.description}</small>
-              </span>
-            </label>
-          ))}
+        <div style={{ marginTop: "14px" }}>
+          <Toggle
+            k="autoInsertText"
+            label="Auto-insert text"
+            description="Яриаг таньмагц идэвхтэй цонхонд автоматаар буулгах."
+          />
         </div>
       </section>
 
       {/* Recording Mode */}
       <section className="settings">
-        <h2>Recording (Бичлэг хийх горим)</h2>
-        <p>Бичлэгийг хэрхэн эхлүүлэх болон дуусгах тохиргоо.</p>
+        <h2>Бичлэг хийх тохиргоо</h2>
+        <p>Бичлэгийг хэрхэн эхлүүлэх болон дуусгах горим.</p>
         {recordingModes.map((x) => (
           <label className="radio" key={x.value}>
             <input
@@ -1075,7 +929,7 @@ export function SettingsPanel() {
 
       {/* Microphone Selection */}
       <section className="settings">
-        <h2>Microphone Device (Микрофон сонгох)</h2>
+        <h2>Microphone Device (Микрофон)</h2>
         <p>Ашиглах оролтын төхөөрөмжөө сонгоно.</p>
         <select
           value={settings.selectedAudioDevice}
@@ -1110,8 +964,8 @@ export function SettingsPanel() {
 
       {/* Text Processing & Spellcheck */}
       <section className="settings">
-        <h2>Text & Spellcheck (Текст боловсруулалт)</h2>
-        <p>Зөв бичих дүрэм, цэг таслал болон сул үг цэвэрлэх тохиргоо.</p>
+        <h2>Зөв бичих дүрэм ба Сул үг</h2>
+        <p>Текст цэгцлэх болон зөв бичгийн дүрэм шалгах тохиргоо.</p>
         <Toggle
           k="autoPunctuation"
           label="Auto punctuation"
@@ -1119,7 +973,7 @@ export function SettingsPanel() {
         />
         <Toggle
           k="autoCorrection"
-          label="Auto correction (spellcheck.mn)"
+          label="Auto spellcheck"
           description="Бичвэр бэлэн болмогц зөв бичгийн алдааг шалгаж санал болгох."
         />
         <Toggle
@@ -1127,7 +981,7 @@ export function SettingsPanel() {
           label="Remove fillers (Сул үг арилгах)"
           description="Монгол хэлний сул үгсийг (нөгөө, ер нь, аан, тэгээд...) хасах."
         />
-        <div className="option-list">
+        <div className="option-list" style={{ marginTop: "10px" }}>
           {modes.map((x) => (
             <label className="radio" key={x.value}>
               <input
@@ -1147,8 +1001,8 @@ export function SettingsPanel() {
 
       {/* Appearance */}
       <section className="settings">
-        <h2>Appearance (Харагдац)</h2>
-        <p>Theme preference.</p>
+        <h2>Харагдац (Appearance)</h2>
+        <p>Өнгөний горим сонгох.</p>
         <div className="themes">
           {themes.map((x) => (
             <button
@@ -1164,19 +1018,14 @@ export function SettingsPanel() {
 
       {/* Privacy & Storage */}
       <section className="settings">
-        <h2>Privacy & Storage (Хадгалалт)</h2>
-        <p>Түүх болон хувийн мэдээллийн тохиргоо.</p>
+        <h2>Хадгалалт ба Цэвэрлэгээ</h2>
+        <p>Түүх хадгалах болон цэвэрлэх үйлдлүүд.</p>
         <Toggle
           k="saveTranscripts"
           label="Save transcripts"
-          description="Бүх хөрвүүлсэн текстийг History хэсэгт автоматаар хадгалах."
+          description="Бүх хөрвүүлсэн текстийг History хэсэгт хадгалах."
         />
-        <Toggle
-          k="saveRecordings"
-          label="Save recordings"
-          description="Орон нутгийн session-д бичлэгийг хадгалах."
-        />
-        <div style={{ marginTop: "14px" }}>
+        <div style={{ marginTop: "16px" }}>
           <button
             className="btn-danger"
             onClick={() => {
@@ -1186,7 +1035,8 @@ export function SettingsPanel() {
               }
             }}
           >
-            Clear All History (Түүхийг бүрэн цэвэрлэх)
+            <TrashIcon width={15} height={15} />
+            <span>Түүхийг бүрэн цэвэрлэх</span>
           </button>
         </div>
       </section>

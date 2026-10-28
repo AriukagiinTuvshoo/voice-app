@@ -5,6 +5,13 @@ import { useRouter } from "next/navigation";
 import { HistoryStore } from "@/lib/history-store";
 import type { TranscriptionRecord } from "@/lib/types";
 import { useSettings } from "@/components/AppShell";
+import {
+  VolumeIcon,
+  CopyIcon,
+  CheckIcon,
+  TrashIcon,
+  SparklesIcon,
+} from "@/components/Icons";
 
 export default function HistoryPage() {
   const router = useRouter();
@@ -14,40 +21,6 @@ export default function HistoryPage() {
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [playingId, setPlayingId] = useState<string | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
-
-  const handlePlayTTS = async (id: string, text: string) => {
-    if (!text.trim()) return;
-    setPlayingId(id);
-
-    try {
-      const res = await fetch("/api/chimege/tts", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          text: text.trim(),
-          voiceId: settings.defaultVoiceId || "FEMALE3v2",
-          token: settings.chimegeToken,
-        }),
-      });
-
-      if (!res.ok) {
-        throw new Error("TTS алдаа");
-      }
-
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-
-      if (!audioRef.current) {
-        audioRef.current = new Audio();
-      }
-      audioRef.current.src = url;
-      await audioRef.current.play();
-    } catch {
-      alert("TTS тоглуулахад алдаа гарлаа. Settings дээр Token шалгана уу.");
-    } finally {
-      setPlayingId(null);
-    }
-  };
 
   useEffect(() => {
     const update = () => setRecords(HistoryStore.getAll());
@@ -83,11 +56,44 @@ export default function HistoryPage() {
     }
   };
 
+  const handlePlayTTS = async (id: string, text: string) => {
+    if (!text.trim()) return;
+    setPlayingId(id);
+
+    try {
+      const res = await fetch("/api/chimege/tts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          text: text.trim(),
+          voiceId: settings.defaultVoiceId || "FEMALE3v2",
+        }),
+      });
+
+      if (!res.ok) {
+        throw new Error("TTS алдаа");
+      }
+
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+
+      if (!audioRef.current) {
+        audioRef.current = new Audio();
+      }
+      audioRef.current.src = url;
+      await audioRef.current.play();
+    } catch {
+      console.warn("TTS Play error");
+    } finally {
+      setPlayingId(null);
+    }
+  };
+
   return (
     <section className="page">
       <small>VOICE HISTORY</small>
-      <h1>Түүх</h1>
-      <p>Өмнө хадгалсан бичлэг болон transcript-уудаа эндээс удирдана.</p>
+      <h1>Түүх ба Архив</h1>
+      <p>Өмнө нь таниулсан болон хадгалсан бүх ярианы бичвэрүүдээ эндээс удирдана.</p>
 
       <div className="history-controls">
         <input
@@ -98,7 +104,7 @@ export default function HistoryPage() {
           onChange={(e) => setSearchQuery(e.target.value)}
         />
 
-        <div className="history-actions">
+        <div className="history-actions" style={{ display: "flex", gap: "8px" }}>
           <button
             className="btn-secondary"
             onClick={() => HistoryStore.exportAsText()}
@@ -117,24 +123,27 @@ export default function HistoryPage() {
           </button>
           {records.length > 0 && (
             <button className="btn-danger" onClick={handleClearAll}>
-              Бүгдийг устгах
+              <TrashIcon width={14} height={14} />
+              <span>Бүгдийг устгах</span>
             </button>
           )}
         </div>
       </div>
 
       {filtered.length === 0 ? (
-        <div className="empty-page">
-          <div>◌</div>
-          <h2>
+        <div className="empty-page" style={{ border: "1px dashed var(--border)", borderRadius: "24px", padding: "48px 24px" }}>
+          <div style={{ color: "var(--muted)", opacity: 0.6, marginBottom: "12px" }}>
+            <SparklesIcon width={48} height={48} />
+          </div>
+          <h2 style={{ fontSize: "18px", margin: "0 0 8px" }}>
             {searchQuery
               ? "Хайлтад тохирох бичлэг олдсонгүй."
               : "Одоогоор хадгалсан бичлэг байхгүй."}
           </h2>
-          <p>
+          <p style={{ fontSize: "13px" }}>
             {searchQuery
-              ? "Өөр түлхүүр үгээр хайна уу."
-              : "Шинэ бичлэг хийсний дараа энд автоматаар хадгалагдана."}
+              ? "Өөр түлхүүр үгээр хайж үзнэ үү."
+              : "Шинэ яриа таниулсны дараа таны бичвэрүүд энд автоматаар хадгалагдана."}
           </p>
         </div>
       ) : (
@@ -146,18 +155,17 @@ export default function HistoryPage() {
               day: "2-digit",
               hour: "2-digit",
               minute: "2-digit",
-              second: "2-digit",
             });
 
             return (
               <article key={record.id} className="history-card">
                 <header className="history-card-header">
-                  <div className="history-meta-group">
-                    <span className="stats-badge">
+                  <div className="history-meta-group" style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+                    <span className="stats-badge" style={{ color: "var(--accent)" }}>
                       {record.language.toUpperCase()}
                     </span>
                     <span className="stats-badge">
-                      {record.engine || "voice"}
+                      {record.engine || "Voice AI"}
                     </span>
                     {record.durationSeconds > 0 && (
                       <span className="stats-badge">
@@ -168,7 +176,7 @@ export default function HistoryPage() {
                       {record.wordCount} үг
                     </span>
                   </div>
-                  <time>{dateStr}</time>
+                  <time style={{ fontSize: "12px", color: "var(--muted)" }}>{dateStr}</time>
                 </header>
 
                 <p className="history-card-text">{record.text}</p>
@@ -179,7 +187,8 @@ export default function HistoryPage() {
                     onClick={() => handlePlayTTS(record.id, record.text)}
                     disabled={playingId === record.id}
                   >
-                    {playingId === record.id ? "🔊 Уншиж байна..." : "🔊 Сонсох"}
+                    <VolumeIcon width={14} height={14} />
+                    <span>{playingId === record.id ? "Уншиж байна..." : "Сонсох"}</span>
                   </button>
                   <button
                     className="btn-secondary"
@@ -191,13 +200,15 @@ export default function HistoryPage() {
                     className="btn-secondary"
                     onClick={() => handleCopy(record.id, record.text)}
                   >
-                    {copiedId === record.id ? "Хуулагдлаа!" : "Copy"}
+                    {copiedId === record.id ? <CheckIcon width={14} height={14} /> : <CopyIcon width={14} height={14} />}
+                    <span>{copiedId === record.id ? "Хуулагдлаа!" : "Хуулах"}</span>
                   </button>
                   <button
                     className="btn-danger"
                     onClick={() => handleDelete(record.id)}
                   >
-                    Устгах
+                    <TrashIcon width={14} height={14} />
+                    <span>Устгах</span>
                   </button>
                 </footer>
               </article>

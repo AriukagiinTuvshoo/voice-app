@@ -1,9 +1,14 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
-import Link from "next/link";
+import { useState, useRef } from "react";
 import { chimegeVoices } from "@/lib/constants";
 import { useSettings } from "@/components/AppShell";
+import {
+  VolumeIcon,
+  PlayIcon,
+  SparklesIcon,
+  CheckIcon,
+} from "@/components/Icons";
 
 interface GeneratedAudio {
   id: string;
@@ -17,14 +22,13 @@ interface GeneratedAudio {
 export default function TTSPage() {
   const { settings } = useSettings();
   const [text, setText] = useState(
-    "Сайн байна уу? Монгол хэлний яриа болон хиймэл оюун ухааны технологийн системд тавтай морилно уу."
+    "Сайн байна уу? Монгол хэлний дуу хоолой болон ярианы хиймэл оюуны студид тавтай морилно уу."
   );
   const [selectedVoiceId, setSelectedVoiceId] = useState(settings.defaultVoiceId || "FEMALE3v2");
   const [genderFilter, setGenderFilter] = useState<"all" | "female" | "male">("all");
   const [speed, setSpeed] = useState(settings.ttsSpeed || 1.0);
   const [pitch, setPitch] = useState(settings.ttsPitch || 1.0);
   const [loading, setLoading] = useState(false);
-  const [errorMessage, setErrorMessage] = useState("");
   const [currentAudioUrl, setCurrentAudioUrl] = useState<string | null>(null);
   const [history, setHistory] = useState<GeneratedAudio[]>([]);
 
@@ -40,7 +44,6 @@ export default function TTSPage() {
   const handleSynthesize = async () => {
     if (!text.trim()) return;
     setLoading(true);
-    setErrorMessage("");
 
     try {
       const res = await fetch("/api/chimege/tts", {
@@ -51,13 +54,11 @@ export default function TTSPage() {
           voiceId: selectedVoiceId,
           speed,
           pitch,
-          token: settings.chimegeToken,
         }),
       });
 
       if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error(data.error || `Серверийн алдаа (${res.status})`);
+        throw new Error("TTS дуу үүсгэхэд алдаа гарлаа.");
       }
 
       const blob = await res.blob();
@@ -65,7 +66,6 @@ export default function TTSPage() {
 
       setCurrentAudioUrl(url);
 
-      // Add to session history
       const newEntry: GeneratedAudio = {
         id: "tts_" + Date.now(),
         text: text.trim(),
@@ -76,15 +76,13 @@ export default function TTSPage() {
       };
       setHistory((prev) => [newEntry, ...prev.slice(0, 15)]);
 
-      // Auto play
       setTimeout(() => {
         if (audioRef.current) {
           audioRef.current.play().catch(() => {});
         }
       }, 100);
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Яриа үүсгэхэд алдаа гарлаа.";
-      setErrorMessage(msg);
+      console.warn("TTS error:", err);
     } finally {
       setLoading(false);
     }
@@ -94,38 +92,26 @@ export default function TTSPage() {
     "Сайн байна уу? Тавтай морилно уу.",
     "Монгол улсын мэдээлэл технологийн салбар эрчимтэй хөгжиж байна.",
     "Маргаашийн ажлын хэлэлцүүлэг өглөө 10:00 цагт эхэлнэ.",
-    "Энэхүү бичвэрийг Chimege хиймэл оюуны хоолойгоор уншиж байна.",
+    "Энэхүү бичвэрийг хиймэл оюуны байгалийн дуу хоолойгоор уншиж байна.",
   ];
 
   return (
     <section className="page">
-      <small>VOICE TTS STUDIO</small>
-      <h1>Яриа үүсгэгч (Text-to-Speech)</h1>
+      <small>VOICE AI STUDIO</small>
+      <h1>Дуу Хоолойн Студи (TTS)</h1>
       <p>
-        Бичвэрийг Chimege AI-ийн 11 өөр эмэгтэй, эрэгтэй байгалийн хоолойгоор уншуулж,
-        аудиог нь татаж авах боломжтой.
+        Бичвэрийг 11 төрлийн байгалийн өнгө аястай эмэгтэй ба эрэгтэй хоолойгоор шууд уншуулж,
+        аудиог нь татан аваарай.
       </p>
 
-      {!settings.chimegeToken && (
-        <div className="error" style={{ marginBottom: "20px" }}>
-          ⚠️ Chimege API Token тохируулаагүй байна.{" "}
-          <Link href="/settings" style={{ textDecoration: "underline", fontWeight: 600 }}>
-            Settings цэснээс token-оо оруулна уу →
-          </Link>
-        </div>
-      )}
-
-      {errorMessage && (
-        <div className="error" style={{ marginBottom: "20px" }}>
-          <b>Алдаа:</b> {errorMessage}
-        </div>
-      )}
-
-      <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: "24px" }}>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: "24px", marginTop: "28px" }}>
         {/* Text Input Card */}
         <div className="settings">
-          <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "8px" }}>
-            <h2 style={{ margin: 0 }}>Уншуулах текст</h2>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
+            <h2 style={{ margin: 0, display: "flex", alignItems: "center", gap: "8px" }}>
+              <SparklesIcon width={18} height={18} style={{ color: "var(--accent)" }} />
+              <span>Уншуулах текст</span>
+            </h2>
             <span style={{ fontSize: "12px", color: "var(--muted)" }}>
               {text.length} тэмдэгт • ~{Math.ceil(text.length / 15)} сек
             </span>
@@ -138,28 +124,28 @@ export default function TTSPage() {
             style={{
               width: "100%",
               minHeight: "120px",
-              padding: "12px",
-              background: "var(--bg)",
+              padding: "16px",
+              background: "var(--subtle)",
               border: "1px solid var(--border)",
-              borderRadius: "12px",
+              borderRadius: "16px",
               color: "var(--text)",
-              fontSize: "14px",
+              fontSize: "15px",
               lineHeight: 1.6,
               resize: "vertical",
+              outline: "none",
             }}
           />
 
           {/* Quick sample chips */}
-          <div style={{ display: "flex", gap: "6px", flexWrap: "wrap", marginTop: "10px" }}>
-            <span style={{ fontSize: "11px", color: "var(--muted)", alignSelf: "center" }}>Жишээ:</span>
+          <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", marginTop: "12px" }}>
+            <span style={{ fontSize: "12px", color: "var(--muted)", alignSelf: "center" }}>Жишээ:</span>
             {samplePhrases.map((phrase, idx) => (
               <button
                 key={idx}
                 className="suggestion-pill"
                 onClick={() => setText(phrase)}
-                style={{ fontSize: "11px" }}
               >
-                {phrase.slice(0, 24)}...
+                {phrase.slice(0, 26)}...
               </button>
             ))}
           </div>
@@ -167,32 +153,51 @@ export default function TTSPage() {
 
         {/* Voice Selector Grid */}
         <div className="settings">
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "14px", flexWrap: "wrap", gap: "8px" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px", flexWrap: "wrap", gap: "10px" }}>
             <div>
-              <h2 style={{ margin: 0 }}>Дуу хоолой сонгох (11 төрөл)</h2>
-              <p style={{ margin: "2px 0 0", fontSize: "12px" }}>
-                Сонгогдсон: <b>{selectedVoice.name}</b> ({selectedVoice.description})
+              <h2 style={{ margin: 0, display: "flex", alignItems: "center", gap: "8px" }}>
+                <VolumeIcon width={18} height={18} style={{ color: "var(--accent)" }} />
+                <span>Дуу хоолой сонгох (11 төрөл)</span>
+              </h2>
+              <p style={{ margin: "4px 0 0", fontSize: "13px" }}>
+                Сонгогдсон: <b>{selectedVoice.name}</b> • {selectedVoice.description}
               </p>
             </div>
+
             {/* Filter buttons */}
             <div style={{ display: "flex", gap: "6px" }}>
               <button
-                className={`btn-secondary ${genderFilter === "all" ? "selected" : ""}`}
-                style={{ padding: "4px 10px", fontSize: "12px", background: genderFilter === "all" ? "var(--text)" : "transparent", color: genderFilter === "all" ? "var(--bg)" : "var(--text)" }}
+                className="btn-secondary"
+                style={{
+                  padding: "6px 12px",
+                  fontSize: "12px",
+                  background: genderFilter === "all" ? "var(--text)" : "var(--surface)",
+                  color: genderFilter === "all" ? "var(--bg)" : "var(--text)",
+                }}
                 onClick={() => setGenderFilter("all")}
               >
                 Бүгд (11)
               </button>
               <button
-                className={`btn-secondary ${genderFilter === "female" ? "selected" : ""}`}
-                style={{ padding: "4px 10px", fontSize: "12px", background: genderFilter === "female" ? "var(--text)" : "transparent", color: genderFilter === "female" ? "var(--bg)" : "var(--text)" }}
+                className="btn-secondary"
+                style={{
+                  padding: "6px 12px",
+                  fontSize: "12px",
+                  background: genderFilter === "female" ? "var(--text)" : "var(--surface)",
+                  color: genderFilter === "female" ? "var(--bg)" : "var(--text)",
+                }}
                 onClick={() => setGenderFilter("female")}
               >
                 👩 Эмэгтэй (6)
               </button>
               <button
-                className={`btn-secondary ${genderFilter === "male" ? "selected" : ""}`}
-                style={{ padding: "4px 10px", fontSize: "12px", background: genderFilter === "male" ? "var(--text)" : "transparent", color: genderFilter === "male" ? "var(--bg)" : "var(--text)" }}
+                className="btn-secondary"
+                style={{
+                  padding: "6px 12px",
+                  fontSize: "12px",
+                  background: genderFilter === "male" ? "var(--text)" : "var(--surface)",
+                  color: genderFilter === "male" ? "var(--bg)" : "var(--text)",
+                }}
                 onClick={() => setGenderFilter("male")}
               >
                 👨 Эрэгтэй (5)
@@ -203,45 +208,72 @@ export default function TTSPage() {
           <div
             style={{
               display: "grid",
-              gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))",
-              gap: "10px",
+              gridTemplateColumns: "repeat(auto-fill, minmax(185px, 1fr))",
+              gap: "12px",
             }}
           >
             {filteredVoices.map((voice) => {
               const isSelected = selectedVoiceId === voice.id;
+              const isFemale = voice.gender === "female";
               return (
                 <div
                   key={voice.id}
                   onClick={() => setSelectedVoiceId(voice.id)}
                   style={{
-                    padding: "12px 14px",
-                    borderRadius: "14px",
-                    border: `2px solid ${isSelected ? "var(--focus)" : "var(--border)"}`,
+                    padding: "14px 16px",
+                    borderRadius: "16px",
+                    border: isSelected
+                      ? "2px solid var(--accent)"
+                      : "1px solid var(--border)",
                     background: isSelected ? "var(--subtle)" : "var(--surface)",
+                    boxShadow: isSelected ? "0 0 20px rgba(99, 102, 241, 0.2)" : "var(--shadow-sm)",
                     cursor: "pointer",
-                    transition: "all 0.15s ease",
+                    transition: "all 0.2s cubic-bezier(0.4, 0, 0.2, 1)",
+                    transform: isSelected ? "scale(1.02)" : "scale(1)",
                   }}
                 >
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                    <b style={{ fontSize: "14px" }}>
-                      {voice.gender === "female" ? "👩" : "👨"} {voice.name}
-                    </b>
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                      <div
+                        style={{
+                          width: "28px",
+                          height: "28px",
+                          borderRadius: "50%",
+                          background: isFemale
+                            ? "linear-gradient(135deg, #f43f5e, #ec4899)"
+                            : "linear-gradient(135deg, #3b82f6, #6366f1)",
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          color: "#fff",
+                          fontSize: "12px",
+                          fontWeight: 700,
+                        }}
+                      >
+                        {isFemale ? "F" : "M"}
+                      </div>
+                      <b style={{ fontSize: "14px" }}>{voice.name}</b>
+                    </div>
                     {isSelected && (
-                      <span style={{ color: "var(--focus)", fontSize: "14px" }}>✓</span>
+                      <span style={{ color: "var(--accent)" }}>
+                        <CheckIcon width={16} height={16} />
+                      </span>
                     )}
                   </div>
-                  <div style={{ fontSize: "11px", color: "var(--muted)", marginTop: "4px" }}>
+                  <div style={{ fontSize: "12px", color: "var(--muted)", marginTop: "8px" }}>
                     {voice.description}
                   </div>
                   <span
                     style={{
                       display: "inline-block",
-                      marginTop: "6px",
+                      marginTop: "8px",
                       fontSize: "10px",
-                      padding: "2px 6px",
+                      fontWeight: 600,
+                      padding: "2px 8px",
                       borderRadius: "6px",
-                      background: "var(--border)",
-                      color: "var(--text)",
+                      background: "var(--subtle)",
+                      border: "1px solid var(--border)",
+                      color: "var(--muted)",
                     }}
                   >
                     {voice.tag}
@@ -255,9 +287,9 @@ export default function TTSPage() {
         {/* Speed & Pitch Controls */}
         <div className="settings">
           <h2>Хурд ба Өнгөний тохиргоо</h2>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: "20px", marginTop: "12px" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: "24px", marginTop: "16px" }}>
             <div>
-              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "6px", fontSize: "13px" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "8px", fontSize: "13px" }}>
                 <span>Унших хурд (Speed):</span>
                 <b>{speed.toFixed(1)}x</b>
               </div>
@@ -268,9 +300,9 @@ export default function TTSPage() {
                 step="0.1"
                 value={speed}
                 onChange={(e) => setSpeed(parseFloat(e.target.value))}
-                style={{ width: "100%" }}
+                style={{ width: "100%", accentColor: "var(--accent)" }}
               />
-              <div style={{ display: "flex", justifyContent: "space-between", fontSize: "10px", color: "var(--muted)" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: "11px", color: "var(--muted)", marginTop: "4px" }}>
                 <span>0.5x Удаан</span>
                 <span>1.0x Энгийн</span>
                 <span>2.0x Хурдан</span>
@@ -278,7 +310,7 @@ export default function TTSPage() {
             </div>
 
             <div>
-              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "6px", fontSize: "13px" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "8px", fontSize: "13px" }}>
                 <span>Өнгөний өндөр (Pitch):</span>
                 <b>{pitch.toFixed(1)}x</b>
               </div>
@@ -289,60 +321,54 @@ export default function TTSPage() {
                 step="0.1"
                 value={pitch}
                 onChange={(e) => setPitch(parseFloat(e.target.value))}
-                style={{ width: "100%" }}
+                style={{ width: "100%", accentColor: "var(--accent)" }}
               />
-              <div style={{ display: "flex", justifyContent: "space-between", fontSize: "10px", color: "var(--muted)" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: "11px", color: "var(--muted)", marginTop: "4px" }}>
                 <span>0.5x Баргил</span>
                 <span>1.0x Энгийн</span>
                 <span>2.0x Нарийн</span>
               </div>
             </div>
           </div>
-
-          <div style={{ marginTop: "12px" }}>
-            <button
-              className="btn-secondary"
-              onClick={() => {
-                setSpeed(1.0);
-                setPitch(1.0);
-              }}
-              style={{ fontSize: "11px", padding: "4px 8px" }}
-            >
-              Тохиргоог дахин эхлүүлэх (Reset)
-            </button>
-          </div>
         </div>
 
-        {/* Generate Button & Player */}
-        <div className="settings" style={{ textAlign: "center", padding: "28px 20px" }}>
+        {/* Action Button & Player */}
+        <div className="settings" style={{ textAlign: "center", padding: "32px 24px" }}>
           <button
             className="btn-primary"
             onClick={handleSynthesize}
             disabled={loading || !text.trim()}
-            style={{ fontSize: "16px", padding: "14px 28px", borderRadius: "14px" }}
+            style={{ fontSize: "16px", padding: "14px 32px", borderRadius: "16px" }}
           >
-            {loading ? "🔊 Дуу үүсгэж байна..." : `▶ ${selectedVoice.name} хоолойгоор яриулах`}
+            {loading ? (
+              <span>🔊 Дуу хоолой үүсгэж байна...</span>
+            ) : (
+              <>
+                <PlayIcon width={18} height={18} />
+                <span>{selectedVoice.name} хоолойгоор яриулах</span>
+              </>
+            )}
           </button>
 
           {currentAudioUrl && (
-            <div style={{ marginTop: "20px", display: "flex", flexDirection: "column", alignItems: "center", gap: "12px" }}>
-              <audio ref={audioRef} controls src={currentAudioUrl} style={{ width: "100%", maxWidth: "460px" }} />
+            <div style={{ marginTop: "24px", display: "flex", flexDirection: "column", alignItems: "center", gap: "14px" }}>
+              <audio ref={audioRef} controls src={currentAudioUrl} style={{ width: "100%", maxWidth: "480px" }} />
               <a
                 href={currentAudioUrl}
-                download={`chimege-${selectedVoice.name.toLowerCase()}-${Date.now()}.wav`}
+                download={`voice-${selectedVoice.name.toLowerCase()}-${Date.now()}.wav`}
                 className="btn-secondary"
               >
-                ⬇ WAV аудио татаж авах
+                <span>⬇ WAV аудио татаж авах</span>
               </a>
             </div>
           )}
         </div>
 
-        {/* Generated Speeches History */}
+        {/* History */}
         {history.length > 0 && (
           <div className="settings">
             <h2>Саяхан үүсгэсэн бичлэгүүд</h2>
-            <div style={{ display: "flex", flexDirection: "column", gap: "10px", marginTop: "12px" }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: "10px", marginTop: "14px" }}>
               {history.map((item) => (
                 <div
                   key={item.id}
@@ -350,28 +376,29 @@ export default function TTSPage() {
                     display: "flex",
                     justifyContent: "space-between",
                     alignItems: "center",
-                    padding: "10px 14px",
+                    padding: "12px 16px",
                     background: "var(--subtle)",
-                    borderRadius: "12px",
+                    border: "1px solid var(--border)",
+                    borderRadius: "14px",
                     flexWrap: "wrap",
-                    gap: "8px",
+                    gap: "10px",
                   }}
                 >
-                  <div style={{ flex: 1, minWidth: "200px" }}>
-                    <div style={{ fontSize: "13px", fontWeight: 500 }}>
-                      <span className="stats-badge" style={{ marginRight: "6px" }}>{item.voiceName}</span>
+                  <div style={{ flex: 1, minWidth: "220px" }}>
+                    <div style={{ fontSize: "14px", fontWeight: 500 }}>
+                      <span className="stats-badge" style={{ marginRight: "8px" }}>{item.voiceName}</span>
                       {item.text.slice(0, 60)}...
                     </div>
                   </div>
-                  <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
-                    <audio controls src={item.audioUrl} style={{ height: "32px", width: "220px" }} />
+                  <div style={{ display: "flex", gap: "10px", alignItems: "center" }}>
+                    <audio controls src={item.audioUrl} style={{ height: "34px", width: "240px" }} />
                     <a
                       href={item.audioUrl}
-                      download={`chimege-${item.voiceName}-${item.timestamp}.wav`}
+                      download={`voice-${item.voiceName}-${item.timestamp}.wav`}
                       className="btn-secondary"
-                      style={{ padding: "6px 10px", fontSize: "11px" }}
+                      style={{ padding: "6px 12px", fontSize: "12px" }}
                     >
-                      ⬇
+                      Татах
                     </a>
                   </div>
                 </div>
