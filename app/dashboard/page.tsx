@@ -1,0 +1,1 @@
+import {Workspace} from "@/components/AppShell";export default function Dashboard(){return <Workspace/>}
