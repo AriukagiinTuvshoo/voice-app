@@ -1,9 +1,6 @@
 # VOICE — Монгол Хэлний Яриа Ба Дуу Хоолойн Систем (MMS-TTS & AI Studio)
 
 Монгол болон бусад хэлний яриаг бодит цагт бичвэрт хөрвүүлэх, зөв бичгийн дүрэм шалгах, болон **офлайн хиймэл оюуны дуу хоолой (MMS-TTS)** үүсгэх дэвшилтэт веб ба desktop аппликейшн.
-
-Энэхүү системд **Duudlaga Flow** (`https://github.com/Tsagaanbayr1/duudlaga-flow`) болон **Mongolian Spellcheck Skill** (`https://github.com/Tsagaanbayr1/mongolian-spellcheck-skill`)-ийн боломжууд, мөн Meta-ийн **MMS-TTS Khalkha Mongolian** моделыг бүрэн нэгтгэсэн.
-
 ---
 
 ## 🚀 Гол онцлогууд
