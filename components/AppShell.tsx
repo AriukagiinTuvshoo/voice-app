@@ -1136,15 +1136,25 @@ export function SettingsPanel() {
 
       {/* Desktop Helper for system-wide Ctrl+Alt */}
       <section className="settings desktop-only">
-        <h2>💻 Chrome, Word дээр Ctrl+Alt-аар шууд бичих</h2>
+        <h2>💻 Chrome, Word, Excel дээр Ctrl+Alt-аар шууд бичих</h2>
         <p>
-          Вэб хуудас өөр программ руу бичих эрхгүй тул компьютер дээрээ жижиг <b>VOICE Helper</b> ажиллуулна.
-          Нэг удаа суулгахад Windows асах бүрт далд ажиллана.
+          Вэб хуудас өөр программ руу дур мэдэн бичих эрхгүй тул компьютер дээрээ 1 жижиг <b>VOICE Windows Helper</b> ажиллуулна.
+          Ямар ч Python, нэмэлт програм суулгах шаардлагагүй.
         </p>
-        <div style={{ background: "var(--subtle)", padding: "14px", borderRadius: "14px", fontSize: "12px", lineHeight: 1.7, border: "1px solid var(--border)" }}>
-          <div><b>1.</b> VOICE хавтас дахь <code>Install-VOICE-Helper.bat</code> файлыг давхар товшино.</div>
-          <div><b>2.</b> Chrome / Word / Facebook дээр курсороо байрлуулна.</div>
-          <div><b>3.</b> <kbd>Ctrl</kbd> + <kbd>Alt</kbd> (эсвэл <kbd>F8</kbd>) дараад ярина — текст курсор дээр бичигдэнэ.</div>
+        <div style={{ background: "var(--subtle)", padding: "16px", borderRadius: "14px", fontSize: "13px", lineHeight: 1.7, border: "1px solid var(--border)" }}>
+          <div style={{ marginBottom: "12px" }}>
+            <a
+              href="/api/download/helper"
+              download="VOICE-Windows-Helper.bat"
+              className="btn-primary"
+              style={{ textDecoration: "none", display: "inline-flex", padding: "10px 20px" }}
+            >
+              ⬇️ 1 Товшилтоор Windows Helper татах (.bat)
+            </a>
+          </div>
+          <div><b>1.</b> Дээрх товчоор татаж авсан <code>VOICE-Windows-Helper.bat</code> файлаа 1 удаа давхар товшиж ажиллуулна.</div>
+          <div><b>2.</b> Chrome, Word, Excel, Facebook дээр курсороо байрлуулна.</div>
+          <div><b>3.</b> <kbd>Ctrl</kbd> + <kbd>Alt</kbd> (эсвэл <kbd>F8</kbd>) дараад ярихад текст курсор дээр шууд бичигдэнэ!</div>
         </div>
       </section>
 
