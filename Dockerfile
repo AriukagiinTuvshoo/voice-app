@@ -12,19 +12,24 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-# Install Python dependencies
-COPY requirements*.txt ./
-RUN pip3 install --no-cache-dir --break-system-packages -r requirements.txt
+# Install Python dependencies directly
+RUN pip3 install --no-cache-dir --break-system-packages \
+    fastapi uvicorn edge-tts numpy scipy soundfile SpeechRecognition pydantic python-multipart miniaudio
 
-# Install Node.js dependencies and build Next.js app
+# Install Node.js dependencies
 COPY package*.json ./
 RUN npm install
+
+# Copy application code
 COPY . .
+
+# Build Next.js application
 RUN npm run build
 RUN chmod +x start-cloud.sh
 
-EXPOSE 3000
+EXPOSE 3000 10000
 ENV NODE_ENV=production
+ENV HOSTNAME=0.0.0.0
 ENV LOCAL_PY_URL=http://127.0.0.1:8000
 ENV LOCAL_TTS_URL=http://127.0.0.1:8000/tts
 ENV LOCAL_TTS_HEALTH=http://127.0.0.1:8000/health
