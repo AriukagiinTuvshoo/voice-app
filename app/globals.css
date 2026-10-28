@@ -878,25 +878,27 @@ kbd {
 /* Mobile Responsive */
 @media (max-width: 767px) {
   .sidebar { display: none; }
-  .main { margin-left: 0; width: 100%; padding-bottom: 84px; }
-  .topbar { height: 60px; padding: 0 18px; justify-content: space-between; }
-  .mobile-brand { display: flex; align-items: center; gap: 8px; }
-  .workspace, .page { padding: 28px 18px 40px; }
-  .settings-grid { grid-template-columns: 1fr; }
+  .desktop-only { display: none !important; }
+  .main { margin-left: 0; width: 100%; padding-bottom: 136px; }
+  .topbar { height: 58px; padding: 0 14px; justify-content: space-between; gap: 8px; }
+  .mobile-brand { display: flex; align-items: center; gap: 8px; font-size: 15px; }
+  .workspace, .page { padding: 20px 14px 36px; }
+  .settings-grid { grid-template-columns: 1fr; gap: 14px; margin-top: 20px; }
+  .settings { padding: 18px; border-radius: 18px; }
   .mobile-nav {
     position: fixed;
     display: grid;
     grid-template-columns: repeat(4, 1fr);
-    left: 14px;
-    right: 14px;
-    bottom: calc(14px + env(safe-area-inset-bottom));
+    left: 12px;
+    right: 12px;
+    bottom: calc(10px + env(safe-area-inset-bottom));
     padding: 6px;
     background: var(--surface-glass);
     backdrop-filter: blur(20px);
     border: 1px solid var(--border);
-    border-radius: 20px;
+    border-radius: 18px;
     z-index: 30;
-    box-shadow: 0 10px 35px rgba(0, 0, 0, 0.2);
+    box-shadow: 0 10px 35px rgba(0, 0, 0, 0.25);
   }
   .mnav {
     display: flex;
@@ -907,7 +909,7 @@ kbd {
     border-radius: 12px;
     color: var(--muted);
     font-size: 10px;
-    font-weight: 500;
+    font-weight: 600;
   }
   .mnav.active {
     background: var(--subtle);
@@ -916,19 +918,23 @@ kbd {
   
   /* Mobile touch & typography enhancements */
   .heading h1 {
-    font-size: 26px;
+    font-size: 24px;
     line-height: 1.25;
   }
+  .heading p {
+    font-size: 13px;
+  }
   .stage {
-    padding: 30px 16px;
+    padding: 24px 16px;
+    border-radius: 22px;
   }
   .mic {
-    width: 88px;
-    height: 88px;
+    width: 84px;
+    height: 84px;
   }
   .halo {
-    width: 124px;
-    height: 124px;
+    width: 118px;
+    height: 118px;
   }
   .transcript footer {
     display: flex;
@@ -939,13 +945,14 @@ kbd {
     flex: 1 1 calc(50% - 8px);
     justify-content: center;
     padding: 10px 12px;
+    font-size: 12px;
   }
   .transcript footer button.btn-danger {
     flex: 1 1 100%;
   }
   .transcript-content {
-    font-size: 16px;
-    min-height: 120px;
+    font-size: 15px;
+    min-height: 110px;
   }
 }
 

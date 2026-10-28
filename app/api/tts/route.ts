@@ -1,13 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
-import { encodeWAV } from "@/lib/wav-encoder";
+import { BASE_PY_URL, ensurePythonServerReady } from "@/lib/ensure-py-server";
 
-const LOCAL_TTS_URL = process.env.LOCAL_TTS_URL || "http://127.0.0.1:8000/tts";
-const LOCAL_HEALTH_URL = process.env.LOCAL_TTS_HEALTH || "http://127.0.0.1:8000/health";
+const LOCAL_TTS_URL = process.env.LOCAL_TTS_URL || `${BASE_PY_URL}/tts`;
+const LOCAL_HEALTH_URL = process.env.LOCAL_TTS_HEALTH || `${BASE_PY_URL}/health`;
 
 export async function GET() {
   try {
+    await ensurePythonServerReady(3500);
     const ctrl = new AbortController();
-    const timeout = setTimeout(() => ctrl.abort(), 2000);
+    const timeout = setTimeout(() => ctrl.abort(), 2500);
     const res = await fetch(LOCAL_HEALTH_URL, {
       method: "GET",
       signal: ctrl.signal,
@@ -26,7 +27,7 @@ export async function GET() {
   } catch {
     return NextResponse.json({
       online: false,
-      message: "Local TTS server offline (run run-tts.bat)",
+      message: "VoiceStudio AI холбогдож байна...",
     });
   }
 }
@@ -40,6 +41,7 @@ export async function POST(req: NextRequest) {
     const pitch = body.pitch ?? 1.0;
     const preset = body.preset ?? "broadcast";
     const timbreStrength = body.timbreStrength ?? 0.92;
+    const cloneProfile = body.cloneProfile ?? null;
 
     if (!text) {
       return NextResponse.json(
@@ -48,69 +50,47 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 1. Try local Python VoiceStudio TTS server
-    try {
-      const ctrl = new AbortController();
-      const timeout = setTimeout(() => ctrl.abort(), 25000);
+    await ensurePythonServerReady(4500);
 
-      const pyRes = await fetch(LOCAL_TTS_URL, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          text,
-          voice,
-          speed,
-          pitch,
-          preset,
-          timbreStrength,
-        }),
-        signal: ctrl.signal,
-      });
+    const ctrl = new AbortController();
+    const timeout = setTimeout(() => ctrl.abort(), 30000);
 
-      clearTimeout(timeout);
-
-      if (pyRes.ok) {
-        const contentType = pyRes.headers.get("content-type") || "audio/wav";
-        const audioBuffer = await pyRes.arrayBuffer();
-        return new NextResponse(audioBuffer, {
-          headers: {
-            "Content-Type": contentType,
-            "Content-Disposition": 'inline; filename="speech.wav"',
-            "X-TTS-Source": "local-voicestudio-server",
-          },
-        });
-      }
-    } catch (e: unknown) {
-      console.warn("Local TTS server not responding, using preview chime:", e);
-    }
-
-    // 2. Fallback preview chime if local server is offline
-    const duration = Math.min(2.5, Math.max(0.8, text.length * 0.05));
-    const samplesCount = Math.floor(16000 * duration);
-    const samples = new Float32Array(samplesCount);
-    const baseFreq =
-      voice.toLowerCase().includes("bataa") || voice.toLowerCase().includes("male")
-        ? 330
-        : 520;
-
-    for (let i = 0; i < samplesCount; i++) {
-      const t = i / 16000;
-      const envelope = Math.exp(-3 * (t / duration));
-      samples[i] = 0.25 * Math.sin(2 * Math.PI * baseFreq * t) * envelope;
-    }
-
-    const wavBlob = encodeWAV(samples, 16000);
-    const buffer = await wavBlob.arrayBuffer();
-
-    return new NextResponse(buffer, {
-      headers: {
-        "Content-Type": "audio/wav",
-        "Content-Disposition": 'inline; filename="preview.wav"',
-        "X-TTS-Status": "server-offline",
-      },
+    const pyRes = await fetch(LOCAL_TTS_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        text,
+        voice,
+        speed,
+        pitch,
+        preset,
+        timbreStrength,
+        cloneProfile,
+      }),
+      signal: ctrl.signal,
     });
+
+    clearTimeout(timeout);
+
+    if (pyRes.ok) {
+      const contentType = pyRes.headers.get("content-type") || "audio/wav";
+      const audioBuffer = await pyRes.arrayBuffer();
+      return new NextResponse(audioBuffer, {
+        headers: {
+          "Content-Type": contentType,
+          "Content-Disposition": 'inline; filename="speech.wav"',
+          "X-TTS-Source": "voicestudio-server",
+        },
+      });
+    }
+
+    const errJson = await pyRes.json().catch(() => ({}));
+    return NextResponse.json(
+      { error: errJson.detail || "Аудио үүсгэхэд алдаа гарлаа. Дахин оролдоно уу." },
+      { status: pyRes.status || 500 }
+    );
   } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : "TTS алдаа";
+    const msg = err instanceof Error ? err.message : "TTS алдаа гарлаа";
     return NextResponse.json({ error: msg }, { status: 500 });
   }
 }

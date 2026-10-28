@@ -1,16 +1,19 @@
 import asyncio
 import ctypes
-from ctypes import wintypes
 import io
 import json
 import math
 import os
 import re
+import subprocess
 import threading
 import time
 import tempfile
 import uuid
 from typing import Optional
+
+if os.name == "nt":
+    from ctypes import wintypes
 
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
@@ -351,7 +354,7 @@ CEPSTRAL_LIFTER = 30  # Quefrency cutoff capturing vocal tract formants F1..F4
 
 
 def decode_audio_bytes(raw_bytes: bytes, target_sr: int = TARGET_SR) -> np.ndarray:
-    """Decode WAV, MP3, FLAC, OGG into mono float32 numpy array at target_sr."""
+    """Decode WAV, MP3, M4A, WEBM, FLAC, OGG into mono float32 numpy array at target_sr."""
     if HAS_MINIAUDIO:
         try:
             decoded = miniaudio.decode(
@@ -373,9 +376,42 @@ def decode_audio_bytes(raw_bytes: bytes, target_sr: int = TARGET_SR) -> np.ndarr
                 data = data.mean(axis=1)
             if sr_in != target_sr and data.size > 0:
                 data = sp_signal.resample_poly(data, target_sr, sr_in).astype(np.float32)
-            return data
+            if data.size > 0:
+                return data
         except Exception:
             pass
+
+    # Universal ffmpeg pipe fallback (handles MP3 from edge-tts and M4A/WEBM/OGG from iPhone/Android on Linux & Windows)
+    try:
+        proc = subprocess.run(
+            [
+                "ffmpeg",
+                "-nostdin",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-i",
+                "pipe:0",
+                "-f",
+                "f32le",
+                "-acodec",
+                "pcm_f32le",
+                "-ac",
+                "1",
+                "-ar",
+                str(target_sr),
+                "pipe:1",
+            ],
+            input=raw_bytes,
+            capture_output=True,
+            timeout=15,
+        )
+        if proc.returncode == 0 and len(proc.stdout) >= 4:
+            samples = np.frombuffer(proc.stdout, dtype=np.float32).copy()
+            if samples.size > 0:
+                return samples
+    except Exception:
+        pass
 
     # Fallback scipy wavfile
     sr_in, data = wavfile.read(io.BytesIO(raw_bytes))
@@ -2265,6 +2301,7 @@ class TTSRequest(BaseModel):
     pitch: Optional[float] = 1.0
     preset: Optional[str] = "broadcast"
     timbreStrength: Optional[float] = 0.92
+    cloneProfile: Optional[dict] = None
 
 
 class InsertTextRequest(BaseModel):
@@ -2477,6 +2514,9 @@ async def tts(req: TTSRequest):
     timbre_strength = float(np.clip(req.timbreStrength if req.timbreStrength is not None else 0.92, 0.0, 1.0))
 
     clone_profile = CLONED_VOICES_DB.get(voice_id)
+    if not clone_profile and req.cloneProfile and isinstance(req.cloneProfile, dict):
+        clone_profile = req.cloneProfile
+        CLONED_VOICES_DB[voice_id] = clone_profile
     persona_profile = VOICES_BY_ID.get(voice_id)
     persona_warp = 1.0
 
@@ -2538,7 +2578,7 @@ async def tts(req: TTSRequest):
             raise HTTPException(status_code=500, detail="Empty audio generated")
 
         # Decode to 24kHz float32 PCM so we can run VoiceStudio Timbre Transfer, Persona Warp & Mastering DSP
-        if HAS_MINIAUDIO:
+        try:
             samples = decode_audio_bytes(bytes(raw_mp3), TARGET_SR)
             if clone_profile and timbre_strength > 0.05:
                 samples = apply_voice_clone_timbre(
@@ -2566,6 +2606,8 @@ async def tts(req: TTSRequest):
                     "X-TTS-Preset": preset_id,
                 },
             )
+        except Exception as dsp_err:
+            print("DSP fallback to raw mp3:", dsp_err)
 
         return Response(
             content=bytes(raw_mp3),
@@ -2671,9 +2713,8 @@ async def clone_voice(
         CLONED_VOICES_DB[voice_id] = profile
         save_cloned_voices_db(CLONED_VOICES_DB)
 
-        # Return profile without huge envelope array to keep frontend payload small
-        resp_profile = {k: v for k, v in profile.items() if k != "envelope"}
-        return resp_profile
+        # Return full profile including envelope so client localStorage can persist it across stateless cloud restarts
+        return profile
     except HTTPException:
         raise
     except Exception as e:

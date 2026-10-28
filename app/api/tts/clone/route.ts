@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-
-const BASE_PY_URL = process.env.LOCAL_PY_URL || "http://127.0.0.1:8000";
+import { BASE_PY_URL, ensurePythonServerReady } from "@/lib/ensure-py-server";
 
 export async function GET(req: NextRequest) {
   try {
+    await ensurePythonServerReady(3500);
     const id = req.nextUrl.searchParams.get("id");
     if (id) {
       const res = await fetch(`${BASE_PY_URL}/clones/${encodeURIComponent(id)}/sample`, {
@@ -43,12 +43,14 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    await ensurePythonServerReady(4500);
+
     const pyForm = new FormData();
     pyForm.append("audio", audio, "sample.wav");
     pyForm.append("name", name);
 
     const ctrl = new AbortController();
-    const timeout = setTimeout(() => ctrl.abort(), 25000);
+    const timeout = setTimeout(() => ctrl.abort(), 30000);
 
     const res = await fetch(`${BASE_PY_URL}/clone-voice`, {
       method: "POST",
@@ -75,6 +77,7 @@ export async function POST(req: NextRequest) {
 
 export async function DELETE(req: NextRequest) {
   try {
+    await ensurePythonServerReady(2500);
     const id = req.nextUrl.searchParams.get("id");
     if (!id) return NextResponse.json({ error: "Missing id" }, { status: 400 });
     await fetch(`${BASE_PY_URL}/clones/${encodeURIComponent(id)}`, {
