@@ -223,7 +223,7 @@ function Provider({ children }: { children: ReactNode }) {
 const navItems = [
   { href: "/dashboard", label: "Шинэ яриа", icon: PlusIcon },
   { href: "/tts", label: "VoiceStudio", icon: VolumeIcon },
-  { href: "/keyboard", label: "Утасны Гар", icon: FlowBarIcon },
+  { href: "/keyboard", label: "Компьютер & Chrome", icon: FlowBarIcon },
   { href: "/history", label: "Түүх", icon: HistoryIcon },
   { href: "/settings", label: "Тохиргоо", icon: SettingsIcon },
 ];
