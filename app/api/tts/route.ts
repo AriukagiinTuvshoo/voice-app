@@ -18,15 +18,14 @@ export async function GET() {
       const data = await res.json();
       return NextResponse.json({
         online: true,
-        model: data.model || "facebook/mms-tts-khk",
-        service: "MMS-TTS Local Server",
+        data,
       });
     }
-    return NextResponse.json({ online: false, error: "Server returned non-200" });
+    return NextResponse.json({ online: false });
   } catch {
     return NextResponse.json({
       online: false,
-      message: "Local MMS-TTS server is offline (start with: run-tts.bat or uvicorn tts_server:app --port 8000)",
+      message: "Local TTS server offline (run run-tts.bat)",
     });
   }
 }
@@ -35,6 +34,9 @@ export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
     const text = (body.text || "").trim();
+    const voice = body.voice || body.voiceId || "mn-MN-YesuiNeural";
+    const speed = body.speed ?? 1.0;
+    const pitch = body.pitch ?? 1.0;
 
     if (!text) {
       return NextResponse.json(
@@ -43,43 +45,40 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 1. Try local Python MMS-TTS server
+    // 1. Try local Python TTS server
     try {
       const ctrl = new AbortController();
-      const timeout = setTimeout(() => ctrl.abort(), 25000);
+      const timeout = setTimeout(() => ctrl.abort(), 20000);
 
       const pyRes = await fetch(LOCAL_TTS_URL, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text }),
+        body: JSON.stringify({ text, voice, speed, pitch }),
         signal: ctrl.signal,
       });
 
       clearTimeout(timeout);
 
       if (pyRes.ok) {
+        const contentType = pyRes.headers.get("content-type") || "audio/mpeg";
         const audioBuffer = await pyRes.arrayBuffer();
         return new NextResponse(audioBuffer, {
           headers: {
-            "Content-Type": "audio/wav",
-            "Content-Disposition": 'inline; filename="mms-speech.wav"',
-            "X-TTS-Engine": "facebook/mms-tts-khk",
-            "X-TTS-Source": "local-server",
+            "Content-Type": contentType,
+            "Content-Disposition": 'inline; filename="speech.mp3"',
+            "X-TTS-Source": "local-python-server",
           },
         });
-      } else {
-        const errJson = await pyRes.json().catch(() => null);
-        console.warn("Local TTS error:", errJson || pyRes.statusText);
       }
     } catch (e: unknown) {
-      console.warn("Local MMS-TTS server connection failed (will use fallback preview tone):", e);
+      console.warn("Local TTS server not responding, using preview chime:", e);
     }
 
-    // 2. Fallback: Friendly sound preview if local python server is not yet started
+    // 2. Fallback: Friendly sound preview if local server is not running yet
     const duration = Math.min(2.5, Math.max(0.8, text.length * 0.05));
     const samplesCount = Math.floor(16000 * duration);
     const samples = new Float32Array(samplesCount);
-    const baseFreq = 440; // приятный ля тон
+    const baseFreq = voice.toLowerCase().includes("bataa") || voice.toLowerCase().includes("male") ? 330 : 520;
 
     for (let i = 0; i < samplesCount; i++) {
       const t = i / 16000;
@@ -93,13 +92,12 @@ export async function POST(req: NextRequest) {
     return new NextResponse(buffer, {
       headers: {
         "Content-Type": "audio/wav",
-        "Content-Disposition": 'inline; filename="offline-preview.wav"',
-        "X-TTS-Engine": "fallback-tone",
+        "Content-Disposition": 'inline; filename="preview.wav"',
         "X-TTS-Status": "server-offline",
       },
     });
   } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : "TTS алдаа гарлаа";
+    const msg = err instanceof Error ? err.message : "TTS алдаа";
     return NextResponse.json({ error: msg }, { status: 500 });
   }
 }

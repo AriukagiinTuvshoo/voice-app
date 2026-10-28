@@ -1,40 +1,30 @@
 @echo off
-title VOICE - Local MMS-TTS Server (facebook/mms-tts-khk)
+title VOICE - AI Voice Server (Edge Neural & MMS)
 cd /d "%~dp0"
 
 echo ========================================================
-echo   VOICE - Mongolian MMS-TTS Local Neural Engine
-echo   Model: facebook/mms-tts-khk (Khalkha Mongolian)
-echo   Host:  http://localhost:8000
+echo   VOICE - Mongolian AI Voice Server
+echo   Voices: mn-MN-YesuiNeural (Есүй), mn-MN-BataaNeural (Батаа)
+echo   Host:   http://localhost:8000
 echo ========================================================
 echo.
 
-python --version >nul 2>&1
-if %errorlevel% neq 0 (
-    echo [ERROR] Python 3.10+ oldsongui esvel PATH deer alga.
-    echo https://www.python.org/downloads/ haygaar orj Python 3.10+ suulgana uu.
-    echo "Add python.exe to PATH" songoltiig zaaval check hiigeerei!
-    pause
-    exit /b 1
-)
+set "VENV_PY=%~dp0.venv\Scripts\python.exe"
 
-echo [*] Python packages shalgaж baina...
-python -c "import torch, transformers, scipy, fastapi, uvicorn" >nul 2>&1
-if %errorlevel% neq 0 (
-    echo [*] Heregtee sanduudiig suulgaж baina (pip install)...
-    pip install -r requirements.txt
-    if %errorlevel% neq 0 (
-        echo [ERROR] Packages suulgahad aldaa garlaa.
+if not exist "%VENV_PY%" (
+    echo [*] Virtual environment (.venv) uusgej baina...
+    python -m venv .venv
+    if errorlevel 1 (
+        echo [ERROR] Python 3.10+ oldsongui. Python suulgasan esehee shalgana uu.
         pause
         exit /b 1
     )
+    echo [*] Heregtseet sanduudiig suulgaж baina (edge-tts, fastapi, uvicorn)...
+    "%~dp0.venv\Scripts\pip.exe" install -r requirements.txt
 )
 
+echo [*] AI Voice Server-iig port 8000 deer ehluulj baina...
 echo.
-echo [*] MMS-TTS Server-iig port 8000 deer ehluulj baina...
-echo [*] Anh udaa ajilluulj baigaa bol model (~150MB) tatagdana.
-echo [*] Daraa ni internetgui ajillana.
-echo.
-uvicorn tts_server:app --host 0.0.0.0 --port 8000 --reload
+"%VENV_PY%" -m uvicorn tts_server:app --host 0.0.0.0 --port 8000 --reload
 
 pause

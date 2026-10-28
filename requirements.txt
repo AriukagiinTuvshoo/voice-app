@@ -1,7 +1,4 @@
-torch
-transformers
-scipy
-numpy
+edge-tts
 fastapi
 uvicorn
 pydantic
