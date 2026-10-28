@@ -20,7 +20,6 @@ import {
   themes,
   sttEngines,
   defaultSettings,
-  chimegeVoices,
 } from "@/lib/constants";
 import type {
   Language,
@@ -523,14 +522,11 @@ export function Workspace() {
     setTtsLoading(true);
 
     try {
-      const res = await fetch("/api/chimege/tts", {
+      const res = await fetch("/api/tts", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           text: textToSpeak.trim(),
-          voiceId: settings.defaultVoiceId || "FEMALE3v2",
-          speed: settings.ttsSpeed || 1.0,
-          pitch: settings.ttsPitch || 1.0,
         }),
       });
 
@@ -574,7 +570,6 @@ export function Workspace() {
   const mm = String(Math.floor(seconds / 60)).padStart(2, "0");
   const ss = String(seconds % 60).padStart(2, "0");
   const stats = getTextStats(rawText);
-  const currentVoice = chimegeVoices.find((v) => v.id === settings.defaultVoiceId) || chimegeVoices[0];
 
   return (
     <section className="workspace">
@@ -622,7 +617,7 @@ export function Workspace() {
         <p style={{ fontSize: "13px", color: "var(--muted)", margin: 0 }}>
           {state === "recording"
             ? "Дуу хоолойг бодит цагт бичиж байна..."
-            : `✨ AI Voice Engine Бэлэн • Дуу хоолой: ${currentVoice.name}`}
+            : "✨ AI Voice Engine Бэлэн • Модел: MMS-TTS (Офлайн)"}
         </p>
       </div>
 
@@ -748,7 +743,7 @@ export function Workspace() {
             disabled={!rawText || ttsLoading}
           >
             <VolumeIcon width={15} height={15} />
-            <span>{ttsLoading ? "Уншиж байна..." : `Сонсох (${currentVoice.name})`}</span>
+            <span>{ttsLoading ? "Уншиж байна..." : "Сонсох (MMS-TTS)"}</span>
           </button>
           <button
             className="btn-secondary"
@@ -791,7 +786,7 @@ export function Workspace() {
           Горим <b>{settings.recordingMode}</b>
         </span>
         <span>
-          Хоолой <b>{currentVoice.name}</b>
+          Хоолой <b>MMS-TTS</b>
         </span>
         <span>
           FlowBar <kbd>{settings.desktopHotkey}</kbd>
@@ -839,36 +834,17 @@ export function SettingsPanel() {
     <div className="settings-grid">
       {/* Speech & AI Voice */}
       <section className="settings">
-        <h2>Хиймэл Оюуны Дуу Хоолой (TTS Voices)</h2>
-        <p>Яриаг уншиж сонсоход ашиглах үндсэн хоолой (11 төрөл).</p>
-        <select
-          value={settings.defaultVoiceId}
-          onChange={(e) => update("defaultVoiceId", e.target.value)}
-          style={{ width: "100%", marginBottom: "14px" }}
-        >
-          <optgroup label="👩 Эмэгтэй хоолойнууд">
-            {chimegeVoices
-              .filter((v) => v.gender === "female")
-              .map((v) => (
-                <option key={v.id} value={v.id}>
-                  👩 {v.name} ({v.description})
-                </option>
-              ))}
-          </optgroup>
-          <optgroup label="👨 Эрэгтэй хоолойнууд">
-            {chimegeVoices
-              .filter((v) => v.gender === "male")
-              .map((v) => (
-                <option key={v.id} value={v.id}>
-                  👨 {v.name} ({v.description})
-                </option>
-              ))}
-          </optgroup>
-        </select>
+        <h2>Хиймэл Оюуны Дуу Хоолой (MMS-TTS)</h2>
+        <p>Компьютер дээрээ офлайн ажиллах Халх Монгол хэлний VITS дуу хоолой (facebook/mms-tts-khk).</p>
+        
+        <div style={{ display: "flex", alignItems: "center", gap: "8px", margin: "14px 0 16px" }}>
+          <span style={{ width: "8px", height: "8px", borderRadius: "50%", background: "#10b981", boxShadow: "0 0 8px #10b981", display: "inline-block" }} />
+          <span style={{ fontSize: "13px", fontWeight: 600 }}>Офлайн Модел • 100% Үнэгүй, Хязгааргүй</span>
+        </div>
 
-        <Link href="/tts" className="btn-secondary" style={{ fontSize: "12px", textDecoration: "none" }}>
+        <Link href="/tts" className="btn-secondary" style={{ fontSize: "12px", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "8px" }}>
           <VolumeIcon width={14} height={14} />
-          <span>Бүх 11 хоолойг TTS Studio-д сонсох →</span>
+          <span>MMS-TTS Studio нээх →</span>
         </Link>
       </section>
 

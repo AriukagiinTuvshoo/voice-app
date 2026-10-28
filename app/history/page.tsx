@@ -61,12 +61,11 @@ export default function HistoryPage() {
     setPlayingId(id);
 
     try {
-      const res = await fetch("/api/chimege/tts", {
+      const res = await fetch("/api/tts", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           text: text.trim(),
-          voiceId: settings.defaultVoiceId || "FEMALE3v2",
         }),
       });
 
