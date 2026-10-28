@@ -13,9 +13,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 
 # Install Python dependencies
-COPY requirements-tts.txt ./
-RUN pip3 install --no-cache-dir --break-system-packages \
-    fastapi uvicorn edge-tts numpy scipy soundfile SpeechRecognition
+COPY requirements*.txt ./
+RUN pip3 install --no-cache-dir --break-system-packages -r requirements.txt
 
 # Install Node.js dependencies and build Next.js app
 COPY package*.json ./
