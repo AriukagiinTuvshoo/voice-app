@@ -469,11 +469,44 @@ async function handleFlowbar(req, res) {
       }
   }
 
-  if (typeof body.last_text === "string" && body.last_text) {
+  // Handle direct text insertion into active window (Word, Chrome, Telegram, Facebook, etc.)
+  const insertText = (typeof body.insertText === "string" ? body.insertText : (typeof body.text === "string" ? body.text : "")).trim();
+  if (insertText) {
+    const cleaned = applyCodeSwitching(insertText.slice(0, LAST_TEXT_MAX));
+    flowbarState.last_text = cleaned;
+    flowbarState.last_timestamp = Date.now();
+    pasteTextIntoActiveWindow(cleaned);
+  } else if (typeof body.last_text === "string" && body.last_text) {
     flowbarState.last_text = applyCodeSwitching(body.last_text.slice(0, LAST_TEXT_MAX));
     flowbarState.last_timestamp = Date.now();
   }
   sendJson(res, 200, flowbarState);
+}
+
+// Windows Active Window Text Insertion via PowerShell Base64 & SendWait
+function pasteTextIntoActiveWindow(text) {
+  if (!text) return;
+  try {
+    const { spawn } = require("child_process");
+    const b64 = Buffer.from(text, "utf8").toString("base64");
+    const script = `
+      $b = [Convert]::FromBase64String('${b64}');
+      $t = [System.Text.Encoding]::UTF8.GetString($b);
+      Set-Clipboard -Value $t;
+      Start-Sleep -Milliseconds 80;
+      Add-Type -AssemblyName System.Windows.Forms;
+      [System.Windows.Forms.SendKeys]::SendWait('^v');
+    `.replace(/\r?\n\s*/g, " ");
+
+    const child = spawn("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script], {
+      windowsHide: true,
+      detached: true,
+      stdio: "ignore",
+    });
+    child.unref();
+  } catch (err) {
+    console.error("[FlowBar] paste error:", err);
+  }
 }
 
 // Multilingual STT Handler (Chimege + Google Speech API)
@@ -637,8 +670,25 @@ async function handleTranscribe(req, res) {
     (Array.isArray(headerToken) ? headerToken[0] : headerToken) || process.env.CHIMEGE_TOKEN || ""
   ).trim();
 
-  const audio = await readBody(req, MAX_AUDIO_BYTES);
-  if (audio.length === 0) throw new HttpError(400, "Аудио хоосон байна.");
+  const rawBody = await readBody(req, MAX_AUDIO_BYTES);
+  if (rawBody.length === 0) throw new HttpError(400, "Аудио хоосон байна.");
+
+  // Extract clean WAV data if wrapped in multipart/form-data or raw buffer
+  let audio = rawBody;
+  const riffIdx = rawBody.indexOf(Buffer.from("RIFF"));
+  if (riffIdx !== -1) {
+    if (riffIdx + 8 <= rawBody.length) {
+      const riffLen = rawBody.readUInt32LE(riffIdx + 4);
+      const totalLen = riffLen + 8;
+      if (riffIdx + totalLen <= rawBody.length) {
+        audio = rawBody.slice(riffIdx, riffIdx + totalLen);
+      } else {
+        audio = rawBody.slice(riffIdx);
+      }
+    } else {
+      audio = rawBody.slice(riffIdx);
+    }
+  }
 
   // If Chimege token is configured, use Chimege
   if (token && !/[\r\n]/.test(token)) {
