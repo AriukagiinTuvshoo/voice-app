@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/AriukagiinTuvshoo/voice-app/releases/latest"><img src="https://img.shields.io/badge/Release-v1.2.3-6366f1?style=for-the-badge&logo=windows" alt="Version 1.2.1" /></a>
+  <a href="https://github.com/AriukagiinTuvshoo/voice-app/releases/latest"><img src="https://img.shields.io/badge/Release-v1.2.4-6366f1?style=for-the-badge&logo=windows" alt="Version 1.2.4" /></a>
   <img src="https://img.shields.io/badge/Platform-Windows%2010%20%7C%2011%20(64--bit)-blue?style=for-the-badge&logo=windows" alt="Platform Windows" />
   <img src="https://img.shields.io/badge/Python-3.10%2B-brightgreen?style=for-the-badge&logo=python" alt="Python 3.10+" />
   <img src="https://img.shields.io/badge/Node.js-Not%20Required-blueviolet?style=for-the-badge" alt="No Node Needed" />
@@ -21,10 +21,13 @@
 
 ## 📥 1. Татах ба Суулгах заавар (Quick Start)
 
-Windows Smart App Control болон антивируст блоклогдох эрсдэлгүй, 100% цэвэр нээлттэй эхийн багц.
+Нээлттэй эхийн багц: бүх код `tts_server.py` болон `.bat` файлуудад нээлттэй. Windows Smart App Control эсвэл антивирус анхааруулга өгч болох тул суулгахаасаа өмнө кодыг өөрөө шалгаж болно.
 
 ### Алхам 1: Багц татаж авах
-👉 [**VOICE-Windows-v1.2.3.zip татах (GitHub Releases)**](https://github.com/AriukagiinTuvshoo/voice-app/releases/latest/download/VOICE-Windows-v1.2.3.zip` файлыг хулганы баруун товчоор дарж **Extract All... (Бүгдийг задлах)** сонгоно.
+👉 [**VOICE-Windows-v1.2.4.zip татах (GitHub Releases)**](https://github.com/AriukagiinTuvshoo/voice-app/releases/latest)
+
+### Алхам 2: Суулгах
+1. Татсан `VOICE-Windows-v1.2.4.zip` файлыг хулганы баруун товчоор дарж **Extract All... (Бүгдийг задлах)** сонгоно.
 2. Задалсан хавтас доторх **`Install-VOICE.bat`** файл дээр давхар товшиж ажиллуулна.
    - Энэ нь шаардлагатай сангуудыг таны компьютерын `%LOCALAPPDATA%\VOICE-App\.venv` тусгаарлагдсан орчинд найдвартай бэлтгэнэ.
    - Дэлгэц (Desktop) дээр **`VOICE`** нэртэй нил ягаан өнгийн товчлолыг автоматаар үүсгэнэ.
@@ -69,7 +72,7 @@ VOICE-ийн гол давуу тал нь **курсор байгаа газа�
 - **Монгол + Англи + Япон зэрэг танина:** Та өгүүлбэр дундуураа гадаад үг хольж ярихад тусгай AI толь болон олон хэлний загвар ухаалгаар ялгана.
   - Жишээ: *"Сайн уу, hi my name is ..., 私の名前は..."* гэж ярихад монгол үг кириллээр, англи үг латинаар, япон үг ханз/канагаар зөв бууна.
 - **Хэл сэлгэх:** Товч дээрх тэмдэг дээр дарж **`🌐 AUTO`**, **`🇲🇳 MN`**, **`🇬🇧 EN`**, **`🇯🇵 JA`** горимуудын хооронд хялбар сэлгэнэ.
-- **Оффлайн яриа таних (Faster-Whisper):** Интернет холболтгүй үед Тохиргоо цэснээс `Faster-Whisper (Оффлайн AI)` горимыг сонгон интернетгүйгээр яриа таних боломжтой.
+- **Оффлайн яриа таних (Faster-Whisper):** Нэг удаа суулгана: `%LOCALAPPDATA%\VOICE-App\.venv\Scripts\python.exe -m pip install -r %LOCALAPPDATA%\VOICE-App\requirements-offline.txt`. Дараа нь Тохиргоо цэснээс `Faster-Whisper (Оффлайн AI)` горимыг сонгоно. Загварыг анх удаа татахад интернет хэрэгтэй.
 
 ### 3. 🟢 VoiceStudio AI — Ногоон бэлэн төлөв & Дуу хоолой хувилах
 - Дуу үүсгэгч (TTS) болон Хоолой хувилагч систем шууд **🟢 VoiceStudio AI Бэлэн (localhost:8000)** төлөвтэй ажиллана.
@@ -108,7 +111,9 @@ voice-app/
 ├── make-shortcut.ps1      # 📌 Desktop дээр товчлол автоматаар үүсгэгч
 ├── tts_server.py          # 🧠 Python хөдөлгүүр (STT, TTS, Voice Clone, Hotkey & Tkinter FlowBar)
 ├── out/                   # 🎨 Бэлэн веб интерфэйсийн статик файлууд (HTML/CSS/JS)
-├── requirements.txt       # 📦 Python сангуудын жагсаалт
+├── requirements.txt       # 📦 Үндсэн Python сангууд
+├── requirements-offline.txt # 📦 Оффлайн Whisper (заавал биш)
+├── VERSION                # 🏷️ Хувилбарын дугаар
 ├── public/                # 🖼️ Нил ягаан дүрс тэмдэг (voice.ico, icon.svg)
 ├── README.md              # 📖 Дэлгэрэнгүй заавар
 └── LICENSE                # 📄 MIT лиценз
@@ -121,7 +126,8 @@ voice-app/
 - **Интерфэйс ба Хөдөлгүүр:** Бүх удирдлага, интерфэйс болон хөвөгч товч нь таны компьютерын локал санах ойд (`127.0.0.1:8000`) ажиллана.
 - **Үнэгүй Яриа таних:** Үндсэн горимд Google Web Speech API (үнэгүй, API key-гүй) ашиглах бөгөөд оффлайн үед Faster-Whisper загвар таны компьютер дээр интернетгүйгээр ажиллана.
 - **Зөв бичгийн дүрэм:** Кирилл текстийн алдаа шалгах хүсэлт `spellcheck.mn` үйлчилгээгээр дамжина.
-- **Аудио хадгалалт:** Таны ярьсан дуу хоолойн бичлэгийг гадны ямар ч дундын серверт архивлан хадгалахгүй.
+- **Аудио хадгалалт:** VOICE өөрөө таны бичлэгийг серверт архивлахгүй. Гэхдээ **Google горимд** аудио яриа таниулахын тулд Google-ийн үйлчилгээ рүү илгээгддэг. Интернетгүй, бүрэн локал горим хэрэгтэй бол Тохиргооноос Faster-Whisper-ийг сонгоно.
+- **Clipboard:** Бичихдээ clipboard-ыг түр ашигладаг. Зөвхөн текст сэргээгдэнэ (зураг, файл сэргээгдэхгүй). Clipboard түүх (Win+V) асаалттай бол ярьсан текст тэнд үлдэж болно.
 
 ---
 

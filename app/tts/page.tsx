@@ -484,7 +484,7 @@ export default function TTSPage() {
 
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        throw new Error(data.error || "Хоолой хувилах хүсэлт амжилтгүй боллоо.");
+        throw new Error(data.detail || data.error || "Хоолой хувилах хүсэлт амжилтгүй боллоо.");
       }
 
       const clonedProfile: ClonedVoice = await res.json();
