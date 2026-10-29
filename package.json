@@ -1,18 +1,17 @@
 {
   "name": "voice-app",
   "version": "1.2.0",
-  "description": "VOICE Desktop — Монгол хэлний яриа таних, зөв бичих дүрэм (spellcheck.mn), VoiceStudio AI ба Windows шууд бичих систем",
+  "description": "VOICE Desktop - Mongolian/English/Japanese speech-to-text, VoiceStudio TTS and system-wide dictation for Windows",
   "private": true,
-  "main": "server.cjs",
+  "main": "electron/main.cjs",
   "scripts": {
-    "dev": "next dev -H 0.0.0.0",
+    "dev": "next dev -H 127.0.0.1",
     "build": "next build",
-    "server": "node server.cjs 8000",
-    "start": "node server.cjs 8000",
+    "start": "python tts_server.py",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "desktop": "electron electron/main.cjs",
-    "tts:server": "uvicorn tts_server:app --port 8000 --reload"
+    "tts:server": "python tts_server.py"
   },
   "dependencies": {
     "next": "15.5.6",

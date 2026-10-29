@@ -13,3 +13,11 @@ __pycache__/
 *.pyc
 *.mp3
 *.wav
+
+*.exe
+voice-server.log
+flowbar_pos.txt
+flow_audio.wav
+voice_recording.wav
+VOICE-Windows-*.zip
+run_test*.log
