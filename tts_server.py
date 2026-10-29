@@ -15,7 +15,7 @@ from typing import Optional
 if os.name == "nt":
     from ctypes import wintypes
 
-from fastapi import FastAPI, HTTPException, UploadFile, File, Form
+from fastapi import FastAPI, HTTPException, Request, Response, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response, FileResponse
 from pydantic import BaseModel
@@ -809,6 +809,9 @@ CODESWITCH_PHRASE_MAP: list[tuple[str, str]] = [
     (r"\bтүвшин\s+тул\b", "Түвшинтулга"),
 
     # 1. Conversational English phrases spoken mid-sentence (Cyrillic phonetic -> English)
+    (r"\bхай\s+май\s+нэйм\s+из\b", "hi my name is"),
+    (r"\bхай\s+май\s+нэймс\b", "hi my name is"),
+    (r"\bхай\s+май\s+нэйм\b", "hi my name"),
     (r"\bмай\s+нэйм\s+из\b", "my name is"),
     (r"\bмай\s+нэм\s+из\b", "my name is"),
     (r"\bмай\s+нэймс\b", "my name is"),
@@ -874,6 +877,12 @@ CODESWITCH_PHRASE_MAP: list[tuple[str, str]] = [
     (r"\bваташи\s*но\s+намаэ\s*ва\b", "私の名前は"),
     (r"\bваташи\s*но\s+намай\s*ва\b", "私の名前は"),
     (r"\bwatashi\s*no\s+namae\s*wa\b", "私の名前は"),
+    (r"\bваташи\s*но\s+намаэ\b", "私の名前"),
+    (r"\bваташи\s*но\s+намай\b", "私の名前"),
+    (r"\bwatashi\s*no\s+namae\b", "私の名前"),
+    (r"\bнамаэ\s*ва\b", "名前は"),
+    (r"\bнамаэ\b", "名前"),
+    (r"\bnamae\b", "名前"),
     (r"\bваташи\s*но\b", "私の"),
     (r"\bваташино\b", "私の"),
     (r"\bва\s+та\s+ши\s+но\b", "私の"),
@@ -1167,7 +1176,7 @@ def select_or_fuse_trilingual_clause(
 
     # 2. Check if the user spoke an ENTIRE standalone Japanese phrase with zero Mongolian content
     # (e.g. user just said "こんにちは" or "ありがとうございます" or "初めましてよろしくお願いします")
-    pure_jp_patterns = r"^(私の名前は|私は|こんにちは|ありがとう|ありがとうございます|初めまして|よろしくお願いします|おはようございます|こんばんは|すみません|ごめんなさい|さようなら|お元気ですか|大丈夫です?|元気です)$"
+    pure_jp_patterns = r"^(私の名前は?|私は|こんにちは|ありがとう|ありがとうございます|初めまして|よろしくお願いします|おはようございます|こんばんは|すみません|ごめんなさい|さようなら|お元気ですか|大丈夫です?|元気です)$"
     if ja_clean and re.match(pure_jp_patterns, ja_clean.replace(" ", "")):
         return ja_clean
 
@@ -1623,7 +1632,7 @@ FLOWBAR_STATE = {
     "error": "",
     "seconds": 0,
     "levels": [4, 8, 12, 8, 4],
-    "language": "mn",
+    "language": "auto",
     "target_window": "",
     "desktop": "",
     "last_insert_debug": "",
@@ -2115,16 +2124,27 @@ def _native_flowbar_ui_worker() -> None:
 
         screen_w = root.winfo_screenwidth()
         screen_h = root.winfo_screenheight()
-        bar_w, bar_h = 286, 46
+        bar_w, bar_h = 340, 46
         pos_x = (screen_w - bar_w) // 2
         pos_y = screen_h - bar_h - 58
+        pos_file = os.path.join(BASE_DIR, "flowbar_pos.txt")
+        if os.path.isfile(pos_file):
+            try:
+                with open(pos_file, "r", encoding="utf-8") as pf:
+                    parts = pf.read().strip().split(",")
+                    if len(parts) == 2:
+                        sx, sy = int(parts[0]), int(parts[1])
+                        if 0 <= sx <= screen_w - 60 and 0 <= sy <= screen_h - 40:
+                            pos_x, pos_y = sx, sy
+            except Exception:
+                pass
         root.geometry(f"{bar_w}x{bar_h}+{pos_x}+{pos_y}")
 
         canvas = tk.Canvas(
             root,
             width=bar_w,
             height=bar_h,
-            bg="#0f1420",
+            bg="#121626",
             highlightthickness=2,
             highlightbackground="#6366f1",
             bd=0,
@@ -2146,12 +2166,13 @@ def _native_flowbar_ui_worker() -> None:
 
         drag_data = {"x": 0, "y": 0, "moved": False}
         was_visible = True
+        lang_cycle = ["auto", "mn", "en", "ja"]
+        lang_labels = {"auto": "🌐 AUTO", "mn": "🇲🇳 MN", "en": "🇬🇧 EN", "ja": "🇯🇵 JA"}
 
         def on_press(event):
             drag_data["x"] = event.x
             drag_data["y"] = event.y
             drag_data["moved"] = False
-            # Immediately restore focus to last external window if Tk grabbed focus on click
             if _last_external_hwnd:
                 restore_window_focus(_last_external_hwnd)
 
@@ -2167,11 +2188,31 @@ def _native_flowbar_ui_worker() -> None:
         def on_release(event):
             if _last_external_hwnd:
                 restore_window_focus(_last_external_hwnd)
-            if not drag_data["moved"]:
-                if _is_recording:
-                    stop_native_flowbar_recording()
-                elif FLOWBAR_STATE["status"] != "processing":
-                    start_native_flowbar_recording(from_ui_button=False)
+            if drag_data["moved"]:
+                try:
+                    with open(pos_file, "w", encoding="utf-8") as pf:
+                        pf.write(f"{root.winfo_x()},{root.winfo_y()}")
+                except Exception:
+                    pass
+                return
+
+            # Check Close button click (x >= 312)
+            if event.x >= 312:
+                FLOWBAR_STATE["visible"] = False
+                return
+
+            # Check Language badge click (252 <= x < 312)
+            if 252 <= event.x < 312 and not _is_recording:
+                cur_l = FLOWBAR_STATE.get("language", "auto")
+                idx = lang_cycle.index(cur_l) if cur_l in lang_cycle else 0
+                FLOWBAR_STATE["language"] = lang_cycle[(idx + 1) % len(lang_cycle)]
+                return
+
+            # Otherwise toggle recording
+            if _is_recording:
+                stop_native_flowbar_recording()
+            elif FLOWBAR_STATE["status"] != "processing":
+                start_native_flowbar_recording(from_ui_button=False)
 
         canvas.bind("<ButtonPress-1>", on_press)
         canvas.bind("<B1-Motion>", on_drag)
@@ -2188,7 +2229,6 @@ def _native_flowbar_ui_worker() -> None:
                 was_visible = True
 
             if vis and outer_hwnd:
-                # Keep topmost WITHOUT activating the window!
                 user32.SetWindowPos(
                     outer_hwnd,
                     HWND_TOPMOST,
@@ -2200,48 +2240,53 @@ def _native_flowbar_ui_worker() -> None:
                 )
 
             st = FLOWBAR_STATE["status"]
+            cur_lang = FLOWBAR_STATE.get("language", "auto")
+            l_label = lang_labels.get(cur_lang, "🌐 AUTO")
             canvas.delete("all")
 
+            # Left grip handle
+            canvas.create_text(10, 23, text="⋮⋮", fill="#64748b", font=("Segoe UI", 10, "bold"))
+
             if st == "idle":
-                canvas.configure(bg="#0f1420", highlightbackground="#6366f1")
-                canvas.create_oval(14, 13, 34, 33, fill="#4f46e5", outline="#818cf8", width=1)
-                canvas.create_text(24, 23, text="🎙", fill="#ffffff", font=("Segoe UI Emoji", 10))
+                canvas.configure(bg="#121626", highlightbackground="#6366f1")
+                canvas.create_oval(22, 13, 42, 33, fill="#4f46e5", outline="#818cf8", width=1)
+                canvas.create_text(32, 23, text="🎙", fill="#ffffff", font=("Segoe UI Emoji", 10))
                 canvas.create_text(
-                    158,
+                    146,
                     16,
-                    text="VOICE FLOW • Энд дарж ярина уу",
+                    text="VOICE FLOW • Дарж ярина уу",
                     fill="#f8fafc",
                     font=("Segoe UI", 9, "bold"),
                 )
                 canvas.create_text(
-                    158,
+                    146,
                     32,
-                    text="Товчлуур: Ctrl + Alt  эсвэл  F8",
+                    text="Товчлуур: Ctrl + Alt эсвэл F8",
                     fill="#94a3b8",
                     font=("Segoe UI", 8),
                 )
             elif st == "recording":
                 canvas.configure(bg="#b91c1c", highlightbackground="#fca5a5")
-                canvas.create_oval(14, 15, 28, 29, fill="#ffffff", outline="")
+                canvas.create_oval(22, 16, 34, 28, fill="#ffffff", outline="")
                 secs = FLOWBAR_STATE.get("seconds", 0)
                 canvas.create_text(
-                    112,
+                    115,
                     23,
-                    text=f"Ярьж байна... {secs}с (Дараад дуусгах)",
+                    text=f"Ярьж байна... {secs}с (Зогсоох)",
                     fill="#ffffff",
                     font=("Segoe UI", 9, "bold"),
                 )
                 lvls = FLOWBAR_STATE.get("levels", [6, 12, 16, 12, 6])
                 for i, l in enumerate(lvls):
-                    bx = 222 + i * 10
+                    bx = 204 + i * 8
                     bh = max(4, min(28, l))
                     by0 = 23 - bh // 2
                     by1 = 23 + bh // 2
-                    canvas.create_rectangle(bx, by0, bx + 5, by1, fill="#ffffff", outline="")
+                    canvas.create_rectangle(bx, by0, bx + 4, by1, fill="#ffffff", outline="")
             elif st == "processing":
                 canvas.configure(bg="#4338ca", highlightbackground="#a5b4fc")
                 canvas.create_text(
-                    143,
+                    138,
                     23,
                     text="⏳ Текст болгож бичиж байна...",
                     fill="#ffffff",
@@ -2249,9 +2294,9 @@ def _native_flowbar_ui_worker() -> None:
                 )
             elif st == "success":
                 canvas.configure(bg="#047857", highlightbackground="#6ee7b7")
-                preview = FLOWBAR_STATE.get("last_text", "")[:22]
+                preview = FLOWBAR_STATE.get("last_text", "")[:20]
                 canvas.create_text(
-                    143,
+                    138,
                     23,
                     text=f"✅ Бичигдлээ: {preview}",
                     fill="#ffffff",
@@ -2259,14 +2304,21 @@ def _native_flowbar_ui_worker() -> None:
                 )
             else:
                 canvas.configure(bg="#7f1d1d", highlightbackground="#f87171")
-                err_txt = FLOWBAR_STATE.get("error", "Дахин ярина уу")[:24]
+                err_txt = FLOWBAR_STATE.get("error", "Дахин ярина уу")[:22]
                 canvas.create_text(
-                    143,
+                    138,
                     23,
                     text=f"⚠️ {err_txt}",
                     fill="#ffffff",
                     font=("Segoe UI", 9, "bold"),
                 )
+
+            # Language badge
+            canvas.create_rectangle(254, 11, 308, 35, fill="#1e293b", outline="#475569", width=1)
+            canvas.create_text(281, 23, text=l_label, fill="#e2e8f0", font=("Segoe UI", 8, "bold"))
+
+            # Close button
+            canvas.create_text(324, 23, text="✕", fill="#94a3b8", font=("Segoe UI", 10, "bold"))
 
             root.after(80, refresh_ui)
 
@@ -2731,15 +2783,25 @@ def api_flowbar_get():
 
 
 @app.post("/api/flowbar")
-async def api_flowbar_post(req: dict = None):
+def api_flowbar_post(req: dict = None):
     if not req:
         return get_flowbar_status()
     if "insertText" in req and req["insertText"]:
-        insert_text_at_cursor(req["insertText"])
+        insert_text_to_active_window(req["insertText"])
         return {"status": "ok", "inserted": req["insertText"]}
     act = req.get("action", "")
     lang = req.get("language")
-    return await handle_flowbar_action(FlowBarActionRequest(action=act, language=lang))
+    return flowbar_action(FlowBarActionRequest(action=act, language=lang))
+
+
+@app.get("/api/tts")
+def api_tts_get():
+    return {
+        "online": True,
+        "status": "ok",
+        "engine": "VoiceStudio AI Neural Engine",
+        "voices": VOICES + list(CLONED_VOICES_DB.values()),
+    }
 
 
 @app.post("/api/tts")
@@ -2749,7 +2811,14 @@ async def api_tts(req: TTSRequest):
 
 @app.get("/api/tts/clone")
 def api_tts_clone_get(id: str = ""):
+    if not id:
+        return list_clones()
     return get_clone_sample(id)
+
+
+@app.delete("/api/tts/clone")
+def api_tts_clone_delete(id: str = ""):
+    return delete_clone(id)
 
 
 @app.post("/api/tts/clone")
@@ -2802,10 +2871,35 @@ async def api_spellcheck(req: dict):
 # ---------------------------------------------------------------------------
 # Static Web App Mount (Single Port 8000 Desktop Architecture)
 # ---------------------------------------------------------------------------
+from fastapi.responses import FileResponse, RedirectResponse
+
+OUT_DIR = os.path.join(BASE_DIR, "out")
+
+@app.get("/")
+def serve_root():
+    dash_html = os.path.join(OUT_DIR, "dashboard.html")
+    if os.path.isfile(dash_html):
+        return FileResponse(dash_html, media_type="text/html")
+    return RedirectResponse(url="/dashboard")
+
+@app.get("/dashboard")
+@app.get("/tts")
+@app.get("/history")
+@app.get("/settings")
+@app.get("/flowbar")
+def serve_app_page(request: Request):
+    page = request.url.path.strip("/") or "dashboard"
+    html_file = os.path.join(OUT_DIR, f"{page}.html")
+    if os.path.isfile(html_file):
+        return FileResponse(html_file, media_type="text/html")
+    idx_file = os.path.join(OUT_DIR, "index.html")
+    if os.path.isfile(idx_file):
+        return FileResponse(idx_file, media_type="text/html")
+    raise HTTPException(status_code=404, detail="Page not found")
+
 try:
     from fastapi.staticfiles import StaticFiles
 
-    OUT_DIR = os.path.join(BASE_DIR, "out")
     if os.path.exists(OUT_DIR):
         app.mount("/", StaticFiles(directory=OUT_DIR, html=True), name="static")
 except Exception as e:
@@ -2814,4 +2908,4 @@ except Exception as e:
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("tts_server:app", host="0.0.0.0", port=8000, reload=True)
+    uvicorn.run(app, host="127.0.0.1", port=8000, reload=False)
