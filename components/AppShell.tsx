@@ -72,19 +72,11 @@ export function useSettings() {
 function Provider({ children }: { children: ReactNode }) {
   const [settings, setSettings] = useState<Settings>(defaultSettings);
   const [workspaceText, setWorkspaceText] = useState<string>("");
-  const [flowbarStatus, setFlowbarStatus] = useState(() => {
-    let saved = true;
-    if (typeof window !== "undefined") {
-      try {
-        saved = localStorage.getItem("voice_web_flowbar_visible") !== "false";
-      } catch {}
-    }
-    return {
-      status: "idle",
-      visible: saved,
-      last_text: "",
-      last_timestamp: 0,
-    };
+  const [flowbarStatus, setFlowbarStatus] = useState({
+    status: "idle",
+    visible: true,
+    last_text: "",
+    last_timestamp: 0,
   });
   const lastSeenTimestampRef = useRef<number>(0);
 
@@ -110,21 +102,20 @@ function Provider({ children }: { children: ReactNode }) {
     }).catch(() => {});
   }, [settings.language]);
 
-  // Poll Native Windows FlowBar status (when running desktop helper)
+  // Poll Native Windows FlowBar status (so Ctrl+Alt dictations in Word/Facebook also sync into Workspace & History)
   useEffect(() => {
     const timer = setInterval(async () => {
       try {
         const res = await fetch("/api/flowbar");
         if (!res.ok) return;
         const data = await res.json();
-        if (data && typeof data.status === "string" && data.status !== "offline") {
-          setFlowbarStatus((prev) => ({
-            ...prev,
+        if (data && typeof data.status === "string") {
+          setFlowbarStatus({
             status: data.status,
-            visible: data.visible !== undefined ? Boolean(data.visible) : prev.visible,
+            visible: Boolean(data.visible),
             last_text: data.last_text || "",
             last_timestamp: data.last_timestamp || 0,
-          }));
+          });
 
           if (
             data.last_timestamp &&
@@ -168,19 +159,20 @@ function Provider({ children }: { children: ReactNode }) {
   }, [settings.theme]);
 
   const toggleFlowBar = useCallback(async () => {
-    setFlowbarStatus((prev) => {
-      const nextVisible = !prev.visible;
-      try {
-        localStorage.setItem("voice_web_flowbar_visible", String(nextVisible));
-      } catch {}
-      return { ...prev, visible: nextVisible };
-    });
     try {
-      await fetch("/api/flowbar", {
+      const res = await fetch("/api/flowbar", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "toggle_visibility" }),
       });
+      if (res.ok) {
+        const data = await res.json();
+        setFlowbarStatus((prev) => ({
+          ...prev,
+          visible: Boolean(data.visible),
+          status: data.status || prev.status,
+        }));
+      }
     } catch {}
   }, []);
 
@@ -223,7 +215,6 @@ function Provider({ children }: { children: ReactNode }) {
 const navItems = [
   { href: "/dashboard", label: "Шинэ яриа", icon: PlusIcon },
   { href: "/tts", label: "VoiceStudio", icon: VolumeIcon },
-  { href: "/keyboard", label: "Компьютер & Chrome", icon: FlowBarIcon },
   { href: "/history", label: "Түүх", icon: HistoryIcon },
   { href: "/settings", label: "Тохиргоо", icon: SettingsIcon },
 ];
@@ -276,13 +267,13 @@ function Shell({ children }: { children: ReactNode }) {
           })}
         </nav>
 
-        <div className="side-note" style={{ flexDirection: "column", alignItems: "flex-start", gap: "4px" }}>
+        <div className="side-note" style={{ flexDirection: "column", alignItems: "flex-start", gap: "6px" }}>
           <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
             <span className="status-dot" />
-            <b style={{ color: "var(--text)", fontSize: "12px" }}>VOICE AI • Онлайн</b>
+            <b style={{ color: "var(--text)", fontSize: "12px" }}>VoiceStudio AI Бэлэн</b>
           </div>
-          <span style={{ fontSize: "11px", lineHeight: 1.4, color: "var(--muted)" }}>
-            Монгол • English • 日本語
+          <span style={{ fontSize: "11px", lineHeight: 1.4 }}>
+            Word / Facebook дээр <kbd>Ctrl+Alt</kbd> дарж шууд ярьж бичнэ.
           </span>
         </div>
       </aside>
@@ -297,7 +288,6 @@ function Shell({ children }: { children: ReactNode }) {
           </b>
 
           <div
-            className="desktop-only"
             style={{
               display: "flex",
               alignItems: "center",
@@ -325,27 +315,27 @@ function Shell({ children }: { children: ReactNode }) {
             />
             <span>
               {isFlowRecording
-                ? "🔴 Яриа бичиж байна..."
-                : "Шууд бичих:"}
+                ? "🔴 Систем дээр яриа бичиж байна..."
+                : "Шууд бичих товчлуур:"}
             </span>
             <kbd>Ctrl + Alt</kbd>
           </div>
 
-          <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+          <div style={{ display: "flex", gap: "10px", alignItems: "center" }}>
             <button
               type="button"
               onClick={toggleFlowBar}
               className="btn-secondary"
               style={{
                 fontSize: "12px",
-                padding: "7px 12px",
+                padding: "7px 14px",
                 borderColor: flowbarStatus.visible ? "rgba(16, 185, 129, 0.4)" : undefined,
                 background: flowbarStatus.visible ? "rgba(16, 185, 129, 0.08)" : undefined,
               }}
-              title="Хөвөгч FlowBar товчийг харуулах / нуух"
+              title="Дэлгэцийн доод хэсэгт хөвөх жижиг FlowBar цонхыг харуулах / нуух"
             >
-              <FlowBarIcon width={15} height={15} />
-              <span>{flowbarStatus.visible ? "FlowBar" : "FlowBar: Нуусан"}</span>
+              <FlowBarIcon width={16} height={16} />
+              <span>{flowbarStatus.visible ? "FlowBar: Идэвхтэй" : "FlowBar: Нуусан"}</span>
             </button>
 
             <LanguageSelect
@@ -356,10 +346,6 @@ function Shell({ children }: { children: ReactNode }) {
         </header>
 
         {children}
-
-        {flowbarStatus.visible && path !== "/flowbar" && (
-          <FloatingWebFlowBar />
-        )}
       </main>
 
       <nav className="mobile-nav">
@@ -558,11 +544,20 @@ export function Workspace() {
     setLivePreview("");
 
     try {
-      if (typeof navigator !== "undefined" && navigator.vibrate) {
-        navigator.vibrate(40);
+      if (isBrowserSpeechSupported() && settings.sttEngine !== "chimege") {
+        const recognizer = new BrowserSpeechRecognizer({
+          language: settings.language,
+          onInterim: (previewText) => {
+            setLivePreview(previewText);
+          },
+          onError: (err) => {
+            console.warn("Browser Speech warning:", err);
+          },
+        });
+        browserRecognizerRef.current = recognizer;
+        recognizer.start();
       }
 
-      // 1. Always start AudioRecorder FIRST to cleanly prompt & acquire Microphone Permission
       const recorder = new AudioRecorder({
         deviceId: settings.selectedAudioDevice,
         autoStop: settings.autoStop,
@@ -579,32 +574,12 @@ export function Workspace() {
       audioRecorderRef.current = recorder;
       await recorder.start();
 
-      // 2. On Desktop browsers, start BrowserSpeechRecognizer AFTER mic permission is granted
-      // (On mobile Android/iOS, running SpeechRecognition + getUserMedia simultaneously causes OS mic conflict)
-      const isMobile =
-        typeof navigator !== "undefined" &&
-        /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent || "");
-
-      if (!isMobile && isBrowserSpeechSupported() && settings.sttEngine !== "chimege") {
-        try {
-          const recognizer = new BrowserSpeechRecognizer({
-            language: settings.language,
-            onInterim: (previewText) => {
-              setLivePreview(previewText);
-            },
-            onError: () => {},
-          });
-          browserRecognizerRef.current = recognizer;
-          recognizer.start();
-        } catch {}
-      }
-
       setState("recording");
     } catch (err: unknown) {
       const msg =
         err instanceof Error
           ? err.message
-          : "Микрофон ажиллуулахад алдаа гарлаа. Хөтчийнхөө микрофоны зөвшөөрлийг (Allow) шалгана уу.";
+          : "Микрофон ажиллуулахад алдаа гарлаа. Зөвшөөрөл шалгана уу.";
       setErrorMessage(msg);
       setState("error");
     }
@@ -723,18 +698,15 @@ export function Workspace() {
   const playTextToSpeech = async (textToSpeak: string) => {
     if (!textToSpeak.trim()) return;
     setTtsLoading(true);
-    setErrorMessage("");
 
     try {
       let preferredVoice = "mn-MN-YesuiNeural";
-      let cloneProfile: Record<string, unknown> | null = null;
       try {
         const savedClones = localStorage.getItem("voice_clones");
         if (savedClones) {
           const parsed = JSON.parse(savedClones);
           if (Array.isArray(parsed) && parsed.length > 0 && parsed[0].id) {
             preferredVoice = parsed[0].id;
-            cloneProfile = parsed[0];
           }
         }
       } catch {}
@@ -746,12 +718,11 @@ export function Workspace() {
           text: textToSpeak.trim(),
           voice: preferredVoice,
           preset: "broadcast",
-          cloneProfile,
         }),
       });
 
       if (!res.ok) {
-        throw new Error("Дуу үүсгэхэд алдаа гарлаа.");
+        throw new Error("TTS дуу үүсгэхэд алдаа гарлаа.");
       }
 
       const blob = await res.blob();
@@ -764,7 +735,6 @@ export function Workspace() {
       await ttsAudioRef.current.play();
     } catch (err: unknown) {
       console.warn("TTS Play error:", err);
-      setErrorMessage("Аудио уншуулахад алдаа гарлаа. Дахин оролдоно уу.");
     } finally {
       setTtsLoading(false);
     }
@@ -797,9 +767,10 @@ export function Workspace() {
     <section className="workspace">
       <div className="heading">
         <div>
-          <h1>Яриаг бичвэр болгох</h1>
+          <small>VOICE AI & DUUDLAGA FLOW WORKSPACE</small>
+          <h1>Ярихыг урлаг болго.</h1>
           <p>
-            Монгол, Англи, Япон хэлээр ярьж, бичвэрээ шууд хуулж эсвэл хуваалцаарай.
+            Монгол болон олон улсын яриа таних, зөв бичих дүрэм, дуу хоолой хувилах (VoiceStudio) болон Word/Facebook дээр <kbd>Ctrl+Alt</kbd> дарж шууд бичих систем.
           </p>
         </div>
       </div>
@@ -841,14 +812,14 @@ export function Workspace() {
           {state === "recording"
             ? livePreview
               ? `Сонсож байна: "${livePreview}"`
-              : "Сонсож байна... Тод ярина уу"
-            : "Микрофон дээр дарж ярих эсвэл доорх VOICE FLOW товчийг ашиглаарай"}
+              : "Дуу хоолойг бодит цагт бичиж байна..."
+            : "✨ Word, Facebook, Chrome дээр курсороо байрлуулаад Ctrl+Alt дарж ярихад текст шууд бичигдэнэ"}
         </p>
       </div>
 
       {state === "error" && errorMessage && (
         <div className="error" role="alert">
-          <b>Анхаар:</b> {errorMessage}
+          <b>Мэдээлэл:</b> {errorMessage}
         </div>
       )}
 
@@ -857,7 +828,7 @@ export function Workspace() {
         <header>
           <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
             <SparklesIcon width={16} height={16} style={{ color: "var(--accent)" }} />
-            <b>Таны бичвэр</b>
+            <b>Таны текст</b>
           </div>
           <span>
             {stats.wordCount} үг • {stats.charCount} тэмдэгт
@@ -867,7 +838,7 @@ export function Workspace() {
         <div className="transcript-body">
           {state === "processing" ? (
             <div className="empty">
-              <b>Яриаг бичвэрт хөрвүүлж байна...</b>
+              <b>Хиймэл оюун яриаг боловсруулж байна...</b>
               <small>Түр хүлээнэ үү</small>
             </div>
           ) : editing ? (
@@ -884,9 +855,9 @@ export function Workspace() {
             <p className="transcript-text">{displayedText}</p>
           ) : (
             <div className="empty">
-              <b>Ярианы бичвэр энд гарна</b>
+              <b>Таны текстийн үр дүн энд бууна.</b>
               <small>
-                Дээрх микрофон товч дээр дарж ярьж эхэлнэ үү.
+                Микрофон дээр дарж ярих эсвэл Facebook / Word дээр очоод <kbd>Ctrl+Alt</kbd> дарж шууд ярьж бичээрэй.
               </small>
             </div>
           )}
@@ -966,9 +937,41 @@ export function Workspace() {
         <footer>
           <button
             className="btn-primary"
-            onClick={copyToClipboard}
+            onClick={() => {
+              if (!rawText) return;
+              fetch("/api/flowbar", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ insertText: rawText }),
+              }).catch(() => {});
+            }}
             disabled={!rawText}
+            title="Сүүлд ажиллаж байсан Word, Facebook, Chrome, Antigravity цонх руу шууд бичих"
           >
+            <FlowBarIcon width={15} height={15} />
+            <span>Цонх руу шууд бичих</span>
+          </button>
+          <button
+            className="btn-secondary"
+            onClick={() => playTextToSpeech(rawText)}
+            disabled={!rawText || ttsLoading}
+          >
+            <VolumeIcon width={15} height={15} />
+            <span>{ttsLoading ? "Уншиж байна..." : "Сонсох (VoiceStudio)"}</span>
+          </button>
+          <button
+            className="btn-secondary"
+            onClick={handleRunSpellCheck}
+            disabled={!rawText || spellChecking}
+          >
+            <SparklesIcon width={15} height={15} />
+            <span>{spellChecking ? "Шалгаж байна..." : "Зөв бичиг шалгах"}</span>
+          </button>
+          <button className="btn-secondary" onClick={() => setEditing(!editing)} disabled={!rawText}>
+            <EditIcon width={15} height={15} />
+            <span>{editing ? "Хадгалах" : "Засах"}</span>
+          </button>
+          <button className="btn-secondary" onClick={copyToClipboard} disabled={!rawText}>
             {copied ? <CheckIcon width={15} height={15} /> : <CopyIcon width={15} height={15} />}
             <span>{copied ? "Хуулагдлаа!" : "Хуулах"}</span>
           </button>
@@ -990,42 +993,6 @@ export function Workspace() {
             </button>
           )}
           <button
-            className="btn-secondary"
-            onClick={() => playTextToSpeech(rawText)}
-            disabled={!rawText || ttsLoading}
-          >
-            <VolumeIcon width={15} height={15} />
-            <span>{ttsLoading ? "Уншиж байна..." : "Сонсох"}</span>
-          </button>
-          <button
-            className="btn-secondary"
-            onClick={handleRunSpellCheck}
-            disabled={!rawText || spellChecking}
-          >
-            <SparklesIcon width={15} height={15} />
-            <span>{spellChecking ? "Шалгаж байна..." : "Дүрэм шалгах"}</span>
-          </button>
-          <button className="btn-secondary" onClick={() => setEditing(!editing)} disabled={!rawText}>
-            <EditIcon width={15} height={15} />
-            <span>{editing ? "Хадгалах" : "Засах"}</span>
-          </button>
-          <button
-            className="btn-secondary desktop-only"
-            onClick={() => {
-              if (!rawText) return;
-              fetch("/api/flowbar", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ insertText: rawText }),
-              }).catch(() => {});
-            }}
-            disabled={!rawText}
-            title="Компьютерын идэвхтэй цонх руу шууд бичих"
-          >
-            <FlowBarIcon width={15} height={15} />
-            <span>Цонх руу бичих</span>
-          </button>
-          <button
             className="btn-danger"
             onClick={() => {
               setRawText("");
@@ -1044,6 +1011,21 @@ export function Workspace() {
           </button>
         </footer>
       </section>
+
+      <div className="meta">
+        <span>
+          Апп доторх товч <kbd>{settings.shortcut}</kbd>
+        </span>
+        <span>
+          Word / Facebook дээр шууд бичих <kbd>Ctrl+Alt</kbd>
+        </span>
+        <span>
+          Горим <b>{settings.recordingMode}</b>
+        </span>
+        <span>
+          Студи <b>VoiceStudio AI</b>
+        </span>
+      </div>
     </section>
   );
 }
@@ -1086,15 +1068,15 @@ export function SettingsPanel() {
     <div className="settings-grid">
       {/* VoiceStudio AI & Voice Cloning */}
       <section className="settings">
-        <h2>VoiceStudio & Дуу Хоолой Хувилах</h2>
+        <h2>VoiceStudio AI & Дуу Хоолой Хувилах</h2>
         <p>
-          Монгол, Англи, Япон хоолойгоор текст уншуулах болон өөрийн дуу хоолойг хувилан ашиглах студи.
+          Хүний дууны өнгө төрх, формант (F₁–F₄), тембрийг шинжлэн хувилах болон Broadcast DSP эффектүүдээр уншуулах студи.
         </p>
 
         <div style={{ display: "flex", alignItems: "center", gap: "8px", margin: "14px 0 16px" }}>
           <span style={{ width: "8px", height: "8px", borderRadius: "50%", background: "#10b981", boxShadow: "0 0 8px #10b981", display: "inline-block" }} />
           <span style={{ fontSize: "13px", fontWeight: 600 }}>
-            12 Студи Хоолой + Voice Clone
+            Voice Cloning + Broadcast DSP • 100% Үнэгүй, Хязгааргүй
           </span>
         </div>
 
@@ -1104,57 +1086,58 @@ export function SettingsPanel() {
         </Link>
       </section>
 
-      {/* FlowBar */}
+      {/* Desktop Mode like Duudlaga Flow */}
       <section className="settings">
-        <h2>VOICE FLOW (Хурдан ярьж бичих)</h2>
-        <p>Дэлгэцийн доод хэсэгт байрлах хөвөгч VOICE FLOW товчоор хаанаас ч хурдан ярьж текст үүсгэнэ.</p>
+        <h2>Facebook & Word дээр шууд бичих (Duudlaga Flow)</h2>
+        <p>Дэлгэцийн хаанаас ч товч дараад ярихад тухайн курсор байгаа газарт шууд текст болж бичигдэнэ.</p>
 
-        <div style={{ display: "flex", gap: "10px", flexWrap: "wrap", marginTop: "12px" }}>
+        <div style={{ background: "var(--subtle)", padding: "14px", borderRadius: "14px", fontSize: "12px", lineHeight: 1.65, marginBottom: "14px", border: "1px solid var(--border)" }}>
+          <div><b>1. Курсороо байрлуулах:</b> Facebook, Word, Chrome, Telegram-ийн бичих нүдэн дээр дарна.</div>
+          <div style={{ marginTop: "4px" }}>
+            <b>2. Ярьж эхлэх:</b> Гар дээрээ <kbd>Ctrl</kbd> + <kbd>Alt</kbd> хоёрыг зэрэг дарна (эсвэл дэлгэцийн доод хэсэгт хөвөх <b>VOICE FLOW</b> товч дээр дарна).
+          </div>
+          <div style={{ marginTop: "4px" }}>
+            <b>3. Автомат бичих:</b> Ярьж дуусмагц (2.5с чимээгүй болоход эсвэл <kbd>Ctrl+Alt</kbd> дахин дарахад) текст шууд тухайн цонхонд бичигдэнэ!
+          </div>
+        </div>
+
+        <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
           <button type="button" onClick={toggleFlowBar} className="btn-primary">
             <FlowBarIcon width={16} height={16} />
             <span>
-              {flowbarStatus.visible ? "FlowBar нуух" : "FlowBar харуулах"}
+              {flowbarStatus.visible ? "Хөвөгч FlowBar нуух" : "Хөвөгч FlowBar харуулах"}
             </span>
           </button>
 
-          <button type="button" onClick={triggerFlowBarRecording} className="btn-secondary desktop-only">
+          <button type="button" onClick={triggerFlowBarRecording} className="btn-secondary">
             <MicIcon width={15} height={15} />
             <span>
-              {flowbarStatus.status === "recording" ? "Бичлэг зогсоох" : "Шалгах"}
+              {flowbarStatus.status === "recording" ? "Бичлэг зогсоох" : "Шууд ярьж шалгах"}
             </span>
           </button>
         </div>
 
-        <div className="desktop-only" style={{ marginTop: "14px" }}>
+        <div style={{ marginTop: "14px" }}>
           <Toggle
             k="autoInsertText"
-            label="Шууд бичих (Auto-insert)"
-            description="Компьютер дээр яриаг таньмагц идэвхтэй цонхонд шууд бичих."
+            label="Auto-insert text (Шууд бичих)"
+            description="Яриаг таньмагц идэвхтэй цонхонд Unicode-оор шууд бичих."
           />
         </div>
       </section>
 
-      {/* Desktop Helper for system-wide Ctrl+Alt */}
-      <section className="settings desktop-only">
-        <h2>💻 Chrome, Word, Excel дээр Ctrl+Alt-аар шууд бичих</h2>
-        <p>
-          Вэб хуудас өөр программ руу дур мэдэн бичих эрхгүй тул компьютер дээрээ 1 жижиг <b>VOICE Windows Helper</b> ажиллуулна.
-          Ямар ч Python, нэмэлт програм суулгах шаардлагагүй.
-        </p>
-        <div style={{ background: "var(--subtle)", padding: "16px", borderRadius: "14px", fontSize: "13px", lineHeight: 1.7, border: "1px solid var(--border)" }}>
-          <div style={{ marginBottom: "12px" }}>
-            <a
-              href="/api/download/helper"
-              download="VOICE-Windows-Helper.bat"
-              className="btn-primary"
-              style={{ textDecoration: "none", display: "inline-flex", padding: "10px 20px" }}
-            >
-              ⬇️ 1 Товшилтоор Windows Helper татах (.bat)
-            </a>
+      {/* Mobile Connect */}
+      <section className="settings">
+        <h2>📱 Утсан дээрээ ашиглах (Mobile PWA)</h2>
+        <p>Өөрийн iPhone эсвэл Android утаснаасаа ярьж, текстээ хуулж авах боломжтой.</p>
+        <div style={{ background: "var(--subtle)", padding: "14px 16px", borderRadius: "14px", border: "1px solid var(--border)", margin: "12px 0" }}>
+          <div style={{ fontSize: "12px", color: "var(--muted)", marginBottom: "6px" }}>Таны компьютерын сүлжээний хаяг:</div>
+          <code style={{ fontSize: "15px", fontWeight: 700, color: "var(--accent)", display: "inline-block" }}>http://192.168.3.4:3000</code>
+          <div style={{ margin: "10px 0 0", fontSize: "12px", color: "var(--muted)", lineHeight: 1.6 }}>
+            1. Компьютер ба утас нэг Wi-Fi сүлжээнд холбогдсон байна.<br />
+            2. Утасныхаа браузераар (Safari/Chrome) дээрх хаягийг нээнэ.<br />
+            3. Браузерын цэснээс &ldquo;Add to Home Screen&rdquo; (Дэлгэцэнд нэмэх) сонгоход бие даасан утасны апп шиг сууна.
           </div>
-          <div><b>1.</b> Дээрх товчоор татаж авсан <code>VOICE-Windows-Helper.bat</code> файлаа 1 удаа давхар товшиж ажиллуулна.</div>
-          <div><b>2.</b> Chrome, Word, Excel, Facebook дээр курсороо байрлуулна.</div>
-          <div><b>3.</b> <kbd>Ctrl</kbd> + <kbd>Alt</kbd> (эсвэл <kbd>F8</kbd>) дараад ярихад текст курсор дээр шууд бичигдэнэ!</div>
         </div>
       </section>
 
@@ -1296,323 +1279,6 @@ export function SettingsPanel() {
           </button>
         </div>
       </section>
-    </div>
-  );
-}
-
-export function FloatingWebFlowBar() {
-  const { settings, setWorkspaceText, toggleFlowBar } = useSettings();
-  const [state, setState] = useState<"idle" | "recording" | "processing" | "success" | "error">("idle");
-  const [seconds, setSeconds] = useState(0);
-  const [audioLevels, setAudioLevels] = useState<number[]>([4, 10, 16, 10, 4]);
-  const [lastDictated, setLastDictated] = useState("");
-  const [copiedBadge, setCopiedBadge] = useState(false);
-  const [errMsg, setErrMsg] = useState("");
-
-  const recorderRef = useRef<AudioRecorder | null>(null);
-  const browserRecognizerRef = useRef<BrowserSpeechRecognizer | null>(null);
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-
-  useEffect(() => {
-    if (state === "recording") {
-      timerRef.current = setInterval(() => setSeconds((s) => s + 1), 1000);
-    } else if (timerRef.current) {
-      clearInterval(timerRef.current);
-    }
-    return () => {
-      if (timerRef.current) clearInterval(timerRef.current);
-    };
-  }, [state]);
-
-  const stopAndTranscribe = useCallback(async () => {
-    setState("processing");
-    setErrMsg("");
-    try {
-      if (typeof navigator !== "undefined" && navigator.vibrate) {
-        navigator.vibrate(50);
-      }
-
-      let browserTranscript = "";
-      if (browserRecognizerRef.current) {
-        browserTranscript = await browserRecognizerRef.current.stop();
-        browserRecognizerRef.current = null;
-      }
-
-      let wavBlob: Blob | null = null;
-      if (recorderRef.current) {
-        wavBlob = await recorderRef.current.stop();
-        recorderRef.current = null;
-      }
-
-      let serverTranscript = "";
-      if (wavBlob) {
-        try {
-          const formData = new FormData();
-          formData.append("audio", wavBlob, "flow_speech.wav");
-          formData.append("language", settings.language);
-
-          const res = await fetch("/api/chimege/transcribe", {
-            method: "POST",
-            body: formData,
-          });
-
-          const data = await res.json().catch(() => ({}));
-          if (data.text && data.text.trim()) {
-            serverTranscript = data.text.trim();
-          }
-        } catch {}
-      }
-
-      const rawText = (serverTranscript || browserTranscript || "").trim();
-
-      if (!rawText) {
-        setErrMsg("Яриа сонсогдсонгүй");
-        setState("error");
-        setTimeout(() => setState("idle"), 2400);
-        return;
-      }
-
-      const processed = processTranscriptText(rawText, {
-        mode: settings.processingMode,
-        autoPunctuation: settings.autoPunctuation,
-        removeFillers: settings.removeFillers,
-        language: settings.language,
-      });
-
-      setLastDictated(processed);
-      setWorkspaceText(processed);
-      setState("success");
-      setCopiedBadge(true);
-
-      navigator.clipboard?.writeText(processed).catch(() => {});
-      HistoryStore.add({
-        text: processed,
-        rawText,
-        durationSeconds: Math.max(1, seconds),
-        language: settings.language,
-        engine: "VOICE FLOW",
-        wordCount: processed.split(/\s+/).length,
-        charCount: processed.length,
-      });
-
-      if (typeof navigator !== "undefined" && navigator.vibrate) {
-        navigator.vibrate([40, 60, 40]);
-      }
-
-      setTimeout(() => {
-        setState("idle");
-        setCopiedBadge(false);
-      }, 3500);
-    } catch (e) {
-      console.warn("Web FlowBar error:", e);
-      setErrMsg("Дахин оролдоно уу");
-      setState("error");
-      setTimeout(() => setState("idle"), 2400);
-    }
-  }, [settings, seconds, setWorkspaceText]);
-
-  const startRecording = useCallback(async () => {
-    setSeconds(0);
-    setErrMsg("");
-    try {
-      if (typeof navigator !== "undefined" && navigator.vibrate) {
-        navigator.vibrate(40);
-      }
-
-      const recorder = new AudioRecorder({
-        deviceId: settings.selectedAudioDevice,
-        autoStop: settings.autoStop,
-        onAudioLevel: (lvl) => {
-          setAudioLevels((prev) => [...prev.slice(1), Math.max(4, Math.round(lvl * 24))]);
-        },
-        onSilenceDetected: () => {
-          stopAndTranscribe();
-        },
-      });
-      recorderRef.current = recorder;
-      await recorder.start();
-
-      const isMobile =
-        typeof navigator !== "undefined" &&
-        /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent || "");
-
-      if (!isMobile && isBrowserSpeechSupported()) {
-        try {
-          const recognizer = new BrowserSpeechRecognizer({
-            language: settings.language,
-            onError: () => {},
-          });
-          browserRecognizerRef.current = recognizer;
-          recognizer.start();
-        } catch {}
-      }
-
-      setState("recording");
-    } catch (err: unknown) {
-      console.warn("Web FlowBar start error:", err);
-      const isPerm =
-        err instanceof Error &&
-        (err.message.includes("зөвшөөрөл") || err.name === "NotAllowedError");
-      setErrMsg(isPerm ? "Микрофон зөвшөөрнө үү (Allow)" : "Микрофон алдаа");
-      setState("error");
-      setTimeout(() => setState("idle"), 3000);
-    }
-  }, [settings, stopAndTranscribe]);
-
-  const toggle = () => {
-    if (state === "idle" || state === "success" || state === "error") {
-      startRecording();
-    } else if (state === "recording") {
-      stopAndTranscribe();
-    }
-  };
-
-  const mm = String(Math.floor(seconds / 60)).padStart(2, "0");
-  const ss = String(seconds % 60).padStart(2, "0");
-  const isRecording = state === "recording";
-
-  return (
-    <div
-      className={`floating-web-flowbar ${isRecording ? "recording" : ""}`}
-      onClick={(e) => {
-        if ((e.target as HTMLElement).closest(".flowbar-dismiss, .flowbar-share")) return;
-        toggle();
-      }}
-      title={isRecording ? "Дарж бичлэгийг зогсоох" : "Дарж шууд ярьж бичих (VOICE FLOW)"}
-    >
-      <button
-        type="button"
-        className="flowbar-btn"
-        aria-label="FlowBar Dictate"
-        style={{
-          width: "32px",
-          height: "32px",
-          borderRadius: "50%",
-          border: "none",
-          background: isRecording ? "#ef4444" : "linear-gradient(135deg, #6366f1, #8b5cf6)",
-          color: "#fff",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          cursor: "pointer",
-          boxShadow: isRecording ? "0 0 14px #ef4444" : "0 2px 8px rgba(99, 102, 241, 0.4)",
-          transition: "all 0.2s ease",
-          flexShrink: 0,
-        }}
-      >
-        <MicIcon width={16} height={16} />
-      </button>
-
-      {state === "recording" ? (
-        <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-          <span style={{ color: "#ef4444", fontSize: "12px", fontWeight: 700, fontFamily: "monospace" }}>
-            {mm}:{ss}
-          </span>
-          <div style={{ display: "flex", alignItems: "center", gap: "2px", height: "16px" }}>
-            {audioLevels.map((lvl, i) => (
-              <span
-                key={i}
-                style={{
-                  width: "3px",
-                  height: `${Math.max(4, lvl)}px`,
-                  background: "#ef4444",
-                  borderRadius: "2px",
-                  transition: "height 0.1s ease",
-                }}
-              />
-            ))}
-          </div>
-          <span style={{ fontSize: "12px", color: "var(--text)", fontWeight: 500 }}>
-            Сонсож байна...
-          </span>
-        </div>
-      ) : state === "processing" ? (
-        <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-          <span style={{ width: "8px", height: "8px", borderRadius: "50%", background: "#f59e0b" }} />
-          <span style={{ fontSize: "12px", color: "var(--text)", fontWeight: 500 }}>
-            Хөрвүүлж байна...
-          </span>
-        </div>
-      ) : state === "success" ? (
-        <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-          <CheckIcon width={14} height={14} style={{ color: "#10b981" }} />
-          <span style={{ fontSize: "12px", color: "#10b981", fontWeight: 600 }}>
-            {copiedBadge ? "Хуулагдлаа!" : "Амжилттай!"}
-          </span>
-          <span style={{ fontSize: "11px", color: "var(--muted)", maxWidth: "160px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-            {lastDictated}
-          </span>
-        </div>
-      ) : state === "error" ? (
-        <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-          <span style={{ color: "#ef4444", fontSize: "12px" }}>{errMsg || "Дахин оролдоно уу"}</span>
-        </div>
-      ) : (
-        <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-          <b style={{ fontSize: "12px", color: "var(--text)", letterSpacing: "0.5px" }}>VOICE FLOW</b>
-          <span
-            style={{
-              fontSize: "10px",
-              padding: "2px 6px",
-              background: "rgba(99, 102, 241, 0.18)",
-              color: "#a5b4fc",
-              borderRadius: "6px",
-              fontWeight: 700,
-            }}
-          >
-            {settings.language.toUpperCase()}
-          </span>
-          <span style={{ fontSize: "11px", color: "var(--muted)" }}>
-            Дарж ярих
-          </span>
-        </div>
-      )}
-
-      {/* Share button on mobile when text is ready */}
-      {lastDictated && state !== "recording" && typeof navigator !== "undefined" && typeof navigator.share === "function" && (
-        <button
-          type="button"
-          className="flowbar-share"
-          onClick={(e) => {
-            e.stopPropagation();
-            navigator.share({ title: "VOICE Текст", text: lastDictated }).catch(() => {});
-          }}
-          style={{
-            background: "none",
-            border: "none",
-            color: "var(--muted)",
-            cursor: "pointer",
-            padding: "4px",
-            display: "flex",
-            alignItems: "center",
-          }}
-          title="Facebook / Messenger / Утас руу хуваалцах"
-        >
-          <ShareIcon width={13} height={13} />
-        </button>
-      )}
-
-      {/* Dismiss / Hide button */}
-      <button
-        type="button"
-        className="flowbar-dismiss"
-        onClick={(e) => {
-          e.stopPropagation();
-          toggleFlowBar();
-        }}
-        style={{
-          background: "none",
-          border: "none",
-          color: "var(--muted)",
-          cursor: "pointer",
-          padding: "2px 6px",
-          fontSize: "12px",
-          lineHeight: 1,
-        }}
-        title="FlowBar-ийг нуух (Дээд цэснээс буцааж гаргаж болно)"
-      >
-        ✕
-      </button>
     </div>
   );
 }

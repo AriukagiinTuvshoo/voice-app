@@ -90,14 +90,15 @@ export default function HistoryPage() {
 
   return (
     <section className="page">
-      <h1>Түүх</h1>
-      <p>Хадгалсан бүх ярианы бичвэрүүд.</p>
+      <small>VOICE HISTORY</small>
+      <h1>Түүх ба Архив</h1>
+      <p>Өмнө нь таниулсан болон хадгалсан бүх ярианы бичвэрүүдээ эндээс удирдана.</p>
 
       <div className="history-controls">
         <input
           type="text"
           className="search-input"
-          placeholder="Түүхээс хайх..."
+          placeholder="Түүхээс хайх (Search transcripts)..."
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
         />
@@ -109,7 +110,15 @@ export default function HistoryPage() {
             disabled={records.length === 0}
             title="TXT файлаар татаж авах"
           >
-            TXT татах
+            Export TXT
+          </button>
+          <button
+            className="btn-secondary"
+            onClick={() => HistoryStore.exportAsJSON()}
+            disabled={records.length === 0}
+            title="JSON файлаар татаж авах"
+          >
+            Export JSON
           </button>
           {records.length > 0 && (
             <button className="btn-danger" onClick={handleClearAll}>
@@ -184,7 +193,7 @@ export default function HistoryPage() {
                     className="btn-secondary"
                     onClick={() => handleOpenInWorkspace(record.text)}
                   >
-                    Нээх
+                    Workspace-д нээх
                   </button>
                   <button
                     className="btn-secondary"

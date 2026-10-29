@@ -1,7 +1,0 @@
-node_modules
-.next
-.venv
-.git
-mobile
-*.apk
-*.ipa
