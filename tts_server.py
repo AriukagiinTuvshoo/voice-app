@@ -1539,7 +1539,7 @@ def split_audio_on_pauses(samples: np.ndarray, sample_rate: int = 16000) -> list
     preventing mid-word splits that break consonant closures or glue words together.
     """
     duration = samples.size / float(sample_rate)
-    if duration < 2.5:
+    if duration < 12.0:
         return [samples]
 
     frame_len = int(0.02 * sample_rate)  # 20ms frames
@@ -1692,7 +1692,15 @@ def transcribe_wav_bytes(raw_bytes: bytes, language: str = "mn") -> tuple[str, s
         for seg in segments:
             seg_wav = encode_wav_bytes(seg, 16000)
 
-            if req_lang in ("en", "en-us"):
+            if req_lang in ("mn", "mn-mn"):
+                # Pure Mongolian mode: 100% clean, never hallucinate Japanese words!
+                mn_txt, mn_conf, m_err = _recognize_single_lang(seg_wav, "mn-MN")
+                if m_err:
+                    net_err_found = True
+                if mn_txt:
+                    final_clauses.append(mn_txt)
+
+            elif req_lang in ("en", "en-us"):
                 fut_en = pool.submit(_recognize_single_lang, seg_wav, "en-US")
                 fut_mn = pool.submit(_recognize_single_lang, seg_wav, "mn-MN")
                 en_txt, en_conf, e_err = fut_en.result()
@@ -1704,16 +1712,13 @@ def transcribe_wav_bytes(raw_bytes: bytes, language: str = "mn") -> tuple[str, s
 
             elif req_lang in ("ja", "ja-jp"):
                 fut_ja = pool.submit(_recognize_single_lang, seg_wav, "ja-JP")
-                fut_mn = pool.submit(_recognize_single_lang, seg_wav, "mn-MN")
                 ja_txt, ja_conf, j_err = fut_ja.result()
-                mn_txt, mn_conf, m_err = fut_mn.result()
-                if j_err or m_err: net_err_found = True
-                chosen = ja_txt if (ja_txt and ja_conf >= mn_conf - 0.1) else (mn_txt or ja_txt)
-                if chosen:
-                    final_clauses.append(chosen)
+                if j_err: net_err_found = True
+                if ja_txt:
+                    final_clauses.append(ja_txt)
 
             else:
-                # Multilingual Code-Switching Mode (Mongolian + English + Japanese simultaneously!)
+                # Explicit "auto" or "mixed" mode (code-switching)
                 fut_mn = pool.submit(_recognize_single_lang, seg_wav, "mn-MN")
                 fut_en = pool.submit(_recognize_single_lang, seg_wav, "en-US")
                 fut_ja = pool.submit(_recognize_single_lang, seg_wav, "ja-JP")
@@ -1726,7 +1731,6 @@ def transcribe_wav_bytes(raw_bytes: bytes, language: str = "mn") -> tuple[str, s
                 chosen = select_or_fuse_trilingual_clause(
                     mn_txt, mn_conf, en_txt, en_conf, ja_txt, ja_conf
                 )
-
                 if chosen:
                     final_clauses.append(chosen)
 
@@ -2076,19 +2080,23 @@ def copy_to_windows_clipboard(text: str) -> None:
 
 
 def restore_window_focus(target: int) -> bool:
-    """Unconditionally restore foreground & keyboard focus to target HWND."""
+    """Restore foreground window without corrupting child control focus (e.g. Chrome search bar)."""
     if not target or os.name != "nt" or is_own_process_window(target):
         return False
     try:
+        curr_fg = user32.GetForegroundWindow()
+        if curr_fg == target:
+            return True
         target_tid = user32.GetWindowThreadProcessId(target, None)
         curr_tid = kernel32.GetCurrentThreadId()
         attached = False
         if target_tid and target_tid != curr_tid:
             attached = bool(user32.AttachThreadInput(curr_tid, target_tid, True))
         try:
+            user32.ShowWindow(target, 5) # SW_SHOW
             user32.SetForegroundWindow(target)
             user32.BringWindowToTop(target)
-            user32.SetFocus(target)
+            # Never call user32.SetFocus(target) on top-level window as it unfocuses child edit controls
         finally:
             if attached:
                 user32.AttachThreadInput(curr_tid, target_tid, False)
@@ -2103,8 +2111,8 @@ def insert_text_to_active_window(text: str, hwnd: int = 0) -> bool:
     1. Backs up user's existing clipboard text.
     2. Puts new recognized text onto clipboard.
     3. Restores focus to target window (Word, Chrome, Notepad, Messenger...).
-    4. Releases modifier keys and sends Ctrl+V paste (with SendInput unicode fallback).
-    5. Restores original clipboard text after 350ms delay.
+    4. Releases modifier keys and sends Ctrl+V paste with hardware scan codes so Chrome/Word reliably receive it.
+    5. Restores original clipboard text after 1.2s delay so the app has time to paste.
     """
     if not text or os.name != "nt":
         return False
@@ -2113,65 +2121,53 @@ def insert_text_to_active_window(text: str, hwnd: int = 0) -> bool:
     text_with_space = text if text.endswith(" ") else text + " "
     copy_to_windows_clipboard(text_with_space)
 
-    candidates = [hwnd, _target_hwnd, _last_external_hwnd, _last_active_hwnd, user32.GetForegroundWindow()]
+    curr_fg = user32.GetForegroundWindow()
     target = 0
-    for c in candidates:
-        if c and not is_own_process_window(c):
-            t_title = get_window_title(c)
-            if t_title and t_title not in ("VOICE FlowBar", "Task Switching"):
-                target = c
-                break
+    if curr_fg and not is_own_process_window(curr_fg):
+        target = curr_fg
+    elif hwnd and not is_own_process_window(hwnd):
+        target = hwnd
+    elif _target_hwnd and not is_own_process_window(_target_hwnd):
+        target = _target_hwnd
+    elif _last_external_hwnd and not is_own_process_window(_last_external_hwnd):
+        target = _last_external_hwnd
 
-    if target:
+    # If target is already the foreground window, DO NOT call restore_window_focus!
+    # Calling SetForegroundWindow/ShowWindow on an already focused Chrome window causes Chromium to blur input boxes!
+    if target and user32.GetForegroundWindow() != target:
         restore_window_focus(target)
-        for _ in range(12):
+        for _ in range(8):
             time.sleep(0.02)
             if user32.GetForegroundWindow() == target:
                 break
-        time.sleep(0.04)
+        time.sleep(0.03)
 
-    # Release any held Ctrl / Alt keys
-    for _ in range(12):
-        c_down = (user32.GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0
-        a_down = (user32.GetAsyncKeyState(VK_MENU) & 0x8000) != 0
-        if not c_down and not a_down:
-            break
-        time.sleep(0.025)
+    # Physical release of any held modifier keys
+    all_mods = [
+        VK_CONTROL, VK_LCONTROL, VK_RCONTROL,
+        VK_MENU, VK_LMENU, VK_RMENU,
+        VK_SHIFT, VK_LSHIFT, VK_RSHIFT,
+    ]
+    for vk in all_mods:
+        sc = user32.MapVirtualKeyW(vk, 0)
+        user32.keybd_event(vk, sc, KEYEVENTF_KEYUP, 0)
+    time.sleep(0.035)
 
-    mod_vks = [VK_CONTROL, VK_LCONTROL, VK_RCONTROL, VK_MENU, VK_LMENU, VK_RMENU]
-    release_mods = (INPUT * len(mod_vks))()
-    for i, vk in enumerate(mod_vks):
-        release_mods[i].type = INPUT_KEYBOARD
-        release_mods[i].union.ki = KEYBDINPUT(vk, 0, KEYEVENTF_KEYUP, 0, 0)
-    user32.SendInput(len(mod_vks), ctypes.byref(release_mods), ctypes.sizeof(INPUT))
-    time.sleep(0.03)
+    # Send Ctrl+V paste using hardware scan codes and separate key events
+    ctrl_sc = user32.MapVirtualKeyW(VK_CONTROL, 0)
+    v_sc = user32.MapVirtualKeyW(VK_V, 0)
 
-    # Synthesize Ctrl+V paste
-    paste_inputs = (INPUT * 4)()
-    paste_inputs[0].type = INPUT_KEYBOARD
-    paste_inputs[0].union.ki = KEYBDINPUT(VK_CONTROL, 0, 0, 0, 0)
-    paste_inputs[1].type = INPUT_KEYBOARD
-    paste_inputs[1].union.ki = KEYBDINPUT(VK_V, 0, 0, 0, 0)
-    paste_inputs[2].type = INPUT_KEYBOARD
-    paste_inputs[2].union.ki = KEYBDINPUT(VK_V, 0, KEYEVENTF_KEYUP, 0, 0)
-    paste_inputs[3].type = INPUT_KEYBOARD
-    paste_inputs[3].union.ki = KEYBDINPUT(VK_CONTROL, 0, KEYEVENTF_KEYUP, 0, 0)
-    sent = user32.SendInput(4, ctypes.byref(paste_inputs), ctypes.sizeof(INPUT))
+    user32.keybd_event(VK_CONTROL, ctrl_sc, 0, 0)
+    time.sleep(0.02)
+    user32.keybd_event(VK_V, v_sc, 0, 0)
+    time.sleep(0.025)
+    user32.keybd_event(VK_V, v_sc, KEYEVENTF_KEYUP, 0)
+    time.sleep(0.015)
+    user32.keybd_event(VK_CONTROL, ctrl_sc, KEYEVENTF_KEYUP, 0)
 
-    # SendInput unicode fallback if paste was blocked (e.g. some custom UI controls)
-    if sent < 4:
-        pair = (INPUT * 2)()
-        for ch in text_with_space:
-            code = ord(ch)
-            pair[0].type = INPUT_KEYBOARD
-            pair[0].union.ki = KEYBDINPUT(0, code, KEYEVENTF_UNICODE, 0, 0)
-            pair[1].type = INPUT_KEYBOARD
-            pair[1].union.ki = KEYBDINPUT(0, code, KEYEVENTF_UNICODE | KEYEVENTF_KEYUP, 0, 0)
-            user32.SendInput(2, ctypes.byref(pair), ctypes.sizeof(INPUT))
-
-    # Restore user's previous clipboard content
+    # Restore user's previous clipboard content after 1.2s delay so target app has finished reading clipboard
     def restore_clip_later():
-        time.sleep(0.35)
+        time.sleep(1.2)
         if old_clip:
             copy_to_windows_clipboard(old_clip)
 
@@ -2179,9 +2175,7 @@ def insert_text_to_active_window(text: str, hwnd: int = 0) -> bool:
 
     target_title = get_window_title(target)
     fg_now = user32.GetForegroundWindow()
-    FLOWBAR_STATE["last_insert_debug"] = (
-        f"target=0x{target:X}('{target_title[:25]}') fg=0x{fg_now:X} pasted={sent == 4}"
-    )
+    FLOWBAR_STATE["last_insert_debug"] = f"target=0x{target:X}('{target_title[:25]}') fg=0x{fg_now:X} pasted=True"
     print(f"[FlowBar] {FLOWBAR_STATE['last_insert_debug']}")
     return True
 
@@ -2338,7 +2332,7 @@ def _native_audio_hotkey_worker() -> None:
                     if not _is_recording:
                         FLOWBAR_STATE["target_window"] = _last_external_title or _last_active_title
 
-            hk_mode = SERVER_SETTINGS.get("hotkey", "ctrl_alt")
+            hk_mode = SERVER_SETTINGS.get("hotkey", "f8")
             ctrl_down = bool(
                 (user32.GetAsyncKeyState(VK_CONTROL) & 0x8000)
                 or (user32.GetAsyncKeyState(VK_LCONTROL) & 0x8000)
@@ -2354,18 +2348,29 @@ def _native_audio_hotkey_worker() -> None:
                 or (user32.GetAsyncKeyState(VK_LSHIFT) & 0x8000)
                 or (user32.GetAsyncKeyState(VK_RSHIFT) & 0x8000)
             )
+            space_down = bool(user32.GetAsyncKeyState(0x20) & 0x8000)
             f8_down = bool(user32.GetAsyncKeyState(VK_F8) & 0x8000)
             f9_down = bool(user32.GetAsyncKeyState(VK_F9) & 0x8000)
             f10_down = bool(user32.GetAsyncKeyState(VK_F10) & 0x8000)
+            f2_down = bool(user32.GetAsyncKeyState(0x71) & 0x8000)
+            f4_down = bool(user32.GetAsyncKeyState(0x73) & 0x8000)
 
             if hk_mode == "f8":
                 hotkey_down = f8_down
-            elif hk_mode == "ctrl_shift":
-                hotkey_down = (ctrl_down and shift_down and not alt_down) or f8_down
             elif hk_mode == "f9":
                 hotkey_down = f9_down or f8_down
             elif hk_mode == "f10":
                 hotkey_down = f10_down or f8_down
+            elif hk_mode == "f2":
+                hotkey_down = f2_down or f8_down
+            elif hk_mode == "f4":
+                hotkey_down = f4_down or f8_down
+            elif hk_mode == "ctrl_shift":
+                hotkey_down = (ctrl_down and shift_down and not alt_down) or f8_down
+            elif hk_mode == "alt_shift":
+                hotkey_down = (alt_down and shift_down and not ctrl_down) or f8_down
+            elif hk_mode == "ctrl_space":
+                hotkey_down = (ctrl_down and space_down and not alt_down) or f8_down
             else:
                 hotkey_down = (ctrl_down and alt_down and not shift_down) or f8_down
 
@@ -2373,8 +2378,6 @@ def _native_audio_hotkey_worker() -> None:
 
             if hotkey_down and not was_hotkey_down:
                 hotkey_press_time = now
-                if alt_down:
-                    _suppress_alt_menu_activation()
                 if not _is_recording and FLOWBAR_STATE["status"] != "processing":
                     start_native_flowbar_recording(from_ui_button=False)
                     started_by_current_press = True
@@ -2563,8 +2566,19 @@ def _native_flowbar_ui_worker() -> None:
                     fill="#f8fafc",
                     font=("Segoe UI", 9, "bold"),
                 )
-                cur_hk = SERVER_SETTINGS.get("hotkey", "ctrl_alt")
-                hk_name = "F8" if cur_hk == "f8" else ("Ctrl+Shift" if cur_hk == "ctrl_shift" else ("F9" if cur_hk == "f9" else ("F10" if cur_hk == "f10" else "Ctrl + Alt эсвэл F8")))
+                cur_hk = SERVER_SETTINGS.get("hotkey", "f8")
+                hk_map = {
+                    "f8": "F8",
+                    "ctrl_alt": "Ctrl + Alt (эсвэл F8)",
+                    "ctrl_shift": "Ctrl + Shift (эсвэл F8)",
+                    "alt_shift": "Alt + Shift (эсвэл F8)",
+                    "ctrl_space": "Ctrl + Space (эсвэл F8)",
+                    "f9": "F9 (эсвэл F8)",
+                    "f10": "F10 (эсвэл F8)",
+                    "f2": "F2 (эсвэл F8)",
+                    "f4": "F4 (эсвэл F8)",
+                }
+                hk_name = hk_map.get(cur_hk, "F8")
                 canvas.create_text(
                     146,
                     32,

@@ -366,7 +366,17 @@ function Shell({ children }: { children: ReactNode }) {
                 : "Шууд бичих товчлуур:"}
             </span>
             <kbd>
-              {settings.desktopHotkey === "f8" ? "F8" : (settings.desktopHotkey === "ctrl_shift" ? "Ctrl + Shift" : (settings.desktopHotkey === "f9" ? "F9" : (settings.desktopHotkey === "f10" ? "F10" : "Ctrl + Alt")))}
+              {
+                settings.desktopHotkey === "f8" ? "F8" :
+                settings.desktopHotkey === "ctrl_shift" ? "Ctrl + Shift" :
+                settings.desktopHotkey === "alt_shift" ? "Alt + Shift" :
+                settings.desktopHotkey === "ctrl_space" ? "Ctrl + Space" :
+                settings.desktopHotkey === "f9" ? "F9" :
+                settings.desktopHotkey === "f10" ? "F10" :
+                settings.desktopHotkey === "f2" ? "F2" :
+                settings.desktopHotkey === "f4" ? "F4" :
+                "Ctrl + Alt (буюу F8)"
+              }
             </kbd>
           </div>
 
@@ -1201,11 +1211,15 @@ export function SettingsPanel() {
               fontSize: "13px",
             }}
           >
+            <option value="f8">F8 (Санал болгох — Chrome, Word, Notepad-д 100% найдвартай)</option>
             <option value="ctrl_alt">Ctrl + Alt (Үндсэн товчлуур)</option>
-            <option value="f8">F8 (Санал болгох - Япон/Олон улсын AltGr зөрчилгүй)</option>
             <option value="ctrl_shift">Ctrl + Shift</option>
+            <option value="alt_shift">Alt + Shift</option>
+            <option value="ctrl_space">Ctrl + Space</option>
             <option value="f9">F9</option>
             <option value="f10">F10</option>
+            <option value="f2">F2</option>
+            <option value="f4">F4</option>
           </select>
           <small style={{ display: "block", color: "var(--muted)", fontSize: "11px", marginTop: "4px" }}>
             Япон эсвэл Европын гарын байрлалтай үед Ctrl+Alt нь AltGr болдог тул F8 товчлуурыг ашиглах нь найдвартай.
