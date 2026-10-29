@@ -11,14 +11,19 @@ if os.name == "nt":
         except Exception:
             pass
 
-import sys
 import os as _os
 
 # pythonw.exe (hidden launch) has no console: stdout/stderr are None and print() would crash.
 if sys.stdout is None or sys.stderr is None:
     try:
         _log_dir = _os.path.dirname(_os.path.abspath(__file__))
-        _log = open(_os.path.join(_log_dir, "voice-server.log"), "a", encoding="utf-8", buffering=1)
+        _log_path = _os.path.join(_log_dir, "voice-server.log")
+        try:
+            if _os.path.getsize(_log_path) > 5 * 1024 * 1024:
+                _os.replace(_log_path, _log_path + ".old")
+        except OSError:
+            pass
+        _log = open(_log_path, "a", encoding="utf-8", buffering=1)
     except Exception:
         _log = open(_os.devnull, "w")
     if sys.stdout is None:
@@ -59,7 +64,7 @@ def get_app_version() -> str:
                 return f.read().strip() or "1.2.3"
         except Exception:
             pass
-    return "1.2.3"
+    return "1.2.4"
 
 APP_VERSION = get_app_version()
 
@@ -89,14 +94,37 @@ def load_server_settings() -> dict:
             with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
                 data = json.load(f)
                 if isinstance(data, dict):
-                    cfg.update(data)
+                    cfg.update(sanitize_settings(data))
         except Exception:
             pass
     return cfg
 
+_SETTING_CHOICES = {
+    "hotkey": {"ctrl_alt", "f8", "ctrl_shift", "f9", "f10"},
+    "stt_engine": {"google", "whisper", "chimege"},
+    "whisper_model": {"tiny", "base", "small", "medium", "large-v3"},
+    "language": {"auto", "mn", "en", "ja"},
+}
+
+
+def sanitize_settings(data: dict) -> dict:
+    """Keep only known keys with valid values; ignore everything else."""
+    clean: dict = {}
+    if not isinstance(data, dict):
+        return clean
+    for key, allowed in _SETTING_CHOICES.items():
+        val = data.get(key)
+        if isinstance(val, str) and val.lower() in allowed:
+            clean[key] = val.lower()
+    tok = data.get("chimege_token")
+    if isinstance(tok, str) and len(tok) <= 512:
+        clean["chimege_token"] = tok.strip()
+    return clean
+
+
 def save_server_settings(data: dict) -> dict:
     cfg = load_server_settings()
-    cfg.update(data)
+    cfg.update(sanitize_settings(data))
     try:
         with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
             json.dump(cfg, f, indent=2, ensure_ascii=False)
@@ -2023,9 +2051,10 @@ def get_whisper_model(model_name: str = "small"):
     try:
         from faster_whisper import WhisperModel
     except ImportError:
-        print("[+] Installing faster-whisper lazily...")
-        subprocess.check_call([sys.executable, "-m", "pip", "install", "--quiet", "faster-whisper"])
-        from faster_whisper import WhisperModel
+        raise RuntimeError(
+            "faster-whisper суугаагүй байна. Оффлайн горимд: "
+            "'.venv\\Scripts\\python.exe -m pip install -r requirements-offline.txt' ажиллуулна уу."
+        )
 
     try:
         import torch
@@ -2257,7 +2286,8 @@ def insert_text_to_active_window(text: str, hwnd: int = 0) -> bool:
     # Restore user's previous clipboard content after 1.2s delay so target app has finished reading clipboard
     def restore_clip_later():
         time.sleep(1.2)
-        if old_clip:
+        # Do not overwrite something the user copied in the meantime.
+        if old_clip and get_windows_clipboard_text() == text_with_space:
             copy_to_windows_clipboard(old_clip)
 
     threading.Thread(target=restore_clip_later, daemon=True).start()
@@ -2616,7 +2646,11 @@ def _native_flowbar_ui_worker() -> None:
 
             if _is_recording:
                 stop_native_flowbar_recording()
-            elif FLOWBAR_STATE["status"] != "processing":
+            elif FLOWBAR_STATE["status"] == "processing":
+                # Allow user to click to cancel/reset if processing takes too long
+                FLOWBAR_STATE["status"] = "idle"
+                FLOWBAR_STATE["error"] = "Цуцаллаа"
+            else:
                 start_native_flowbar_recording(from_ui_button=False)
 
         canvas.bind("<ButtonPress-1>", on_press)
@@ -2643,6 +2677,17 @@ def _native_flowbar_ui_worker() -> None:
                     0,
                     SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW,
                 )
+
+            # Watchdog: if processing exceeds 10s, auto-reset to idle so FlowBar never freezes
+            if FLOWBAR_STATE.get("status") == "processing":
+                _pts = FLOWBAR_STATE.get("_proc_start_ts", 0)
+                if not _pts:
+                    FLOWBAR_STATE["_proc_start_ts"] = time.time()
+                elif time.time() - _pts > 10.0:
+                    FLOWBAR_STATE["status"] = "idle"
+                    FLOWBAR_STATE["_proc_start_ts"] = 0
+            else:
+                FLOWBAR_STATE["_proc_start_ts"] = 0
 
             st = FLOWBAR_STATE["status"]
             cur_lang = FLOWBAR_STATE.get("language", "auto")
@@ -2815,6 +2860,10 @@ class TTSRequest(BaseModel):
     cloneProfile: Optional[dict] = None
 
 
+MAX_UPLOAD_BYTES = 25 * 1024 * 1024  # 25 MB
+MAX_INSERT_CHARS = 20000
+
+
 class InsertTextRequest(BaseModel):
     text: str
 
@@ -2874,9 +2923,23 @@ def list_clones():
     return list(CLONED_VOICES_DB.values())
 
 
+_VOICE_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+
+
+def _safe_clone_wav_path(voice_id: str) -> str:
+    """Return the clone wav path only for a plain id that stays inside CLONES_DIR."""
+    if not _VOICE_ID_RE.match(voice_id or ""):
+        raise HTTPException(status_code=400, detail="Invalid voice id")
+    base = os.path.realpath(CLONES_DIR)
+    path = os.path.realpath(os.path.join(base, f"{voice_id}.wav"))
+    if os.path.commonpath([base, path]) != base:
+        raise HTTPException(status_code=400, detail="Invalid voice id")
+    return path
+
+
 @app.get("/clones/{voice_id}/sample")
 def get_clone_sample(voice_id: str):
-    wav_path = os.path.join(CLONES_DIR, f"{voice_id}.wav")
+    wav_path = _safe_clone_wav_path(voice_id)
     if not os.path.exists(wav_path):
         raise HTTPException(status_code=404, detail="Sample audio not found")
     return FileResponse(wav_path, media_type="audio/wav", filename=f"{voice_id}.wav")
@@ -2884,9 +2947,9 @@ def get_clone_sample(voice_id: str):
 
 @app.delete("/clones/{voice_id}")
 def delete_clone(voice_id: str):
+    wav_path = _safe_clone_wav_path(voice_id)
     CLONED_VOICES_DB.pop(voice_id, None)
     save_cloned_voices_db(CLONED_VOICES_DB)
-    wav_path = os.path.join(CLONES_DIR, f"{voice_id}.wav")
     if os.path.exists(wav_path):
         try:
             os.remove(wav_path)
@@ -2922,6 +2985,8 @@ def flowbar_action(req: FlowBarActionRequest):
 
 @app.post("/insert-text")
 def api_insert_text(req: InsertTextRequest):
+    if len(req.text) > MAX_INSERT_CHARS:
+        raise HTTPException(status_code=413, detail="Text too long")
     ok = insert_text_to_active_window(req.text)
     return {"inserted": ok, "text": req.text}
 
@@ -3075,30 +3140,24 @@ async def tts(req: TTSRequest):
 
     synth_text = prepare_tts_text_for_voice(text, base_voice)
 
-    # Natural Breathing Pauses: insert SSML break tags on punctuation
-    # 220ms on commas/semicolons, 450ms on sentence stops
-    escaped_text = synth_text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-    escaped_text = re.sub(r"([,;])\s*", r"\1 <break time='220ms'/> ", escaped_text)
-    escaped_text = re.sub(r"([.!?。！？])\s*", r"\1 <break time='450ms'/> ", escaped_text)
-    escaped_text = re.sub(r"\n+", " <break time='600ms'/> ", escaped_text)
+    # Strip any stray HTML/XML tags so Edge-TTS never speaks raw markup tags aloud
+    clean_text = re.sub(r"<[^>]+>", "", synth_text)
+    clean_text = re.sub(r"\s+", " ", clean_text).strip()
+    if not clean_text:
+        clean_text = synth_text.strip() or "Текст хоосон байна."
 
     # Dynamic prosody: if text ends with '?', raise pitch slightly for questioning inflection
     actual_pitch = pitch_str
-    if synth_text.strip().endswith("?") and "+0Hz" in pitch_str:
+    if clean_text.endswith("?") and "+0Hz" in pitch_str:
         actual_pitch = "+8Hz"
 
-    ssml_payload = f"""<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='mn-MN'>
-        <voice name='{base_voice}'>
-            <prosody rate='{rate_str}' pitch='{actual_pitch}'>
-                {escaped_text}
-            </prosody>
-        </voice>
-    </speak>"""
-
     try:
+        # Pass clean plain text with rate and pitch. Neural voices naturally breathe on commas and periods.
         communicate = edge_tts.Communicate(
-            text=ssml_payload,
+            text=clean_text,
             voice=base_voice,
+            rate=rate_str,
+            pitch=actual_pitch,
         )
         raw_mp3 = bytearray()
         async for chunk in communicate.stream():
@@ -3154,7 +3213,9 @@ async def transcribe(
     audio: UploadFile = File(...),
     language: str = Form("mn"),
 ):
-    content = await audio.read()
+    content = await audio.read(MAX_UPLOAD_BYTES + 1)
+    if len(content) > MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail="Аудио файл хэт том байна (дээд тал нь 25 MB).")
     if not content or len(content) < 500:
         return {"text": "", "error": "Аудио хэт богино эсвэл хоосон байна."}
 
@@ -3177,7 +3238,9 @@ async def clone_voice(
        and 513-bin Cepstral Vocal Tract Spectral Envelope (F1..F4).
     4. Transcribes reference speech (ref_text) and saves clones/<voice_id>.wav + voices.json.
     """
-    content = await audio.read()
+    content = await audio.read(MAX_UPLOAD_BYTES + 1)
+    if len(content) > MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail="Аудио файл хэт том байна (дээд тал нь 25 MB).")
     if len(content) < 2000:
         raise HTTPException(status_code=400, detail="Аудио файл хэт богино байна (3-10 секунд ярина уу).")
 
@@ -3215,7 +3278,13 @@ async def clone_voice(
             f.write(clean_wav_bytes)
 
         # Transcribe reference clip (VoiceStudio speaker_clone refine_ref_text)
-        ref_text, _ = transcribe_wav_bytes(clean_wav_bytes, language="mn")
+        try:
+            ref_text, _ = transcribe_wav_bytes(clean_wav_bytes, language="mn")
+        except Exception as e:
+            print(f"[VoiceStudio] Reference transcription warning: {e}")
+            ref_text = ""
+        if not ref_text or not ref_text.strip():
+            ref_text = "Би өөрийн дуу хоолойг хиймэл оюунд таниулж, шинэ загвар үүсгэж байна." 
 
         description = (
             f"{gender_label} • f₀={f0:.0f}Hz • Формант={prosody['formant_centroid']:.0f}Hz • {duration_s:.1f}с"

@@ -10,9 +10,19 @@ echo.
 
 set "TARGET=%LOCALAPPDATA%\VOICE-App"
 
+echo This will remove VOICE and ALL its data, including saved cloned voices:
+echo   %TARGET%
+set /p CONFIRM=Type YES to continue: 
+if /i not "%CONFIRM%"=="YES" (
+    echo Cancelled.
+    pause
+    exit /b 0
+)
+echo.
+
 echo [1/3] Stopping running VOICE background engine...
 powershell -NoProfile -Command "try { Invoke-RestMethod -Uri 'http://127.0.0.1:8000/api/quit' -Method Post -TimeoutSec 2 } catch { }" >nul 2>&1
-powershell -NoProfile -Command "Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object { $_.CommandLine -match 'tts_server.py' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }" >nul 2>&1
+powershell -NoProfile -Command "Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object { $_.CommandLine -like '*VOICE-App*tts_server.py*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }" >nul 2>&1
 
 echo [2/3] Removing Desktop shortcuts...
 powershell -NoProfile -Command "try { $d = [Environment]::GetFolderPath('Desktop'); if ($d) { Remove-Item -Path (Join-Path $d 'VOICE.lnk') -Force -ErrorAction SilentlyContinue } } catch { }" >nul 2>&1
