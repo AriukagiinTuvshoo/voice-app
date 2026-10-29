@@ -33,7 +33,6 @@ export interface ClonedVoice {
   duration?: number;
   refText?: string;
   sampleUrl?: string;
-  envelope?: number[];
   description: string;
   tag: string;
   createdAt: number;
@@ -245,7 +244,6 @@ export default function TTSPage() {
   const [speed, setSpeed] = useState(1.0);
   const [pitch, setPitch] = useState(1.0);
   const [loading, setLoading] = useState(false);
-  const [synthError, setSynthError] = useState("");
   const [currentAudioUrl, setCurrentAudioUrl] = useState<string | null>(null);
   const [history, setHistory] = useState<GeneratedAudio[]>([]);
   const [serverOnline, setServerOnline] = useState<boolean | null>(null);
@@ -338,13 +336,12 @@ export default function TTSPage() {
       name: c.name,
       gender: c.gender,
       description: c.description || "Хувилсан хоолой",
-      tag: "Хувилсан хоолой",
+      tag: "Хувилсан (Voice Clone)",
       pitch: c.pitch || 1.0,
       speed: c.speed || 1.0,
       baseVoice: c.baseVoice,
       sampleUrl: c.sampleUrl || `/api/tts/clone?id=${c.id}`,
       refText: c.refText || "",
-      envelope: c.envelope,
     })),
   ];
 
@@ -356,9 +353,9 @@ export default function TTSPage() {
   const handleSynthesize = async () => {
     if (!text.trim()) return;
     setLoading(true);
-    setSynthError("");
 
     try {
+      // IMPORTANT: Send selectedVoice.id (e.g. "cloned_xxxx") so tts_server.py applies Cepstral Vocal Tract Timbre Transfer!
       const res = await fetch("/api/tts", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -369,20 +366,17 @@ export default function TTSPage() {
           pitch,
           preset: selectedPreset,
           timbreStrength,
-          cloneProfile: isSelectedCloned ? selectedVoice : null,
         }),
       });
 
       if (!res.ok) {
-        const errData = await res.json().catch(() => ({}));
-        throw new Error(errData.error || "Дуу үүсгэхэд алдаа гарлаа. Дахин оролдоно уу.");
+        throw new Error("Дуу үүсгэхэд алдаа гарлаа.");
       }
 
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
 
       setCurrentAudioUrl(url);
-      setServerOnline(true);
 
       const presetObj =
         VOICESTUDIO_PRESETS.find((p) => p.id === selectedPreset) ||
@@ -400,13 +394,11 @@ export default function TTSPage() {
 
       setTimeout(() => {
         if (audioRef.current) {
-          audioRef.current.load();
           audioRef.current.play().catch(() => {});
         }
-      }, 100);
+      }, 80);
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Дуу үүсгэхэд алдаа гарлаа.";
-      setSynthError(msg);
+      console.warn("TTS error:", err);
     } finally {
       setLoading(false);
     }
@@ -439,12 +431,8 @@ export default function TTSPage() {
       sampleTimerRef.current = setInterval(() => {
         setRecordSeconds((s) => s + 1);
       }, 1000);
-    } catch (err: unknown) {
-      const msg =
-        err instanceof Error
-          ? err.message
-          : "Микрофон ажиллуулахад алдаа гарлаа. Зөвшөөрөл шалгана уу.";
-      setCloneError(msg);
+    } catch {
+      setCloneError("Микрофон ажиллуулахад алдаа гарлаа. Зөвшөөрөл шалгана уу.");
     }
   };
 
@@ -538,6 +526,7 @@ export default function TTSPage() {
 
   return (
     <section className="page">
+      <small>VOICESTUDIO AI • ZERO-SHOT TIMBRE & DSP ENGINE</small>
       <div
         style={{
           display: "flex",
@@ -548,9 +537,9 @@ export default function TTSPage() {
         }}
       >
         <div>
-          <h1 style={{ margin: "0 0 8px" }}>VoiceStudio</h1>
-          <p style={{ maxWidth: "620px" }}>
-            Монгол, Англи, Япон дуу хоолойгоор бичвэр уншуулах болон өөрийн хоолойг хувилан ашиглах студи.
+          <h1 style={{ margin: "6px 0 10px" }}>Дуу Хоолойн Студи (VoiceStudio)</h1>
+          <p style={{ maxWidth: "660px" }}>
+            Монгол дуу хоолойгоор уншуулах, <b>хүний хоолойн тембр ба формантыг (F₁–F₄) хувилах (Voice Clone)</b> болон студийн <b>Broadcast DSP</b> эффектээр баяжуулах систем.
           </p>
         </div>
 
@@ -592,10 +581,10 @@ export default function TTSPage() {
             }}
           >
             {checkingServer
-              ? "Холбогдож байна..."
+              ? "Шалгаж байна..."
               : serverOnline
-              ? "VoiceStudio AI Бэлэн"
-              : "VoiceStudio сэргээх (Дарна уу)"}
+              ? "VoiceStudio Сервер Бэлэн (localhost:8000)"
+              : "Сервер унтарсан (run-tts.bat)"}
           </span>
         </div>
       </div>
@@ -1065,12 +1054,6 @@ export default function TTSPage() {
               ))}
             </div>
 
-            {synthError && (
-              <div className="error" style={{ marginTop: "14px" }}>
-                <b>Анхаар:</b> {synthError}
-              </div>
-            )}
-
             {/* Action buttons */}
             <div
               style={{
@@ -1163,10 +1146,10 @@ export default function TTSPage() {
                   </div>
                   <div>
                     <div style={{ fontWeight: 700, fontSize: "15px" }}>
-                      {selectedVoice.name}
+                      {selectedVoice.name} • VoiceStudio Гаралт
                     </div>
                     <div style={{ fontSize: "12px", color: "var(--muted)" }}>
-                      Бэлэн болсон аудио • WAV
+                      24kHz Broadcast WAV • Cepstral Timbre Engine
                     </div>
                   </div>
                 </div>
@@ -1177,14 +1160,13 @@ export default function TTSPage() {
                   className="btn-secondary"
                   style={{ textDecoration: "none", fontSize: "12px" }}
                 >
-                  ⬇️ Аудио татах
+                  ⬇️ WAV татах
                 </a>
               </div>
 
               <audio
                 ref={audioRef}
                 controls
-                playsInline
                 src={currentAudioUrl}
                 style={{ width: "100%", height: "42px", borderRadius: "10px" }}
               />
@@ -1232,10 +1214,10 @@ export default function TTSPage() {
       {activeTab === "clone" && (
         <div className="settings" style={{ marginTop: "20px" }}>
           <h2 style={{ fontSize: "18px", marginBottom: "8px" }}>
-            ✨ Хүний дуу хоолой хувилах (Voice Clone)
+            ✨ Хүний дуу хоолой хувилах (VoiceStudio Acoustic Cloner)
           </h2>
           <p style={{ marginBottom: "20px" }}>
-            Өөрийн эсвэл дурын хүний хоолойг 4–10 секунд бичих (эсвэл аудио файл оруулах) замаар тухайн хүний хоолойн өнгө ба тембрийг хувилж авна.
+            Өөрийн эсвэл дурын хүний хоолойг 4–10 секунд бичих (эсвэл аудио файл оруулах) замаар тухайн хүний <b>хоолойн тембр, формант (F₁–F₄), үндсэн давтамж ($f_0$) болон ярианы хэмнэлийг</b> хувилж авна.
           </p>
 
           <div style={{ display: "grid", gap: "18px", maxWidth: "640px" }}>

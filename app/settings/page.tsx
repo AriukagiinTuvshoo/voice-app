@@ -1,11 +1,1 @@
-import { SettingsPanel } from "@/components/AppShell";
-
-export default function Settings() {
-  return (
-    <section className="page">
-      <h1>Тохиргоо</h1>
-      <p>Бичлэг, микрофон, дүрэм шалгалт болон харагдах байдлын тохиргоо.</p>
-      <SettingsPanel />
-    </section>
-  );
-}
+import {SettingsPanel} from "@/components/AppShell";export default function Settings(){return <section className="page"><small>VOICE SETTINGS</small><h1>Тохиргоо</h1><p>VOICE-ийн хэл, бичлэг, shortcut, текст болон appearance тохиргоо.</p><SettingsPanel/></section>}
