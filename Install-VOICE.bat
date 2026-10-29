@@ -3,6 +3,9 @@ setlocal
 title VOICE Installer
 cd /d "%~dp0"
 
+rem ---- 0. Unblock downloaded files (Windows Smart App Control MOTW) ---
+powershell -NoProfile -Command "Get-ChildItem -Path '%~dp0*' | Unblock-File -ErrorAction SilentlyContinue" >nul 2>&1
+
 echo ============================================================
 echo   VOICE - Speak. Clean. Write.   (Installer v1.2.0)
 echo ============================================================
@@ -42,6 +45,7 @@ for %%F in (tts_server.py requirements.txt Start-VOICE.bat make-shortcut.ps1 REA
 rem Clean up blocked legacy files if present
 if exist "%TARGET%\VOICE-Silent.vbs" del /f /q "%TARGET%\VOICE-Silent.vbs" >nul 2>&1
 if exist "%TARGET%\VOICE.exe" del /f /q "%TARGET%\VOICE.exe" >nul 2>&1
+powershell -NoProfile -Command "Get-ChildItem -Path '%TARGET%\*' | Unblock-File -ErrorAction SilentlyContinue" >nul 2>&1
 
 rem ---- 3. Private virtual environment + dependencies ------------------------
 echo [3/4] Installing Python packages (first time only, needs internet) ...
@@ -66,7 +70,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "%TARGET%\make-shortcut.ps1"
 
 echo.
 echo Done! Starting VOICE ...
-start "" "%TARGET%\.venv\Scripts\pythonw.exe" "%TARGET%\tts_server.py"
+start /d "%TARGET%" "" "%TARGET%\.venv\Scripts\pythonw.exe" tts_server.py
 exit /b 0
 
 :fail
