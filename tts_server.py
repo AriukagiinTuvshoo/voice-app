@@ -2313,7 +2313,7 @@ class FlowBarActionRequest(BaseModel):
     language: Optional[str] = "mn"
 
 
-@app.get("/")
+@app.get("/api/info")
 def index():
     return {
         "service": "VOICE & VoiceStudio AI Server (TTS, STT, Voice Cloning, Duudlaga Flow)",
@@ -2719,6 +2719,97 @@ async def clone_voice(
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Хоолой хувилахад алдаа гарлаа: {str(e)}")
+
+
+# ---------------------------------------------------------------------------
+# Frontend Direct /api/... Route Aliases (Supports single-port 8000 desktop app)
+# ---------------------------------------------------------------------------
+
+@app.get("/api/flowbar")
+def api_flowbar_get():
+    return get_flowbar_status()
+
+
+@app.post("/api/flowbar")
+async def api_flowbar_post(req: dict = None):
+    if not req:
+        return get_flowbar_status()
+    if "insertText" in req and req["insertText"]:
+        insert_text_at_cursor(req["insertText"])
+        return {"status": "ok", "inserted": req["insertText"]}
+    act = req.get("action", "")
+    lang = req.get("language")
+    return await handle_flowbar_action(FlowBarActionRequest(action=act, language=lang))
+
+
+@app.post("/api/tts")
+async def api_tts(req: TTSRequest):
+    return await tts(req)
+
+
+@app.get("/api/tts/clone")
+def api_tts_clone_get(id: str = ""):
+    return get_clone_sample(id)
+
+
+@app.post("/api/tts/clone")
+async def api_tts_clone_post(name: str = Form("Миний хоолой"), audio: UploadFile = File(...)):
+    return await clone_voice(name, audio)
+
+
+@app.post("/api/chimege/transcribe")
+async def api_chimege_transcribe(audio: UploadFile = File(...), language: str = Form("mn")):
+    return await transcribe(audio, language)
+
+
+@app.post("/api/spellcheck")
+async def api_spellcheck(req: dict):
+    text = req.get("text", "")
+    action = req.get("action", "full")
+    word = req.get("word", "")
+    if action == "suggest" and word:
+        s_key = _encrypt_spellcheck_key(word)
+        try:
+            base_url = "https://spellcheck.mn/cms-client/modules/spellchecker"
+            headers = {
+                "Content-Type": "application/json",
+                "Origin": "https://spellcheck.mn",
+                "Referer": "https://spellcheck.mn/",
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) VoiceApp/1.0",
+            }
+            s_req = urllib.request.Request(
+                f"{base_url}/suggest",
+                data=json.dumps({"word": word, "key": s_key}).encode("utf-8"),
+                headers=headers,
+                method="POST",
+            )
+            with urllib.request.urlopen(s_req, timeout=1.8) as s_resp:
+                cands = json.loads(s_resp.read().decode("utf-8", errors="ignore"))
+                return {"word": word, "suggestions": cands if isinstance(cands, list) else []}
+        except Exception:
+            return {"word": word, "suggestions": []}
+
+    if not text or len(text.strip()) < 2:
+        return {"text": text, "misspelled": [], "suggestions": {}, "correctedText": text}
+
+    try:
+        corrected = _auto_correct_subtle_typos_spellcheck_mn(text)
+        return {"text": text, "misspelled": [], "suggestions": {}, "correctedText": corrected}
+    except Exception:
+        return {"text": text, "misspelled": [], "suggestions": {}, "correctedText": text}
+
+
+# ---------------------------------------------------------------------------
+# Static Web App Mount (Single Port 8000 Desktop Architecture)
+# ---------------------------------------------------------------------------
+try:
+    from fastapi.staticfiles import StaticFiles
+
+    OUT_DIR = os.path.join(BASE_DIR, "out")
+    if os.path.exists(OUT_DIR):
+        app.mount("/", StaticFiles(directory=OUT_DIR, html=True), name="static")
+except Exception as e:
+    print("[!] Static files mount notice:", e)
 
 
 if __name__ == "__main__":
