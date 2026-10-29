@@ -34,13 +34,23 @@ if sys.stdout is not None:
 
 # pythonw.exe (hidden launch) has no console: redirect stdout/stderr to logger
 if sys.stdout is None or sys.stderr is None:
-    class _LogStreamWriter:
+    import io as _io
+    class _LogStreamWriter(_io.TextIOBase):
         def write(self, s):
-            s = s.strip()
-            if s:
-                logger.info(s)
+            s_clean = s.strip() if isinstance(s, str) else str(s).strip()
+            if s_clean:
+                logger.info(s_clean)
+            return len(s)
         def flush(self):
             pass
+        def isatty(self):
+            return False
+        def readable(self):
+            return False
+        def writable(self):
+            return True
+        def seekable(self):
+            return False
     _lsw = _LogStreamWriter()
     if sys.stdout is None:
         sys.stdout = _lsw
