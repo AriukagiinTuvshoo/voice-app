@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/AriukagiinTuvshoo/voice-app/releases/latest"><img src="https://img.shields.io/badge/Release-v1.2.4-6366f1?style=for-the-badge&logo=windows" alt="Version 1.2.4" /></a>
+  <a href="https://github.com/AriukagiinTuvshoo/voice-app/releases/latest"><img src="https://img.shields.io/badge/Release-v1.2.6-6366f1?style=for-the-badge&logo=windows" alt="Version 1.2.6" /></a>
   <img src="https://img.shields.io/badge/Platform-Windows%2010%20%7C%2011%20(64--bit)-blue?style=for-the-badge&logo=windows" alt="Platform Windows" />
   <img src="https://img.shields.io/badge/Python-3.10%2B-brightgreen?style=for-the-badge&logo=python" alt="Python 3.10+" />
   <img src="https://img.shields.io/badge/Node.js-Not%20Required-blueviolet?style=for-the-badge" alt="No Node Needed" />
@@ -24,10 +24,10 @@
 Нээлттэй эхийн багц: бүх код `tts_server.py` болон `.bat` файлуудад нээлттэй. Windows Smart App Control эсвэл антивирус анхааруулга өгч болох тул суулгахаасаа өмнө кодыг өөрөө шалгаж болно.
 
 ### Алхам 1: Багц татаж авах
-👉 [**VOICE-Windows-v1.2.4.zip татах (GitHub Releases)**](https://github.com/AriukagiinTuvshoo/voice-app/releases/latest)
+👉 [**VOICE-Windows-v1.2.6.zip татах (GitHub Releases)**](https://github.com/AriukagiinTuvshoo/voice-app/releases/latest)
 
 ### Алхам 2: Суулгах
-1. Татсан `VOICE-Windows-v1.2.4.zip` файлыг хулганы баруун товчоор дарж **Extract All... (Бүгдийг задлах)** сонгоно.
+1. Татсан `VOICE-Windows-v1.2.6.zip` файлыг хулганы баруун товчоор дарж **Extract All... (Бүгдийг задлах)** сонгоно.
 2. Задалсан хавтас доторх **`Install-VOICE.bat`** файл дээр давхар товшиж ажиллуулна.
    - Энэ нь шаардлагатай сангуудыг таны компьютерын `%LOCALAPPDATA%\VOICE-App\.venv` тусгаарлагдсан орчинд найдвартай бэлтгэнэ.
    - Дэлгэц (Desktop) дээр **`VOICE`** нэртэй нил ягаан өнгийн товчлолыг автоматаар үүсгэнэ.
@@ -60,6 +60,13 @@ VOICE-ийн гол давуу тал нь **курсор байгаа газа�
 > - **Админ эрхтэй цонх (Administrator mode):** Windows UIPI (User Interface Privilege Isolation) хамгаалалтаас шалтгаалан админ эрхээр нээгдсэн цонх руу (жишээ нь Run as Administrator-аар нээгдсэн Notepad/CMD) бичихийн тулд VOICE-г мөн адил админаар ажиллуулах шаардлагатай.
 
 ---
+
+## 🛠️ FlowBar харагдахгүй бол
+
+1. Desktop дээрх **VOICE** товчлолоор дахин нээнэ (FlowBar дахин гарч ирнэ).
+2. Тохиргоо цэс дээрх **"📍 Байрлал сэргээх"** товчийг дарна.
+3. Хараахан гарахгүй бол задалсан хавтсан доторх **`Diagnose-VOICE.bat`**-ыг ажиллуулна. Энэ нь Python/Tkinter, дэлгэц, микрофон, engine-ийн төлөв, лог зэргийг шалгаж, 6 секундийн турш туршилтын самбар үзүүлээд `%LOCALAPPDATA%\VOICE-App\voice-diagnose.txt` файлд үр дүнг хадгална.
+4. Хамгийн түгээмэл шалтгаан: Python-ийг **"tcl/tk and IDLE"**-гүй суулгасан. Python-ийг дахин суулгаад `Install-VOICE.bat`-ыг дахин ажиллуулна.
 
 ## 🌟 3. Гол боломжууд ба Давуу талууд
 
@@ -109,9 +116,13 @@ voice-app/
 ├── Start-VOICE.bat        # ⚡ VOICE системийг серверийн хамт далд эхлүүлэгч
 ├── Uninstall-VOICE.bat    # 🗑️ VOICE системийг компьютерээс бүрэн устгагч
 ├── make-shortcut.ps1      # 📌 Desktop дээр товчлол автоматаар үүсгэгч
-├── tts_server.py          # 🧠 Python хөдөлгүүр (STT, TTS, Voice Clone, Hotkey & Tkinter FlowBar)
+├── tts_server.py          # 🧠 Python хөдөлгүүр (FastAPI, Tray, Hotkey & Tkinter FlowBar)
+├── voice_core.py          # 🧩 Цэвэр логик функцууд (clamping, sanitize, math, status)
+├── diagnose_flowbar.py    # 🩺 Оношилгооны скрипт (порт, дэлгэц, лог, autostart)
+├── Diagnose-VOICE.bat     # 🩺 1-товшилтоор оношлох ба voice-diagnose.txt үүсгэгч
 ├── out/                   # 🎨 Бэлэн веб интерфэйсийн статик файлууд (HTML/CSS/JS)
 ├── requirements.txt       # 📦 Үндсэн Python сангууд
+├── requirements-tray.txt  # 📦 Системийн Tray дүрс тэмдэг (pystray, Pillow)
 ├── requirements-offline.txt # 📦 Оффлайн Whisper (заавал биш)
 ├── VERSION                # 🏷️ Хувилбарын дугаар
 ├── public/                # 🖼️ Нил ягаан дүрс тэмдэг (voice.ico, icon.svg)

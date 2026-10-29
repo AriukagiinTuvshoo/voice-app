@@ -32,3 +32,6 @@ voice_settings.json
 *.exe
 *.zip
 VOICE-Windows-*.zip
+
+voice-diagnose.txt
+clones/
