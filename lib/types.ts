@@ -4,7 +4,7 @@ export type RecordingMode = "toggle" | "push_to_talk" | "microphone";
 export type Shortcut = "Space" | "F2" | "F4" | "F8" | "Ctrl+Space" | "Alt+Space";
 export type ProcessingMode = "raw" | "standard" | "clean" | "polished";
 export type Theme = "light" | "dark" | "system";
-export type SttEngine = "chimege" | "browser" | "auto";
+export type SttEngine = "chimege" | "browser" | "auto" | "google" | "whisper";
 
 export interface ChimegeVoice {
   id: string;
@@ -38,6 +38,7 @@ export interface Settings {
   desktopHotkey: string;
   autoInsertText: boolean;
   showFlowBar: boolean;
+  whisperModel?: string;
 }
 
 export interface TranscriptionRecord {

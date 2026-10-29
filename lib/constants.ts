@@ -8,9 +8,9 @@ export const languages: { value: Language; label: string; icon: string }[] = [
 ];
 
 export const sttEngines: { value: SttEngine; label: string; description: string }[] = [
-  { value: "auto", label: "Multilingual AI (МН + EN + JP)", description: "Монгол яриан дунд Англи, Япон үг хольж ярихад зэрэг таних ухаалаг горим." },
-  { value: "chimege", label: "Studio Deep STT (Сервер)", description: "Шуугиан шүүж, олон хэлний авиаг нарийвчлан шинжлэх студийн горим." },
-  { value: "browser", label: "Browser Web Speech", description: "Хөтөчийн суурь хурдан яриа танигч." },
+  { value: "auto", label: "Google Web Speech (Үнэгүй, Санал болгох)", description: "Монгол, Англи, Япон яриаг бодит цагт үнэгүй, найдвартай танина." },
+  { value: "whisper", label: "Faster-Whisper (Оффлайн AI, туршилтын горим)", description: "Таны компьютерт интернет холболтгүй үед бие даан ажиллах загвар." },
+  { value: "chimege", label: "Chimege API (Хувийн токентой)", description: "Хувийн Chimege API түлхүүрээр студийн танилт хийх горим." },
 ];
 
 export const recordingModes: { value: RecordingMode; label: string; description: string }[] = [
@@ -71,9 +71,10 @@ export const defaultSettings: Settings = {
   ttsSpeed: 1.0,
   ttsPitch: 1.0,
   // Desktop mode
-  desktopHotkey: "Ctrl+Alt",
   autoInsertText: true,
   showFlowBar: true,
+  whisperModel: "small",
+  desktopHotkey: "ctrl_alt",
 };
 
 export const CHIMEGE_API_URL = "https://api.chimege.com/v1.2";

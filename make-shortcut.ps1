@@ -1,21 +1,20 @@
-param([string]$AppDir = $PSScriptRoot)
+param([string]$AppDir = "$env:LOCALAPPDATA\VOICE-App")
 
 $ws = New-Object -ComObject WScript.Shell
 $desktop = [Environment]::GetFolderPath('Desktop')
-$lnk = $ws.CreateShortcut((Join-Path $desktop 'VOICE.lnk'))
+$lnkPath = Join-Path $desktop 'VOICE.lnk'
+$lnk = $ws.CreateShortcut($lnkPath)
 
-$pyw = Join-Path $AppDir '.venv\Scripts\pythonw.exe'
-if (Test-Path $pyw) {
-    $lnk.TargetPath = $pyw
-    $lnk.Arguments = 'tts_server.py'
-} else {
-    $lnk.TargetPath = Join-Path $AppDir 'Start-VOICE.bat'
-    $lnk.WindowStyle = 7
-}
-
+$startBat = Join-Path $AppDir 'Start-VOICE.bat'
+$lnk.TargetPath = $startBat
 $lnk.WorkingDirectory = $AppDir
+$lnk.WindowStyle = 7
+
 $ico = Join-Path $AppDir 'public\voice.ico'
-if (Test-Path $ico) { $lnk.IconLocation = $ico }
+if (Test-Path $ico) {
+    $lnk.IconLocation = $ico
+}
 $lnk.Description = 'VOICE - Speak. Clean. Write.'
 $lnk.Save()
-Write-Host 'Desktop shortcut created.'
+
+Write-Host "Desktop shortcut created: $lnkPath"

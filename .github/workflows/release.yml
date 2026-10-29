@@ -1,0 +1,60 @@
+name: Release VOICE Windows
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install Node dependencies
+        run: npm ci
+
+      - name: Build static export (out/)
+        run: npm run build
+
+      - name: Prepare Release Package
+        shell: powershell
+        run: |
+          $version = "${{ github.ref_name }}"
+          $zipName = "VOICE-Windows-$version.zip"
+          $distDir = "dist-package"
+          New-Item -ItemType Directory -Path $distDir -Force | Out-Null
+          
+          # Copy release files
+          Copy-Item -Path "Install-VOICE.bat" -Destination $distDir
+          Copy-Item -Path "Start-VOICE.bat" -Destination $distDir
+          Copy-Item -Path "Uninstall-VOICE.bat" -Destination $distDir
+          Copy-Item -Path "make-shortcut.ps1" -Destination $distDir
+          Copy-Item -Path "tts_server.py" -Destination $distDir
+          Copy-Item -Path "requirements.txt" -Destination $distDir
+          Copy-Item -Path "README.md" -Destination $distDir
+          Copy-Item -Path "LICENSE" -Destination $distDir
+          Copy-Item -Path "public" -Destination $distDir -Recurse
+          Copy-Item -Path "out" -Destination $distDir -Recurse
+
+          # Compress to zip
+          Compress-Archive -Path "$distDir\*" -DestinationPath $zipName -Force
+          Write-Host "Created release package: $zipName"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: VOICE-Windows-${{ github.ref_name }}.zip
+          generate_release_notes: true
+          draft: false
+          prerelease: false

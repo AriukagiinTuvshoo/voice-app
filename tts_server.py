@@ -40,12 +40,90 @@ from scipy.io import wavfile
 
 app = FastAPI(
     title="VOICE & VoiceStudio AI Engine (TTS, STT, Voice Cloning & Duudlaga Flow)",
-    version="4.0.0",
+    version="1.2.1",
 )
 
 SERVER_PORT = int(os.environ.get("VOICE_PORT", "8000"))
 _ALLOWED_HOSTS = {f"127.0.0.1:{SERVER_PORT}", f"localhost:{SERVER_PORT}"}
 _ALLOWED_ORIGINS = {f"http://127.0.0.1:{SERVER_PORT}", f"http://localhost:{SERVER_PORT}"}
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+SETTINGS_FILE = os.path.join(BASE_DIR, "voice_settings.json")
+DEFAULT_SERVER_SETTINGS = {
+    "hotkey": "ctrl_alt",   # "ctrl_alt" | "f8" | "ctrl_shift" | "f9" | "f10"
+    "stt_engine": "google", # "google" | "whisper" | "chimege"
+    "whisper_model": "small",
+    "chimege_token": "",
+    "language": "auto",
+}
+
+def load_server_settings() -> dict:
+    cfg = dict(DEFAULT_SERVER_SETTINGS)
+    if os.path.isfile(SETTINGS_FILE):
+        try:
+            with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if isinstance(data, dict):
+                    cfg.update(data)
+        except Exception:
+            pass
+    return cfg
+
+def save_server_settings(data: dict) -> dict:
+    cfg = load_server_settings()
+    cfg.update(data)
+    try:
+        with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
+            json.dump(cfg, f, indent=2, ensure_ascii=False)
+    except Exception as e:
+        print("[!] Error saving settings:", e)
+    return cfg
+
+SERVER_SETTINGS = load_server_settings()
+
+_single_instance_mutex = None
+
+def check_single_instance(port: int = 8000) -> bool:
+    """Named mutex single-instance check to prevent duplicate engines and WinError 10048."""
+    global _single_instance_mutex
+    if os.name != "nt":
+        return True
+    try:
+        from ctypes import wintypes
+        k = ctypes.windll.kernel32
+        k.CreateMutexW.argtypes = [ctypes.c_void_p, wintypes.BOOL, wintypes.LPCWSTR]
+        k.CreateMutexW.restype = wintypes.HANDLE
+        k.GetLastError.restype = wintypes.DWORD
+
+        mutex_name = f"Local\\VOICE_App_SingleInstance_Mutex_{port}"
+        _single_instance_mutex = k.CreateMutexW(None, True, mutex_name)
+        err = k.GetLastError()
+        if err == 183:  # ERROR_ALREADY_EXISTS
+            print(f"[!] VOICE engine already running on port {port}. Bringing FlowBar to front and exiting cleanly.")
+            try:
+                import urllib.request
+                req = urllib.request.Request(
+                    f"http://127.0.0.1:{port}/flowbar/action",
+                    data=json.dumps({"action": "show"}).encode("utf-8"),
+                    headers={"Content-Type": "application/json"},
+                    method="POST",
+                )
+                urllib.request.urlopen(req, timeout=1.5)
+            except Exception:
+                pass
+            return False
+    except Exception as e:
+        print("[!] Single instance check warning:", e)
+    return True
+
+def is_port_available(port: int) -> bool:
+    import socket
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        try:
+            s.bind(("127.0.0.1", port))
+            return True
+        except OSError:
+            return False
 
 
 @app.middleware("http")
@@ -1545,10 +1623,11 @@ def _score_candidate_hypothesis(text: str, base_conf: float, lang_code: str) -> 
     return score
 
 
-def _recognize_single_lang(wav_bytes: bytes, lang_code: str) -> tuple[str, float]:
+def _recognize_single_lang(wav_bytes: bytes, lang_code: str) -> tuple[str, float, bool]:
     """Run Google STT with show_all=True and rerank all N-best alternatives for maximum word/letter accuracy."""
     r = sr.Recognizer()
     r.dynamic_energy_threshold = False
+    net_err = False
     try:
         with sr.AudioFile(io.BytesIO(wav_bytes)) as source:
             audio_data = r.record(source)
@@ -1562,17 +1641,18 @@ def _recognize_single_lang(wav_bytes: bytes, lang_code: str) -> tuple[str, float
                 cand_text = (alt.get("transcript") or "").strip()
                 if not cand_text:
                     continue
-                # Google often omits 'confidence' on alts[1..N]; assign slight rank decay from alts[0]
                 raw_conf = float(alt.get("confidence", max(0.70, 0.84 - idx * 0.03)))
                 cand_score = _score_candidate_hypothesis(cand_text, raw_conf, lang_code)
                 if cand_score > best_score:
                     best_score = cand_score
                     best_text = cand_text
                     best_conf = raw_conf
-            return best_text, best_conf
+            return best_text, best_conf, False
+    except sr.RequestError:
+        net_err = True
     except Exception:
         pass
-    return "", 0.0
+    return "", 0.0, net_err
 
 
 def transcribe_wav_bytes(raw_bytes: bytes, language: str = "mn") -> tuple[str, str]:
@@ -1602,6 +1682,12 @@ def transcribe_wav_bytes(raw_bytes: bytes, language: str = "mn") -> tuple[str, s
 
     final_clauses: list[str] = []
 
+    cfg_engine = SERVER_SETTINGS.get("stt_engine", "google").lower()
+    if cfg_engine == "whisper":
+        m_name = SERVER_SETTINGS.get("whisper_model", "small")
+        return transcribe_with_whisper(raw_bytes, language=req_lang, model_name=m_name)
+
+    net_err_found = False
     with ThreadPoolExecutor(max_workers=3) as pool:
         for seg in segments:
             seg_wav = encode_wav_bytes(seg, 16000)
@@ -1609,8 +1695,9 @@ def transcribe_wav_bytes(raw_bytes: bytes, language: str = "mn") -> tuple[str, s
             if req_lang in ("en", "en-us"):
                 fut_en = pool.submit(_recognize_single_lang, seg_wav, "en-US")
                 fut_mn = pool.submit(_recognize_single_lang, seg_wav, "mn-MN")
-                en_txt, en_conf = fut_en.result()
-                mn_txt, mn_conf = fut_mn.result()
+                en_txt, en_conf, e_err = fut_en.result()
+                mn_txt, mn_conf, m_err = fut_mn.result()
+                if e_err or m_err: net_err_found = True
                 chosen = en_txt if (en_txt and en_conf >= mn_conf - 0.1) else (mn_txt or en_txt)
                 if chosen:
                     final_clauses.append(chosen)
@@ -1618,8 +1705,9 @@ def transcribe_wav_bytes(raw_bytes: bytes, language: str = "mn") -> tuple[str, s
             elif req_lang in ("ja", "ja-jp"):
                 fut_ja = pool.submit(_recognize_single_lang, seg_wav, "ja-JP")
                 fut_mn = pool.submit(_recognize_single_lang, seg_wav, "mn-MN")
-                ja_txt, ja_conf = fut_ja.result()
-                mn_txt, mn_conf = fut_mn.result()
+                ja_txt, ja_conf, j_err = fut_ja.result()
+                mn_txt, mn_conf, m_err = fut_mn.result()
+                if j_err or m_err: net_err_found = True
                 chosen = ja_txt if (ja_txt and ja_conf >= mn_conf - 0.1) else (mn_txt or ja_txt)
                 if chosen:
                     final_clauses.append(chosen)
@@ -1630,9 +1718,10 @@ def transcribe_wav_bytes(raw_bytes: bytes, language: str = "mn") -> tuple[str, s
                 fut_en = pool.submit(_recognize_single_lang, seg_wav, "en-US")
                 fut_ja = pool.submit(_recognize_single_lang, seg_wav, "ja-JP")
 
-                mn_txt, mn_conf = fut_mn.result()
-                en_txt, en_conf = fut_en.result()
-                ja_txt, ja_conf = fut_ja.result()
+                mn_txt, mn_conf, m_err = fut_mn.result()
+                en_txt, en_conf, e_err = fut_en.result()
+                ja_txt, ja_conf, j_err = fut_ja.result()
+                if m_err or e_err or j_err: net_err_found = True
 
                 chosen = select_or_fuse_trilingual_clause(
                     mn_txt, mn_conf, en_txt, en_conf, ja_txt, ja_conf
@@ -1643,12 +1732,14 @@ def transcribe_wav_bytes(raw_bytes: bytes, language: str = "mn") -> tuple[str, s
 
     text = " ".join(c.strip() for c in final_clauses if c.strip()).strip()
     if text:
-        # Apply deep Mongolian word-boundary, suffix, and 1-2 letter orthographic refinement
         text = refine_mongolian_orthography_and_words(text)
         text = text[0].upper() + text[1:]
         if text[-1] not in ".!?。！？":
             text += "."
         return text, ""
+
+    if net_err_found:
+        return "", "Интернет холболтоо шалгана уу (Google Speech API холбогдсонгүй)."
 
     return "", "Яриа танигдсангүй. Микрофондоо ойрхон, тод ярина уу."
 
@@ -1697,11 +1788,13 @@ if os.name == "nt":
     WS_EX_TOOLWINDOW = 0x00000080
     WS_EX_TOPMOST = 0x00000008
 
-    HWND_TOPMOST = -1
+    HWND_TOPMOST = wintypes.HWND(-1)
     SWP_NOSIZE = 0x0001
     SWP_NOMOVE = 0x0002
     SWP_NOACTIVATE = 0x0010
     SWP_SHOWWINDOW = 0x0040
+    SWP_FRAMECHANGED = 0x0020
+    SPI_GETWORKAREA = 0x0030
 
     INPUT_KEYBOARD = 1
     KEYEVENTF_UNICODE = 0x0004
@@ -1712,11 +1805,31 @@ if os.name == "nt":
     VK_MENU = 0x12
     VK_LMENU = 0xA4
     VK_RMENU = 0xA5
+    VK_SHIFT = 0x10
+    VK_LSHIFT = 0xA0
+    VK_RSHIFT = 0xA1
     VK_SPACE = 0x20
     VK_F8 = 0x77
+    VK_F9 = 0x78
+    VK_F10 = 0x79
     VK_V = 0x56
     CF_UNICODETEXT = 13
     GMEM_MOVEABLE = 0x0002
+
+    user32.SetWindowPos.argtypes = [
+        wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_uint
+    ]
+    user32.SetWindowPos.restype = wintypes.BOOL
+    user32.GetWindowLongW.argtypes = [wintypes.HWND, ctypes.c_int]
+    user32.GetWindowLongW.restype = ctypes.c_long
+    user32.SetWindowLongW.argtypes = [wintypes.HWND, ctypes.c_int, ctypes.c_long]
+    user32.SetWindowLongW.restype = ctypes.c_long
+    user32.GetParent.argtypes = [wintypes.HWND]
+    user32.GetParent.restype = wintypes.HWND
+    user32.SystemParametersInfoW.argtypes = [wintypes.UINT, wintypes.UINT, ctypes.c_void_p, wintypes.UINT]
+    user32.SystemParametersInfoW.restype = wintypes.BOOL
+    user32.MonitorFromRect.argtypes = [ctypes.c_void_p, wintypes.DWORD]
+    user32.MonitorFromRect.restype = wintypes.HMONITOR
 
     kernel32.GlobalAlloc.argtypes = [wintypes.UINT, ctypes.c_size_t]
     kernel32.GlobalAlloc.restype = ctypes.c_void_p
@@ -1730,8 +1843,131 @@ if os.name == "nt":
     user32.EmptyClipboard.restype = wintypes.BOOL
     user32.SetClipboardData.argtypes = [wintypes.UINT, ctypes.c_void_p]
     user32.SetClipboardData.restype = ctypes.c_void_p
+    user32.GetClipboardData.argtypes = [wintypes.UINT]
+    user32.GetClipboardData.restype = ctypes.c_void_p
+    user32.IsClipboardFormatAvailable.argtypes = [wintypes.UINT]
+    user32.IsClipboardFormatAvailable.restype = wintypes.BOOL
     user32.CloseClipboard.argtypes = []
     user32.CloseClipboard.restype = wintypes.BOOL
+
+def get_primary_work_area():
+    if os.name != "nt":
+        return 0, 0, 1280, 720
+    r = wintypes.RECT()
+    if user32.SystemParametersInfoW(SPI_GETWORKAREA, 0, ctypes.byref(r), 0):
+        return r.left, r.top, r.right, r.bottom
+    return 0, 0, user32.GetSystemMetrics(0), user32.GetSystemMetrics(1)
+
+def is_rect_on_any_screen(x: int, y: int, w: int = 340, h: int = 46) -> bool:
+    if os.name != "nt":
+        return True
+    r = wintypes.RECT(x, y, x + w, y + h)
+    hmon = user32.MonitorFromRect(ctypes.byref(r), 0)
+    return bool(hmon)
+
+def get_fallback_flowbar_pos(bar_w: int = 340, bar_h: int = 46) -> tuple[int, int]:
+    left, top, right, bottom = get_primary_work_area()
+    fx = max(left + 20, right - bar_w - 24)
+    fy = max(top + 20, bottom - bar_h - 24)
+    return fx, fy
+
+def reset_flowbar_position():
+    global FLOWBAR_STATE
+    fx, fy = get_fallback_flowbar_pos(340, 46)
+    if _tk_root:
+        try:
+            _tk_root.geometry(f"340x46+{fx}+{fy}")
+            _tk_root.deiconify()
+        except Exception:
+            pass
+    try:
+        pos_file = os.path.join(BASE_DIR, "flowbar_pos.txt")
+        with open(pos_file, "w", encoding="utf-8") as pf:
+            pf.write(f"{fx},{fy}")
+    except Exception:
+        pass
+    FLOWBAR_STATE["visible"] = True
+    if _flowbar_hwnd and os.name == "nt":
+        user32.SetWindowPos(
+            _flowbar_hwnd,
+            HWND_TOPMOST,
+            fx, fy, 340, 46,
+            SWP_NOACTIVATE | SWP_SHOWWINDOW | SWP_FRAMECHANGED
+        )
+    print(f"[FlowBar] Reset position to bottom-right: ({fx}, {fy})")
+
+def get_windows_clipboard_text() -> str:
+    if os.name != "nt":
+        return ""
+    try:
+        if not user32.OpenClipboard(0):
+            return ""
+        try:
+            if not user32.IsClipboardFormatAvailable(CF_UNICODETEXT):
+                return ""
+            h_data = user32.GetClipboardData(CF_UNICODETEXT)
+            if not h_data:
+                return ""
+            ptr = kernel32.GlobalLock(h_data)
+            if not ptr:
+                return ""
+            try:
+                return ctypes.wstring_at(ptr)
+            finally:
+                kernel32.GlobalUnlock(h_data)
+        finally:
+            user32.CloseClipboard()
+    except Exception:
+        return ""
+
+_whisper_model_instance = None
+_whisper_model_name = ""
+
+def get_whisper_model(model_name: str = "small"):
+    global _whisper_model_instance, _whisper_model_name
+    if _whisper_model_instance is not None and _whisper_model_name == model_name:
+        return _whisper_model_instance
+    try:
+        from faster_whisper import WhisperModel
+    except ImportError:
+        print("[+] Installing faster-whisper lazily...")
+        subprocess.check_call([sys.executable, "-m", "pip", "install", "--quiet", "faster-whisper"])
+        from faster_whisper import WhisperModel
+
+    try:
+        import torch
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+    except Exception:
+        device = "cpu"
+
+    compute_type = "float16" if device == "cuda" else "int8"
+    print(f"[+] Loading faster-whisper model '{model_name}' on {device} ({compute_type})...")
+    _whisper_model_instance = WhisperModel(model_name, device=device, compute_type=compute_type)
+    _whisper_model_name = model_name
+    return _whisper_model_instance
+
+def transcribe_with_whisper(wav_bytes: bytes, language: str = "auto", model_name: str = "small") -> tuple[str, str]:
+    try:
+        model = get_whisper_model(model_name)
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tf:
+            tf.write(wav_bytes)
+            tf_path = tf.name
+        try:
+            lang_arg = None if language in ("auto", "") else language
+            segments, info = model.transcribe(tf_path, language=lang_arg, beam_size=5)
+            text = " ".join([s.text.strip() for s in segments]).strip()
+            if not text:
+                return "", "Whisper яриа таньсангүй."
+            return text, ""
+        finally:
+            if os.path.exists(tf_path):
+                try:
+                    os.remove(tf_path)
+                except Exception:
+                    pass
+    except Exception as e:
+        print("[Whisper error]:", e)
+        return "", f"Whisper алдаа: {e}" 
 
     class KEYBDINPUT(ctypes.Structure):
         _fields_ = [
@@ -1863,23 +2099,26 @@ def restore_window_focus(target: int) -> bool:
 
 def insert_text_to_active_window(text: str, hwnd: int = 0) -> bool:
     """
-    Ported & hardened from DuudlagaFlow TextInsertionService.cs:
-    1. Copies text to Windows clipboard via thread-safe Win32 CF_UNICODETEXT.
-    2. Restores focus to captured target window (Antigravity IDE, Word, Facebook, Chrome, Telegram).
-    3. Releases any lingering Ctrl/Alt keys and types every Unicode character via SendInput(KEYEVENTF_UNICODE).
+    Ultra-reliable text insertion for Windows:
+    1. Backs up user's existing clipboard text.
+    2. Puts new recognized text onto clipboard.
+    3. Restores focus to target window (Word, Chrome, Notepad, Messenger...).
+    4. Releases modifier keys and sends Ctrl+V paste (with SendInput unicode fallback).
+    5. Restores original clipboard text after 350ms delay.
     """
     if not text or os.name != "nt":
         return False
 
-    copy_to_windows_clipboard(text)
+    old_clip = get_windows_clipboard_text()
+    text_with_space = text if text.endswith(" ") else text + " "
+    copy_to_windows_clipboard(text_with_space)
 
-    # Pick best non-self target window
     candidates = [hwnd, _target_hwnd, _last_external_hwnd, _last_active_hwnd, user32.GetForegroundWindow()]
     target = 0
     for c in candidates:
         if c and not is_own_process_window(c):
             t_title = get_window_title(c)
-            if t_title != "Task Switching":
+            if t_title and t_title not in ("VOICE FlowBar", "Task Switching"):
                 target = c
                 break
 
@@ -1891,7 +2130,7 @@ def insert_text_to_active_window(text: str, hwnd: int = 0) -> bool:
                 break
         time.sleep(0.04)
 
-    # Wait up to 300ms if user's fingers are still physically holding Ctrl or Alt
+    # Release any held Ctrl / Alt keys
     for _ in range(12):
         c_down = (user32.GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0
         a_down = (user32.GetAsyncKeyState(VK_MENU) & 0x8000) != 0
@@ -1899,37 +2138,52 @@ def insert_text_to_active_window(text: str, hwnd: int = 0) -> bool:
             break
         time.sleep(0.025)
 
-    # Explicitly release all Ctrl and Alt modifier keys so target app receives pure Unicode chars
     mod_vks = [VK_CONTROL, VK_LCONTROL, VK_RCONTROL, VK_MENU, VK_LMENU, VK_RMENU]
     release_mods = (INPUT * len(mod_vks))()
     for i, vk in enumerate(mod_vks):
         release_mods[i].type = INPUT_KEYBOARD
         release_mods[i].union.ki = KEYBDINPUT(vk, 0, KEYEVENTF_KEYUP, 0, 0)
     user32.SendInput(len(mod_vks), ctypes.byref(release_mods), ctypes.sizeof(INPUT))
-    time.sleep(0.025)
+    time.sleep(0.03)
 
-    # Type each character 2 events at a time (exact match to DuudlagaFlow TypeText)
-    text_with_space = text if text.endswith(" ") else text + " "
-    total_sent = 0
-    pair = (INPUT * 2)()
-    for idx, ch in enumerate(text_with_space):
-        code = ord(ch)
-        pair[0].type = INPUT_KEYBOARD
-        pair[0].union.ki = KEYBDINPUT(0, code, KEYEVENTF_UNICODE, 0, 0)
-        pair[1].type = INPUT_KEYBOARD
-        pair[1].union.ki = KEYBDINPUT(0, code, KEYEVENTF_UNICODE | KEYEVENTF_KEYUP, 0, 0)
-        sent = user32.SendInput(2, ctypes.byref(pair), ctypes.sizeof(INPUT))
-        total_sent += sent
-        if idx % 14 == 13:
-            time.sleep(0.002)
+    # Synthesize Ctrl+V paste
+    paste_inputs = (INPUT * 4)()
+    paste_inputs[0].type = INPUT_KEYBOARD
+    paste_inputs[0].union.ki = KEYBDINPUT(VK_CONTROL, 0, 0, 0, 0)
+    paste_inputs[1].type = INPUT_KEYBOARD
+    paste_inputs[1].union.ki = KEYBDINPUT(VK_V, 0, 0, 0, 0)
+    paste_inputs[2].type = INPUT_KEYBOARD
+    paste_inputs[2].union.ki = KEYBDINPUT(VK_V, 0, KEYEVENTF_KEYUP, 0, 0)
+    paste_inputs[3].type = INPUT_KEYBOARD
+    paste_inputs[3].union.ki = KEYBDINPUT(VK_CONTROL, 0, KEYEVENTF_KEYUP, 0, 0)
+    sent = user32.SendInput(4, ctypes.byref(paste_inputs), ctypes.sizeof(INPUT))
+
+    # SendInput unicode fallback if paste was blocked (e.g. some custom UI controls)
+    if sent < 4:
+        pair = (INPUT * 2)()
+        for ch in text_with_space:
+            code = ord(ch)
+            pair[0].type = INPUT_KEYBOARD
+            pair[0].union.ki = KEYBDINPUT(0, code, KEYEVENTF_UNICODE, 0, 0)
+            pair[1].type = INPUT_KEYBOARD
+            pair[1].union.ki = KEYBDINPUT(0, code, KEYEVENTF_UNICODE | KEYEVENTF_KEYUP, 0, 0)
+            user32.SendInput(2, ctypes.byref(pair), ctypes.sizeof(INPUT))
+
+    # Restore user's previous clipboard content
+    def restore_clip_later():
+        time.sleep(0.35)
+        if old_clip:
+            copy_to_windows_clipboard(old_clip)
+
+    threading.Thread(target=restore_clip_later, daemon=True).start()
 
     target_title = get_window_title(target)
     fg_now = user32.GetForegroundWindow()
     FLOWBAR_STATE["last_insert_debug"] = (
-        f"target=0x{target:X}('{target_title[:25]}') fg=0x{fg_now:X} sent={total_sent}/{len(text_with_space)*2}"
+        f"target=0x{target:X}('{target_title[:25]}') fg=0x{fg_now:X} pasted={sent == 4}"
     )
     print(f"[FlowBar] {FLOWBAR_STATE['last_insert_debug']}")
-    return total_sent > 0
+    return True
 
 
 def start_native_flowbar_recording(from_ui_button: bool = False) -> None:
@@ -2015,9 +2269,9 @@ def _process_native_recording() -> None:
         FLOWBAR_STATE["status"] = "idle"
     else:
         FLOWBAR_STATE["status"] = "error"
-        FLOWBAR_STATE["error"] = "Тод ярина уу"
+        FLOWBAR_STATE["error"] = err[:28] if err else "Тод ярина уу"
         print("[FlowBar] STT empty:", err)
-        time.sleep(1.8)
+        time.sleep(2.0)
         FLOWBAR_STATE["status"] = "idle"
 
 
@@ -2084,6 +2338,7 @@ def _native_audio_hotkey_worker() -> None:
                     if not _is_recording:
                         FLOWBAR_STATE["target_window"] = _last_external_title or _last_active_title
 
+            hk_mode = SERVER_SETTINGS.get("hotkey", "ctrl_alt")
             ctrl_down = bool(
                 (user32.GetAsyncKeyState(VK_CONTROL) & 0x8000)
                 or (user32.GetAsyncKeyState(VK_LCONTROL) & 0x8000)
@@ -2094,9 +2349,25 @@ def _native_audio_hotkey_worker() -> None:
                 or (user32.GetAsyncKeyState(VK_LMENU) & 0x8000)
                 or (user32.GetAsyncKeyState(VK_RMENU) & 0x8000)
             )
+            shift_down = bool(
+                (user32.GetAsyncKeyState(VK_SHIFT) & 0x8000)
+                or (user32.GetAsyncKeyState(VK_LSHIFT) & 0x8000)
+                or (user32.GetAsyncKeyState(VK_RSHIFT) & 0x8000)
+            )
             f8_down = bool(user32.GetAsyncKeyState(VK_F8) & 0x8000)
-            shift_down = bool(user32.GetAsyncKeyState(0x10) & 0x8000)
-            hotkey_down = (ctrl_down and alt_down and not shift_down) or f8_down
+            f9_down = bool(user32.GetAsyncKeyState(VK_F9) & 0x8000)
+            f10_down = bool(user32.GetAsyncKeyState(VK_F10) & 0x8000)
+
+            if hk_mode == "f8":
+                hotkey_down = f8_down
+            elif hk_mode == "ctrl_shift":
+                hotkey_down = (ctrl_down and shift_down and not alt_down) or f8_down
+            elif hk_mode == "f9":
+                hotkey_down = f9_down or f8_down
+            elif hk_mode == "f10":
+                hotkey_down = f10_down or f8_down
+            else:
+                hotkey_down = (ctrl_down and alt_down and not shift_down) or f8_down
 
             now = time.time()
 
@@ -2156,11 +2427,8 @@ def _native_flowbar_ui_worker() -> None:
         root.attributes("-alpha", 0.96)
         root.configure(bg="#090d16")
 
-        screen_w = root.winfo_screenwidth()
-        screen_h = root.winfo_screenheight()
         bar_w, bar_h = 340, 46
-        pos_x = (screen_w - bar_w) // 2
-        pos_y = screen_h - bar_h - 58
+        pos_x, pos_y = get_fallback_flowbar_pos(bar_w, bar_h)
         pos_file = os.path.join(BASE_DIR, "flowbar_pos.txt")
         if os.path.isfile(pos_file):
             try:
@@ -2168,8 +2436,10 @@ def _native_flowbar_ui_worker() -> None:
                     parts = pf.read().strip().split(",")
                     if len(parts) == 2:
                         sx, sy = int(parts[0]), int(parts[1])
-                        if 0 <= sx <= screen_w - 60 and 0 <= sy <= screen_h - 40:
+                        if is_rect_on_any_screen(sx, sy, bar_w, bar_h):
                             pos_x, pos_y = sx, sy
+                        else:
+                            print(f"[FlowBar] Saved position ({sx},{sy}) outside monitor work area; using ({pos_x},{pos_y})")
             except Exception:
                 pass
         root.geometry(f"{bar_w}x{bar_h}+{pos_x}+{pos_y}")
@@ -2186,7 +2456,6 @@ def _native_flowbar_ui_worker() -> None:
         )
         canvas.pack(fill="both", expand=True)
 
-        # Apply WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW to both outer and inner Tk HWNDs
         root.update_idletasks()
         inner_hwnd = root.winfo_id()
         outer_hwnd = user32.GetParent(inner_hwnd) or inner_hwnd
@@ -2197,6 +2466,10 @@ def _native_flowbar_ui_worker() -> None:
                 user32.SetWindowLongW(
                     h, GWL_EXSTYLE, ex_style | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW | WS_EX_TOPMOST
                 )
+                user32.SetWindowPos(
+                    h, HWND_TOPMOST, 0, 0, 0, 0,
+                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_FRAMECHANGED
+                )
 
         drag_data = {"x": 0, "y": 0, "moved": False}
         was_visible = True
@@ -2204,45 +2477,43 @@ def _native_flowbar_ui_worker() -> None:
         lang_labels = {"auto": "🌐 AUTO", "mn": "🇲🇳 MN", "en": "🇬🇧 EN", "ja": "🇯🇵 JA"}
 
         def on_press(event):
-            drag_data["x"] = event.x
-            drag_data["y"] = event.y
+            drag_data["x"] = event.x_root - root.winfo_x()
+            drag_data["y"] = event.y_root - root.winfo_y()
             drag_data["moved"] = False
             if _last_external_hwnd:
                 restore_window_focus(_last_external_hwnd)
 
         def on_drag(event):
-            dx = event.x - drag_data["x"]
-            dy = event.y - drag_data["y"]
-            if abs(dx) > 4 or abs(dy) > 4:
+            nx = event.x_root - drag_data["x"]
+            ny = event.y_root - drag_data["y"]
+            if abs(nx - root.winfo_x()) > 2 or abs(ny - root.winfo_y()) > 2:
                 drag_data["moved"] = True
-                nx = root.winfo_x() + dx
-                ny = root.winfo_y() + dy
                 root.geometry(f"{bar_w}x{bar_h}+{nx}+{ny}")
 
         def on_release(event):
             if _last_external_hwnd:
                 restore_window_focus(_last_external_hwnd)
             if drag_data["moved"]:
-                try:
-                    with open(pos_file, "w", encoding="utf-8") as pf:
-                        pf.write(f"{root.winfo_x()},{root.winfo_y()}")
-                except Exception:
-                    pass
+                cur_x = root.winfo_x()
+                cur_y = root.winfo_y()
+                if is_rect_on_any_screen(cur_x, cur_y, bar_w, bar_h):
+                    try:
+                        with open(pos_file, "w", encoding="utf-8") as pf:
+                            pf.write(f"{cur_x},{cur_y}")
+                    except Exception:
+                        pass
                 return
 
-            # Check Close button click (x >= 312)
             if event.x >= 312:
                 FLOWBAR_STATE["visible"] = False
                 return
 
-            # Check Language badge click (252 <= x < 312)
             if 252 <= event.x < 312 and not _is_recording:
                 cur_l = FLOWBAR_STATE.get("language", "auto")
                 idx = lang_cycle.index(cur_l) if cur_l in lang_cycle else 0
                 FLOWBAR_STATE["language"] = lang_cycle[(idx + 1) % len(lang_cycle)]
                 return
 
-            # Otherwise toggle recording
             if _is_recording:
                 stop_native_flowbar_recording()
             elif FLOWBAR_STATE["status"] != "processing":
@@ -2292,10 +2563,12 @@ def _native_flowbar_ui_worker() -> None:
                     fill="#f8fafc",
                     font=("Segoe UI", 9, "bold"),
                 )
+                cur_hk = SERVER_SETTINGS.get("hotkey", "ctrl_alt")
+                hk_name = "F8" if cur_hk == "f8" else ("Ctrl+Shift" if cur_hk == "ctrl_shift" else ("F9" if cur_hk == "f9" else ("F10" if cur_hk == "f10" else "Ctrl + Alt эсвэл F8")))
                 canvas.create_text(
                     146,
                     32,
-                    text="Товчлуур: Ctrl + Alt эсвэл F8",
+                    text=f"Товчлуур: {hk_name}",
                     fill="#94a3b8",
                     font=("Segoe UI", 8),
                 )
@@ -2514,6 +2787,8 @@ def flowbar_action(req: FlowBarActionRequest):
         stop_native_flowbar_recording()
     elif act == "set_language" and req.language:
         FLOWBAR_STATE["language"] = req.language
+    elif act == "reset_position":
+        reset_flowbar_position()
     return FLOWBAR_STATE
 
 
@@ -2835,6 +3110,31 @@ async def clone_voice(
 # Frontend Direct /api/... Route Aliases (Supports single-port 8000 desktop app)
 # ---------------------------------------------------------------------------
 
+@app.get("/api/settings")
+def api_get_settings():
+    return load_server_settings()
+
+@app.post("/api/settings")
+def api_save_settings(req: dict):
+    saved = save_server_settings(req)
+    global SERVER_SETTINGS
+    SERVER_SETTINGS = saved
+    return saved
+
+@app.post("/api/quit")
+def api_quit_server():
+    def _shutdown():
+        time.sleep(0.2)
+        if _tk_root:
+            try:
+                _tk_root.quit()
+                _tk_root.destroy()
+            except Exception:
+                pass
+        os._exit(0)
+    threading.Thread(target=_shutdown, daemon=True).start()
+    return {"status": "ok", "message": "VOICE shutting down..."}
+
 @app.get("/api/flowbar")
 def api_flowbar_get():
     return get_flowbar_status()
@@ -2965,5 +3265,22 @@ except Exception as e:
 
 
 if __name__ == "__main__":
+    if not check_single_instance(SERVER_PORT):
+        sys.exit(0)
+
+    if not is_port_available(SERVER_PORT):
+        print(f"[!] Port {SERVER_PORT} is in use by another program.")
+        if os.name == "nt":
+            try:
+                user32.MessageBoxW(
+                    0,
+                    f"Port {SERVER_PORT} is used by another program.\nPlease close it and start VOICE again.",
+                    "VOICE",
+                    0x10,
+                )
+            except Exception:
+                pass
+        sys.exit(1)
+
     import uvicorn
     uvicorn.run(app, host="127.0.0.1", port=SERVER_PORT, reload=False, log_level="warning")
