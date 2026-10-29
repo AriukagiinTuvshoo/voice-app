@@ -3029,6 +3029,7 @@ def _native_flowbar_ui_worker() -> None:
                 root.geometry(f"{bar_w}x{bar_h}+{nx}+{ny}")
 
         def on_release(event):
+            st = FLOWBAR_STATE.get("status", "idle")
             if _last_external_hwnd:
                 restore_window_focus(_last_external_hwnd)
             if drag_data["moved"]:
