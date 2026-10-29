@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.2.7
+Phase 1-4 Feature Enhancements & Chrome / Web Compatibility:
+- **Chrome & Browser Input Focus Fix**: Resolved Chromium Omnibox / search input unfocusing caused by Windows Alt menu activation; implemented chorded _suppress_alt_menu_activation() and atomic 4-keystroke SendInput for Ctrl+V pasting.
+- **Universal Hotkeys**: Ctrl+Alt and F8 now always work as universal dictation hotkeys regardless of custom hotkey choice in settings.
+- **Audio Cues (FlowBar Sound Feedback)**: Added non-blocking audio cues (winsound.Beep) on recording start, success paste, and error.
+- **Mongolian Number Normalization**: Added 
+ormalize_mongolian_numbers() converting spoken Mongolian numbers to digits (e.g. 'хоёр мянга хорин зургаа' -> '2026', 'ерэн таван хувь' -> '95%').
+- **Auto Punctuation & Capitalization**: Added ormat_speech_text() automatically capitalizing sentences and appending ? to questions or . to statements.
+- **SSML Cadence Pauses**: Added enhance_ssml_cadence() for natural comma and period breath pauses in Edge-TTS.
+- **Release Update Checker**: Added non-blocking GET /api/check-update checking GitHub Releases API.
+- **Expanded Unit Tests**: Added 4 new unit tests in 	ests/test_logic.py (total 19 tests all passing).
+
 ## 1.2.6
 Architecture, Reliability, Testing & FlowBar Enhancement:
 - Core Separation & Unit Tests: Extracted pure logic functions into voice_core.py. Added 15 comprehensive unit tests in tests/test_logic.py covering settings sanitization, voice cloning safety, position clamping, Tkinter event loops, and FastAPI endpoints.
