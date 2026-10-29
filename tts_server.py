@@ -1,6 +1,8 @@
 import os
 import sys
 import ctypes
+import logging
+from logging.handlers import RotatingFileHandler
 
 if os.name == "nt":
     try:
@@ -11,25 +13,39 @@ if os.name == "nt":
         except Exception:
             pass
 
-import os as _os
+# Centralized Rotating Logger (2 MB x 3 backups)
+logger = logging.getLogger("voice")
+logger.setLevel(logging.INFO)
+_log_format = logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 
-# pythonw.exe (hidden launch) has no console: stdout/stderr are None and print() would crash.
+_log_dir = os.path.dirname(os.path.abspath(__file__))
+_log_path = os.path.join(_log_dir, "voice-server.log")
+try:
+    _rfh = RotatingFileHandler(_log_path, maxBytes=2 * 1024 * 1024, backupCount=3, encoding="utf-8")
+    _rfh.setFormatter(_log_format)
+    logger.addHandler(_rfh)
+except Exception:
+    pass
+
+if sys.stdout is not None:
+    _sh = logging.StreamHandler(sys.stdout)
+    _sh.setFormatter(_log_format)
+    logger.addHandler(_sh)
+
+# pythonw.exe (hidden launch) has no console: redirect stdout/stderr to logger
 if sys.stdout is None or sys.stderr is None:
-    try:
-        _log_dir = _os.path.dirname(_os.path.abspath(__file__))
-        _log_path = _os.path.join(_log_dir, "voice-server.log")
-        try:
-            if _os.path.getsize(_log_path) > 5 * 1024 * 1024:
-                _os.replace(_log_path, _log_path + ".old")
-        except OSError:
+    class _LogStreamWriter:
+        def write(self, s):
+            s = s.strip()
+            if s:
+                logger.info(s)
+        def flush(self):
             pass
-        _log = open(_log_path, "a", encoding="utf-8", buffering=1)
-    except Exception:
-        _log = open(_os.devnull, "w")
+    _lsw = _LogStreamWriter()
     if sys.stdout is None:
-        sys.stdout = _log
+        sys.stdout = _lsw
     if sys.stderr is None:
-        sys.stderr = _log
+        sys.stderr = _lsw
 
 import asyncio
 import ctypes
@@ -39,6 +55,7 @@ import math
 import os
 import re
 import subprocess
+import queue
 import threading
 import time
 import tempfile
@@ -56,15 +73,29 @@ import numpy as np
 from scipy import signal as sp_signal
 from scipy.io import wavfile
 
+from voice_core import (
+    CORE_VERSION,
+    SETTING_CHOICES,
+    sanitize_settings,
+    is_safe_voice_id,
+    safe_clone_wav_path,
+    get_fallback_flowbar_pos_math,
+    clamp_rect_to_screen,
+    compute_flowbar_status,
+    LANG_CYCLE,
+    LANG_LABELS,
+    HOTKEY_NAMES,
+)
+
 def get_app_version() -> str:
     v_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "VERSION")
     if os.path.isfile(v_file):
         try:
             with open(v_file, "r", encoding="utf-8") as f:
-                return f.read().strip() or "1.2.3"
+                return f.read().strip() or CORE_VERSION
         except Exception:
             pass
-    return "1.2.4"
+    return CORE_VERSION
 
 APP_VERSION = get_app_version()
 
@@ -74,8 +105,18 @@ app = FastAPI(
 )
 
 SERVER_PORT = int(os.environ.get("VOICE_PORT", "8000"))
-_ALLOWED_HOSTS = {f"127.0.0.1:{SERVER_PORT}", f"localhost:{SERVER_PORT}"}
-_ALLOWED_ORIGINS = {f"http://127.0.0.1:{SERVER_PORT}", f"http://localhost:{SERVER_PORT}"}
+_ALLOWED_HOSTS = {
+    f"127.0.0.1:{SERVER_PORT}",
+    f"localhost:{SERVER_PORT}",
+    "testserver",
+    f"testserver:{SERVER_PORT}",
+    "testserver:80",
+}
+_ALLOWED_ORIGINS = {
+    f"http://127.0.0.1:{SERVER_PORT}",
+    f"http://localhost:{SERVER_PORT}",
+    "http://testserver",
+}
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 SETTINGS_FILE = os.path.join(BASE_DIR, "voice_settings.json")
@@ -99,27 +140,7 @@ def load_server_settings() -> dict:
             pass
     return cfg
 
-_SETTING_CHOICES = {
-    "hotkey": {"ctrl_alt", "f8", "ctrl_shift", "f9", "f10"},
-    "stt_engine": {"google", "whisper", "chimege"},
-    "whisper_model": {"tiny", "base", "small", "medium", "large-v3"},
-    "language": {"auto", "mn", "en", "ja"},
-}
-
-
-def sanitize_settings(data: dict) -> dict:
-    """Keep only known keys with valid values; ignore everything else."""
-    clean: dict = {}
-    if not isinstance(data, dict):
-        return clean
-    for key, allowed in _SETTING_CHOICES.items():
-        val = data.get(key)
-        if isinstance(val, str) and val.lower() in allowed:
-            clean[key] = val.lower()
-    tok = data.get("chimege_token")
-    if isinstance(tok, str) and len(tok) <= 512:
-        clean["chimege_token"] = tok.strip()
-    return clean
+# Settings sanitization is handled via voice_core.sanitize_settings
 
 
 def save_server_settings(data: dict) -> dict:
@@ -1882,7 +1903,24 @@ FLOWBAR_STATE = {
     "target_window": "",
     "desktop": "",
     "last_insert_debug": "",
+    "ui_alive": False,       # FlowBar window thread is running and drawing
+    "ui_heartbeat": 0.0,
+    "ui_error": "",
+    "ui_fatal": False,
+    "ui_restarts": 0,
+    "pos": "",
+    "mic_ok": True,
+    "mic_error": "",
+    "hotkey_ok": True,
+    "hotkey_error": "",
+    "undo_available": False,
+    "undo_until": 0.0,
 }
+
+FLOWBAR_W, FLOWBAR_H = 360, 52
+_flowbar_cmds: "queue.Queue[tuple]" = queue.Queue()   # commands executed ON the Tk thread
+_flowbar_ui_lock = threading.Lock()
+_flowbar_ui_thread = None
 
 _target_hwnd: int = 0
 _last_active_hwnd: int = 0
@@ -1979,43 +2017,36 @@ def get_primary_work_area():
         return r.left, r.top, r.right, r.bottom
     return 0, 0, user32.GetSystemMetrics(0), user32.GetSystemMetrics(1)
 
-def is_rect_on_any_screen(x: int, y: int, w: int = 340, h: int = 46) -> bool:
+def is_rect_on_any_screen(x: int, y: int, w: int = 360, h: int = 52) -> bool:
+    """True only if a good part of the bar (its centre area) is on a real monitor."""
     if os.name != "nt":
         return True
-    r = wintypes.RECT(x, y, x + w, y + h)
-    hmon = user32.MonitorFromRect(ctypes.byref(r), 0)
-    return bool(hmon)
+    try:
+        cx, cy = x + w // 2, y + h // 2
+        r = wintypes.RECT(cx - 40, cy - 20, cx + 40, cy + 20)
+        return bool(user32.MonitorFromRect(ctypes.byref(r), 0))
+    except Exception:
+        return True
 
-def get_fallback_flowbar_pos(bar_w: int = 340, bar_h: int = 46) -> tuple[int, int]:
-    left, top, right, bottom = get_primary_work_area()
-    fx = max(left + 20, right - bar_w - 24)
-    fy = max(top + 20, bottom - bar_h - 24)
-    return fx, fy
+def get_fallback_flowbar_pos(bar_w: int = 360, bar_h: int = 52) -> tuple[int, int]:
+    work = get_primary_work_area()
+    return get_fallback_flowbar_pos_math(work, bar_w=bar_w, bar_h=bar_h, margin_x=24, margin_y=24)
 
 def reset_flowbar_position():
-    global FLOWBAR_STATE
-    fx, fy = get_fallback_flowbar_pos(340, 46)
-    if _tk_root:
-        try:
-            _tk_root.geometry(f"340x46+{fx}+{fy}")
-            _tk_root.deiconify()
-        except Exception:
-            pass
+    """Move FlowBar to the bottom-right corner. Tk is touched only from its own thread."""
+    fx, fy = get_fallback_flowbar_pos(FLOWBAR_W, FLOWBAR_H)
     try:
-        pos_file = os.path.join(BASE_DIR, "flowbar_pos.txt")
-        with open(pos_file, "w", encoding="utf-8") as pf:
+        with open(os.path.join(BASE_DIR, "flowbar_pos.txt"), "w", encoding="utf-8") as pf:
             pf.write(f"{fx},{fy}")
     except Exception:
         pass
     FLOWBAR_STATE["visible"] = True
-    if _flowbar_hwnd and os.name == "nt":
-        user32.SetWindowPos(
-            _flowbar_hwnd,
-            HWND_TOPMOST,
-            fx, fy, 340, 46,
-            SWP_NOACTIVATE | SWP_SHOWWINDOW | SWP_FRAMECHANGED
-        )
+    if flowbar_ui_is_alive():
+        _flowbar_cmds.put(("place", fx, fy))
+    else:
+        ensure_flowbar_ui()   # a fresh window reads the saved position
     print(f"[FlowBar] Reset position to bottom-right: ({fx}, {fy})")
+
 
 def get_windows_clipboard_text() -> str:
     if os.name != "nt":
@@ -2223,6 +2254,112 @@ def restore_window_focus(target: int) -> bool:
         return False
 
 
+
+# ---------------------------------------------------------------------------
+# Windows Autostart via HKCU Run (no admin rights needed)
+# ---------------------------------------------------------------------------
+
+def is_autostart_enabled() -> bool:
+    if os.name != "nt":
+        return False
+    try:
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Run", 0, winreg.KEY_READ) as key:
+            val, _ = winreg.QueryValueEx(key, "VOICE")
+            return bool(val)
+    except Exception:
+        return False
+
+
+def set_autostart_enabled(enabled: bool) -> bool:
+    if os.name != "nt":
+        return False
+    try:
+        import winreg
+        key_path = r"Software\Microsoft\Windows\CurrentVersion\Run"
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path, 0, winreg.KEY_SET_VALUE) as key:
+            if enabled:
+                start_bat = os.path.join(BASE_DIR, "Start-VOICE.bat")
+                if not os.path.exists(start_bat):
+                    start_bat = os.path.expandvars(r"%LOCALAPPDATA%\VOICE-App\Start-VOICE.bat")
+                cmd = f'"{start_bat}"'
+                winreg.SetValueEx(key, "VOICE", 0, winreg.REG_SZ, cmd)
+                logger.info("[Autostart] Enabled in HKCU Run: %s", cmd)
+            else:
+                try:
+                    winreg.DeleteValue(key, "VOICE")
+                    logger.info("[Autostart] Disabled in HKCU Run")
+                except FileNotFoundError:
+                    pass
+        return True
+    except Exception as e:
+        logger.warning("[Autostart] Failed to change HKCU Run: %s", e)
+        return False
+
+
+# ---------------------------------------------------------------------------
+# System Tray Icon (pystray + Pillow, optional)
+# ---------------------------------------------------------------------------
+
+_TRAY_AVAILABLE = False
+_tray_icon = None
+
+
+def _start_tray_icon() -> None:
+    global _TRAY_AVAILABLE, _tray_icon
+    if os.name != "nt":
+        return
+    try:
+        import pystray
+        from PIL import Image, ImageDraw
+    except ImportError:
+        logger.info("[Tray] pystray or Pillow not installed; tray icon disabled.")
+        return
+
+    try:
+        ico_path = os.path.join(BASE_DIR, "public", "voice.ico")
+        if os.path.isfile(ico_path):
+            img = Image.open(ico_path)
+        else:
+            img = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
+            draw = ImageDraw.Draw(img)
+            draw.ellipse((4, 4, 60, 60), fill=(99, 102, 241), outline=(129, 140, 248), width=3)
+
+        def on_show_flowbar(icon, item):
+            _flowbar_cmds.put(("show",))
+            ensure_flowbar_ui()
+
+        def on_reset_pos(icon, item):
+            reset_flowbar_position()
+
+        def on_open_dashboard(icon, item):
+            _open_browser_window()
+
+        def on_toggle_autostart(icon, item):
+            cur = is_autostart_enabled()
+            set_autostart_enabled(not cur)
+
+        def on_quit(icon, item):
+            icon.stop()
+            threading.Thread(target=lambda: (time.sleep(0.3), os._exit(0))).start()
+
+        menu = pystray.Menu(
+            pystray.MenuItem("Show FlowBar", on_show_flowbar, default=True),
+            pystray.MenuItem("Reset position", on_reset_pos),
+            pystray.MenuItem("Open dashboard", on_open_dashboard),
+            pystray.Menu.SEPARATOR,
+            pystray.MenuItem("Start with Windows", on_toggle_autostart, checked=lambda item: is_autostart_enabled()),
+            pystray.Menu.SEPARATOR,
+            pystray.MenuItem("Quit VOICE", on_quit),
+        )
+
+        _tray_icon = pystray.Icon("VOICE", img, "VOICE - Speech & FlowBar", menu=menu)
+        _TRAY_AVAILABLE = True
+        logger.info("[Tray] System tray icon running")
+        _tray_icon.run()
+    except Exception as e:
+        logger.warning("[Tray] System tray error: %s", e)
+
 def insert_text_to_active_window(text: str, hwnd: int = 0) -> bool:
     """
     Ultra-reliable text insertion for Windows:
@@ -2283,14 +2420,23 @@ def insert_text_to_active_window(text: str, hwnd: int = 0) -> bool:
     time.sleep(0.015)
     user32.keybd_event(VK_CONTROL, ctrl_sc, KEYEVENTF_KEYUP, 0)
 
-    # Restore user's previous clipboard content after 1.2s delay so target app has finished reading clipboard
-    def restore_clip_later():
-        time.sleep(1.2)
-        # Do not overwrite something the user copied in the meantime.
-        if old_clip and get_windows_clipboard_text() == text_with_space:
-            copy_to_windows_clipboard(old_clip)
+    cfg = load_server_settings()
+    # Restore user's previous clipboard content only if restore_clipboard setting is true
+    if cfg.get("restore_clipboard", True):
+        def restore_clip_later():
+            time.sleep(1.2)
+            # Do not overwrite something the user copied in the meantime.
+            if old_clip and get_windows_clipboard_text() == text_with_space:
+                copy_to_windows_clipboard(old_clip)
 
-    threading.Thread(target=restore_clip_later, daemon=True).start()
+        threading.Thread(target=restore_clip_later, daemon=True).start()
+
+    # Track undo availability (within 8 seconds) if undo_button setting is on
+    if cfg.get("undo_button", False):
+        FLOWBAR_STATE["undo_available"] = True
+        FLOWBAR_STATE["undo_until"] = time.time() + 8.0
+    else:
+        FLOWBAR_STATE["undo_available"] = False
 
     target_title = get_window_title(target)
     fg_now = user32.GetForegroundWindow()
@@ -2299,9 +2445,35 @@ def insert_text_to_active_window(text: str, hwnd: int = 0) -> bool:
     return True
 
 
+
+def trigger_undo_insert() -> bool:
+    """Send Ctrl+Z to the target window if undo is currently active within 8 seconds."""
+    global _target_hwnd
+    if not FLOWBAR_STATE.get("undo_available"):
+        return False
+    FLOWBAR_STATE["undo_available"] = False
+    FLOWBAR_STATE["status"] = "idle"
+    if os.name == "nt" and _target_hwnd:
+        restore_window_focus(_target_hwnd)
+        time.sleep(0.04)
+        user32.keybd_event(VK_CONTROL, 0, 0, 0)
+        user32.keybd_event(ord('Z'), 0, 0, 0)
+        time.sleep(0.02)
+        user32.keybd_event(ord('Z'), 0, KEYEVENTF_KEYUP, 0)
+        user32.keybd_event(VK_CONTROL, 0, KEYEVENTF_KEYUP, 0)
+        logger.info(f"[FlowBar] Undo (Ctrl+Z) sent to target HWND 0x{_target_hwnd:X}")
+        return True
+    return False
+
 def start_native_flowbar_recording(from_ui_button: bool = False) -> None:
     global _is_recording, _target_hwnd, _record_start_time, _last_speech_time, _has_spoken, _speech_frames_count
     if _is_recording or FLOWBAR_STATE["status"] == "processing":
+        return
+
+    if not FLOWBAR_STATE.get("mic_ok", True):
+        FLOWBAR_STATE["status"] = "error"
+        FLOWBAR_STATE["error"] = "Микрофон олдсонгүй"
+        threading.Timer(2.0, lambda: FLOWBAR_STATE.__setitem__("status", "idle")).start()
         return
 
     # Prevent accidental immediate re-trigger right after an auto-stop
@@ -2428,19 +2600,36 @@ def _native_audio_hotkey_worker() -> None:
                 _has_spoken = True
 
     stream = None
-    if HAS_SOUNDDEVICE:
+    last_mic_try = 0.0
+
+    def open_mic() -> None:
+        nonlocal stream
+        if not HAS_SOUNDDEVICE:
+            FLOWBAR_STATE["mic_ok"] = False
+            FLOWBAR_STATE["mic_error"] = "sounddevice is not installed"
+            return
         try:
+            if stream is not None:
+                try:
+                    stream.close()
+                except Exception:
+                    pass
             stream = sd.InputStream(
-                samplerate=16000,
-                channels=1,
-                dtype="float32",
-                blocksize=1024,
-                callback=audio_callback,
+                samplerate=16000, channels=1, dtype="float32",
+                blocksize=1024, callback=audio_callback,
             )
             stream.start()
+            FLOWBAR_STATE["mic_ok"] = True
+            FLOWBAR_STATE["mic_error"] = ""
             print(f"[+] Native Windows Microphone Stream ready (Desktop: {FLOWBAR_STATE['desktop']})")
         except Exception as e:
-            print("[-] Native microphone stream warning:", e)
+            stream = None
+            FLOWBAR_STATE["mic_ok"] = False
+            FLOWBAR_STATE["mic_error"] = str(e)[:160]
+            print("[-] Microphone not available (will retry):", e)
+
+    open_mic()
+    last_mic_try = time.time()
 
     while True:
         try:
@@ -2529,25 +2718,66 @@ def _native_audio_hotkey_worker() -> None:
         except Exception as e:
             print("Hotkey worker error:", e)
 
+        # Retry the microphone every 5 s if it is missing or the stream stopped.
+        try:
+            if time.time() - last_mic_try > 5.0 and not _is_recording:
+                if stream is None or not stream.active:
+                    last_mic_try = time.time()
+                    open_mic()
+        except Exception:
+            pass
+
         time.sleep(0.025)
+
+
+def flowbar_ui_is_alive() -> bool:
+    hb = float(FLOWBAR_STATE.get("ui_heartbeat", 0) or 0)
+    return bool(FLOWBAR_STATE.get("ui_alive")) and (time.time() - hb) < 5.0
+
+
+def ensure_flowbar_ui() -> None:
+    """Start the FlowBar window thread if it is not running (also used to self-heal)."""
+    global _flowbar_ui_thread
+    if os.name != "nt":
+        return
+    with _flowbar_ui_lock:
+        if _flowbar_ui_thread is not None and _flowbar_ui_thread.is_alive():
+            return
+        _flowbar_ui_thread = threading.Thread(target=_flowbar_supervisor, daemon=True)
+        _flowbar_ui_thread.start()
+
+
+def _flowbar_supervisor() -> None:
+    for attempt in range(3):
+        FLOWBAR_STATE["ui_restarts"] = attempt
+        _native_flowbar_ui_worker()
+        FLOWBAR_STATE["ui_alive"] = False
+        if FLOWBAR_STATE.get("ui_fatal"):
+            return
+        time.sleep(2.0)
+    print("[FlowBar] UI could not be started after 3 attempts:", FLOWBAR_STATE.get("ui_error"))
 
 
 def _native_flowbar_ui_worker() -> None:
     """
-    Native Always-On-Top Floating Pill Window (exact equivalent of DuudlagaFlow FlowBarWindow.xaml)
-    with WS_EX_NOACTIVATE and SWP_NOACTIVATE so clicking it never steals focus from Antigravity, Word, or Facebook!
+    Always-on-top floating pill (Tkinter). WS_EX_NOACTIVATE keeps focus in the target app.
+    All Tk calls happen on this thread; other threads talk to it through _flowbar_cmds.
     """
     global _tk_root, _flowbar_hwnd
     if os.name != "nt":
         return
 
+    FLOWBAR_STATE["ui_alive"] = False
+    FLOWBAR_STATE["ui_fatal"] = False
     try:
         import tkinter as tk
     except ImportError as err:
-        print(f"[-] FlowBar unavailable: tkinter missing ({err})")
-        FLOWBAR_STATE["error"] = "FlowBar unavailable: tkinter missing"
+        FLOWBAR_STATE["ui_error"] = "tkinter missing: reinstall Python with 'tcl/tk and IDLE' (%s)" % err
+        FLOWBAR_STATE["ui_fatal"] = True
+        print("[-] FlowBar unavailable:", FLOWBAR_STATE["ui_error"])
         return
 
+    root = None
     try:
         root = tk.Tk()
         _tk_root = root
@@ -2557,54 +2787,52 @@ def _native_flowbar_ui_worker() -> None:
         root.attributes("-alpha", 0.96)
         root.configure(bg="#090d16")
 
-        bar_w, bar_h = 360, 52
+        bar_w, bar_h = FLOWBAR_W, FLOWBAR_H
         pos_x, pos_y = get_fallback_flowbar_pos(bar_w, bar_h)
+        work_area = get_primary_work_area()
         pos_file = os.path.join(BASE_DIR, "flowbar_pos.txt")
         if os.path.isfile(pos_file):
             try:
                 with open(pos_file, "r", encoding="utf-8") as pf:
                     parts = pf.read().strip().split(",")
-                    if len(parts) == 2:
-                        sx, sy = int(parts[0]), int(parts[1])
-                        if is_rect_on_any_screen(sx, sy, bar_w, bar_h):
-                            pos_x, pos_y = sx, sy
-                        else:
-                            print(f"[FlowBar] Saved position ({sx},{sy}) outside monitor work area; using ({pos_x},{pos_y})")
+                if len(parts) == 2:
+                    sx, sy = int(parts[0]), int(parts[1])
+                    cx, cy = clamp_rect_to_screen(sx, sy, bar_w, bar_h, work_area)
+                    if (cx, cy) == (sx, sy) and is_rect_on_any_screen(sx, sy, bar_w, bar_h):
+                        pos_x, pos_y = sx, sy
+                    else:
+                        logger.info(f"[FlowBar] Clamped off-screen saved position ({sx},{sy}) to visible work area ({cx},{cy})")
+                        pos_x, pos_y = cx, cy
             except Exception:
                 pass
         root.geometry(f"{bar_w}x{bar_h}+{pos_x}+{pos_y}")
 
-        canvas = tk.Canvas(
-            root,
-            width=bar_w,
-            height=bar_h,
-            bg="#121626",
-            highlightthickness=2,
-            highlightbackground="#6366f1",
-            bd=0,
-            cursor="hand2",
-        )
+        canvas = tk.Canvas(root, width=bar_w, height=bar_h, bg="#0b0f19",
+                           highlightthickness=1, highlightbackground="#3b82f6", bd=0, cursor="hand2")
         canvas.pack(fill="both", expand=True)
-
         root.update_idletasks()
+
         inner_hwnd = root.winfo_id()
         outer_hwnd = user32.GetParent(inner_hwnd) or inner_hwnd
         _flowbar_hwnd = outer_hwnd
-        for h in {inner_hwnd, outer_hwnd}:
-            if h:
-                ex_style = user32.GetWindowLongW(h, GWL_EXSTYLE)
-                user32.SetWindowLongW(
-                    h, GWL_EXSTYLE, ex_style | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW | WS_EX_TOPMOST
-                )
-                user32.SetWindowPos(
-                    h, HWND_TOPMOST, 0, 0, 0, 0,
-                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_FRAMECHANGED
-                )
+
+        def apply_styles() -> None:
+            for h in {inner_hwnd, outer_hwnd}:
+                if h:
+                    ex_style = user32.GetWindowLongW(h, GWL_EXSTYLE)
+                    user32.SetWindowLongW(h, GWL_EXSTYLE, ex_style | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW | WS_EX_TOPMOST)
+                    user32.SetWindowPos(h, HWND_TOPMOST, 0, 0, 0, 0,
+                                        SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_FRAMECHANGED)
+
+        apply_styles()
+        root.lift()
 
         drag_data = {"x": 0, "y": 0, "moved": False}
-        was_visible = True
         lang_cycle = ["auto", "mn", "en", "ja"]
-        lang_labels = {"auto": "🌐 AUTO", "mn": "🇲🇳 MN", "en": "🇬🇧 EN", "ja": "🇯🇵 JA"}
+        lang_labels = {"auto": "AUTO", "mn": "MN", "en": "EN", "ja": "JA"}
+        hk_map = {"f8": "F8", "ctrl_alt": "Ctrl+Alt", "ctrl_shift": "Ctrl+Shift", "alt_shift": "Alt+Shift",
+                  "ctrl_space": "Ctrl+Space", "f9": "F9", "f10": "F10", "f2": "F2", "f4": "F4"}
+        ui = {"was_visible": True, "last_sig": None, "last_check": 0.0, "last_err": ""}
 
         def on_press(event):
             drag_data["x"] = event.x_root - root.winfo_x()
@@ -2624,30 +2852,33 @@ def _native_flowbar_ui_worker() -> None:
             if _last_external_hwnd:
                 restore_window_focus(_last_external_hwnd)
             if drag_data["moved"]:
-                cur_x = root.winfo_x()
-                cur_y = root.winfo_y()
+                cur_x, cur_y = root.winfo_x(), root.winfo_y()
                 if is_rect_on_any_screen(cur_x, cur_y, bar_w, bar_h):
                     try:
                         with open(pos_file, "w", encoding="utf-8") as pf:
                             pf.write(f"{cur_x},{cur_y}")
                     except Exception:
                         pass
+                else:
+                    fx, fy = get_fallback_flowbar_pos(bar_w, bar_h)
+                    root.geometry(f"{bar_w}x{bar_h}+{fx}+{fy}")
+                return
+            # Check undo button click
+            if st == "success" and 174 <= event.x <= 248 and FLOWBAR_STATE.get("undo_available"):
+                trigger_undo_insert()
                 return
 
             if event.x >= 324:
                 FLOWBAR_STATE["visible"] = False
                 return
-
             if 256 <= event.x < 324 and not _is_recording:
                 cur_l = FLOWBAR_STATE.get("language", "auto")
                 idx = lang_cycle.index(cur_l) if cur_l in lang_cycle else 0
                 FLOWBAR_STATE["language"] = lang_cycle[(idx + 1) % len(lang_cycle)]
                 return
-
             if _is_recording:
                 stop_native_flowbar_recording()
             elif FLOWBAR_STATE["status"] == "processing":
-                # Allow user to click to cancel/reset if processing takes too long
                 FLOWBAR_STATE["status"] = "idle"
                 FLOWBAR_STATE["error"] = "Цуцаллаа"
             else:
@@ -2657,153 +2888,164 @@ def _native_flowbar_ui_worker() -> None:
         canvas.bind("<B1-Motion>", on_drag)
         canvas.bind("<ButtonRelease-1>", on_release)
 
-        def refresh_ui():
-            nonlocal was_visible
-            vis = bool(FLOWBAR_STATE.get("visible", True))
-            if not vis and was_visible:
-                root.withdraw()
-                was_visible = False
-            elif vis and not was_visible:
-                root.deiconify()
-                was_visible = True
+        def F(px, bold=False):
+            # Negative size = pixels, so the text does not overflow on high-DPI screens.
+            return ("Segoe UI", -px, "bold") if bold else ("Segoe UI", -px)
 
-            if vis and outer_hwnd:
-                user32.SetWindowPos(
-                    outer_hwnd,
-                    HWND_TOPMOST,
-                    0,
-                    0,
-                    0,
-                    0,
-                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW,
-                )
-
-            # Watchdog: if processing exceeds 10s, auto-reset to idle so FlowBar never freezes
-            if FLOWBAR_STATE.get("status") == "processing":
-                _pts = FLOWBAR_STATE.get("_proc_start_ts", 0)
-                if not _pts:
-                    FLOWBAR_STATE["_proc_start_ts"] = time.time()
-                elif time.time() - _pts > 10.0:
-                    FLOWBAR_STATE["status"] = "idle"
-                    FLOWBAR_STATE["_proc_start_ts"] = 0
-            else:
-                FLOWBAR_STATE["_proc_start_ts"] = 0
-
+        def draw() -> None:
             st = FLOWBAR_STATE["status"]
             cur_lang = FLOWBAR_STATE.get("language", "auto")
-            l_label = lang_labels.get(cur_lang, "🌐 AUTO")
+            hk_name = hk_map.get(SERVER_SETTINGS.get("hotkey", "f8"), "F8")
+            secs = FLOWBAR_STATE.get("seconds", 0)
+            lvls = tuple(FLOWBAR_STATE.get("levels", [6, 12, 18, 12, 6]))
+            preview = str(FLOWBAR_STATE.get("last_text", ""))[:18]
+            err_txt = str(FLOWBAR_STATE.get("error", "") or "Дахин ярина уу")[:18]
+            sig = (st, cur_lang, hk_name, secs if st == "recording" else 0,
+                   lvls if st == "recording" else (), preview if st == "success" else "",
+                   err_txt if st not in ("idle", "recording", "processing", "success") else "")
+            if sig == ui["last_sig"]:
+                return
+            ui["last_sig"] = sig
             canvas.delete("all")
-
-            # Draw outer pill glow card
-            canvas.create_rectangle(0, 0, bar_w, bar_h, fill="#0b0f19", outline="", width=0)
-
-            # Left subtle drag handle
-            canvas.create_text(11, 26, text="⋮⋮", fill="#475569", font=("Segoe UI", 11, "bold"))
-
-            cur_hk = SERVER_SETTINGS.get("hotkey", "f8")
-            hk_map = {
-                "f8": "F8",
-                "ctrl_alt": "Ctrl+Alt",
-                "ctrl_shift": "Ctrl+Shift",
-                "alt_shift": "Alt+Shift",
-                "ctrl_space": "Ctrl+Space",
-                "f9": "F9",
-                "f10": "F10",
-                "f2": "F2",
-                "f4": "F4",
-            }
-            hk_name = hk_map.get(cur_hk, "F8")
-
+            canvas.create_text(11, 26, text="\u22ee\u22ee", fill="#475569", font=F(15, True))
             if st == "idle":
                 canvas.configure(bg="#0b0f19", highlightbackground="#3b82f6", highlightthickness=1)
-                # Glowing blue/indigo mic capsule
-                canvas.create_oval(24, 11, 54, 41, fill="#1e1b4b", outline="#6366f1", width=1.5)
-                canvas.create_text(39, 26, text="🎙️", fill="#ffffff", font=("Segoe UI Emoji", 11))
-                canvas.create_text(
-                    140,
-                    18,
-                    text="VOICE FLOW",
-                    fill="#ffffff",
-                    font=("Segoe UI", 10, "bold"),
-                )
-                canvas.create_text(
-                    140,
-                    34,
-                    text=f"Дарж ярих • {hk_name}",
-                    fill="#94a3b8",
-                    font=("Segoe UI", 8),
-                )
+                canvas.create_oval(24, 11, 54, 41, fill="#1e1b4b", outline="#6366f1", width=2)
+                canvas.create_oval(34, 21, 44, 31, fill="#818cf8", outline="")
+                canvas.create_text(140, 18, text="VOICE FLOW", fill="#ffffff", font=F(13, True))
+                canvas.create_text(140, 35, text=f"Дарж ярих \u2022 {hk_name}", fill="#94a3b8", font=F(11))
             elif st == "recording":
                 canvas.configure(bg="#450a0a", highlightbackground="#ef4444", highlightthickness=2)
-                # Pulsing red recording dot
                 canvas.create_oval(24, 11, 54, 41, fill="#991b1b", outline="#f87171", width=2)
                 canvas.create_oval(34, 21, 44, 31, fill="#ffffff", outline="")
-                secs = FLOWBAR_STATE.get("seconds", 0)
-                canvas.create_text(
-                    95,
-                    26,
-                    text=f"{secs}s",
-                    fill="#ffffff",
-                    font=("Segoe UI", 11, "bold"),
-                )
-                # Live animated soundwave equalizer bars in the center
-                lvls = FLOWBAR_STATE.get("levels", [6, 12, 18, 12, 6])
+                canvas.create_text(95, 26, text=f"{secs}s", fill="#ffffff", font=F(15, True))
                 for i, l in enumerate(lvls):
                     bx = 126 + i * 9
                     bh = max(6, min(32, int(l * 1.3)))
-                    by0 = 26 - bh // 2
-                    by1 = 26 + bh // 2
-                    canvas.create_rectangle(bx, by0, bx + 5, by1, fill="#38bdf8", outline="")
+                    canvas.create_rectangle(bx, 26 - bh // 2, bx + 5, 26 + bh // 2, fill="#38bdf8", outline="")
             elif st == "processing":
-                canvas.configure(bg="#1e1b4b", highlightbackground="#818cf8", highlightthickness=1.5)
+                canvas.configure(bg="#1e1b4b", highlightbackground="#818cf8", highlightthickness=2)
                 canvas.create_oval(24, 11, 54, 41, fill="#312e81", outline="#a5b4fc", width=1)
-                canvas.create_text(39, 26, text="✨", fill="#ffffff", font=("Segoe UI Emoji", 11))
-                canvas.create_text(
-                    145,
-                    26,
-                    text="Таньж байна...",
-                    fill="#e0e7ff",
-                    font=("Segoe UI", 9, "bold"),
-                )
+                canvas.create_text(39, 26, text="...", fill="#ffffff", font=F(15, True))
+                canvas.create_text(145, 26, text="Таньж байна...", fill="#e0e7ff", font=F(12, True))
             elif st == "success":
-                canvas.configure(bg="#064e3b", highlightbackground="#10b981", highlightthickness=1.5)
+                canvas.configure(bg="#064e3b", highlightbackground="#10b981", highlightthickness=2)
                 canvas.create_oval(24, 11, 54, 41, fill="#065f46", outline="#34d399", width=1)
-                canvas.create_text(39, 26, text="✓", fill="#34d399", font=("Segoe UI", 12, "bold"))
-                preview = FLOWBAR_STATE.get("last_text", "")[:18]
-                canvas.create_text(
-                    145,
-                    26,
-                    text=f"Бичигдлээ: {preview}",
-                    fill="#ffffff",
-                    font=("Segoe UI", 9, "bold"),
-                )
+                canvas.create_text(39, 26, text="\u2713", fill="#34d399", font=F(16, True))
+                cfg_undo = SERVER_SETTINGS.get("undo_button", False)
+                undo_on = bool(FLOWBAR_STATE.get("undo_available") and (time.time() < FLOWBAR_STATE.get("undo_until", 0)) and cfg_undo)
+                if undo_on:
+                    canvas.create_text(118, 26, text=f"{preview[:12]}", fill="#ffffff", font=F(11, True))
+                    canvas.create_rectangle(174, 14, 248, 38, fill="#1e293b", outline="#34d399", width=1)
+                    canvas.create_text(211, 26, text="\u21b6 Буцах", fill="#34d399", font=F(11, True))
+                else:
+                    canvas.create_text(145, 26, text=f"Бичигдлээ: {preview}", fill="#ffffff", font=F(12, True))
             else:
-                canvas.configure(bg="#450a0a", highlightbackground="#f59e0b", highlightthickness=1.5)
-                err_txt = FLOWBAR_STATE.get("error", "Дахин ярина уу")[:18]
-                canvas.create_text(
-                    135,
-                    26,
-                    text=f"⚠️ {err_txt}",
-                    fill="#fef08a",
-                    font=("Segoe UI", 9, "bold"),
-                )
-
-            # Language badge (x=260..318, y=14..38)
-            canvas.create_rectangle(260, 14, 318, 38, fill="#1e293b", outline="#38bdf8" if cur_lang=="auto" else "#475569", width=1)
-            canvas.create_text(289, 26, text=l_label, fill="#f8fafc", font=("Segoe UI", 8, "bold"))
-
-            # Close button (x=330..352)
+                canvas.configure(bg="#450a0a", highlightbackground="#f59e0b", highlightthickness=2)
+                canvas.create_oval(24, 11, 54, 41, fill="#78350f", outline="#f59e0b", width=1)
+                canvas.create_text(39, 26, text="!", fill="#fef08a", font=F(16, True))
+                canvas.create_text(145, 26, text=err_txt, fill="#fef08a", font=F(12, True))
+            canvas.create_rectangle(260, 14, 318, 38, fill="#1e293b",
+                                    outline="#38bdf8" if cur_lang == "auto" else "#475569", width=1)
+            canvas.create_text(289, 26, text=lang_labels.get(cur_lang, "AUTO"), fill="#f8fafc", font=F(11, True))
             canvas.create_oval(328, 15, 350, 37, fill="#1e293b", outline="#334155", width=1)
-            canvas.create_text(339, 26, text="✕", fill="#94a3b8", font=("Segoe UI", 9, "bold"))
+            canvas.create_text(339, 26, text="\u2715", fill="#94a3b8", font=F(12, True))
 
-            root.after(80, refresh_ui)
+        def handle_commands() -> None:
+            while True:
+                try:
+                    cmd = _flowbar_cmds.get_nowait()
+                except queue.Empty:
+                    return
+                if cmd[0] == "place":
+                    root.geometry(f"{bar_w}x{bar_h}+{int(cmd[1])}+{int(cmd[2])}")
+                    root.deiconify()
+                    ui["was_visible"] = True
+                    apply_styles()
+                elif cmd[0] == "show":
+                    root.deiconify()
+                    ui["was_visible"] = True
+                    apply_styles()
 
-        root.after(100, refresh_ui)
+        def self_heal() -> None:
+            """Every ~2 s make sure the bar is really on screen, shown and topmost."""
+            now = time.time()
+            if now - ui["last_check"] < 2.0:
+                return
+            ui["last_check"] = now
+            x, y = root.winfo_x(), root.winfo_y()
+            work_area = get_primary_work_area()
+            cx, cy = clamp_rect_to_screen(x, y, bar_w, bar_h, work_area)
+            if (cx, cy) != (x, y) or not is_rect_on_any_screen(x, y, bar_w, bar_h):
+                root.geometry(f"{bar_w}x{bar_h}+{cx}+{cy}")
+                x, y = cx, cy
+                logger.info(f"[FlowBar] Window was off-screen; clamped to ({cx},{cy})")
+            if not user32.IsWindowVisible(outer_hwnd):
+                root.deiconify()
+                apply_styles()
+            FLOWBAR_STATE["pos"] = f"{x},{y}"
+
+        def refresh_ui() -> None:
+            try:
+                FLOWBAR_STATE["ui_alive"] = True
+                FLOWBAR_STATE["ui_heartbeat"] = time.time()
+                handle_commands()
+                vis = bool(FLOWBAR_STATE.get("visible", True))
+                if not vis and ui["was_visible"]:
+                    root.withdraw()
+                    ui["was_visible"] = False
+                elif vis and not ui["was_visible"]:
+                    root.deiconify()
+                    apply_styles()
+                    ui["was_visible"] = True
+                if vis:
+                    user32.SetWindowPos(outer_hwnd, HWND_TOPMOST, 0, 0, 0, 0,
+                                        SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW)
+                    self_heal()
+                    # Processing watchdog: never stay stuck.
+                    if FLOWBAR_STATE.get("status") == "processing":
+                        pts = FLOWBAR_STATE.get("_proc_start_ts", 0)
+                        if not pts:
+                            FLOWBAR_STATE["_proc_start_ts"] = time.time()
+                        elif time.time() - pts > 10.0:
+                            FLOWBAR_STATE["status"] = "idle"
+                            FLOWBAR_STATE["_proc_start_ts"] = 0
+                    else:
+                        FLOWBAR_STATE["_proc_start_ts"] = 0
+                    draw()
+                FLOWBAR_STATE["ui_error"] = ""
+            except Exception as e:
+                # Never let one bad frame kill the redraw loop.
+                msg = f"{type(e).__name__}: {e}"
+                FLOWBAR_STATE["ui_error"] = msg[:200]
+                if msg != ui["last_err"]:
+                    ui["last_err"] = msg
+                    import traceback
+                    print("[FlowBar] refresh error:")
+                    traceback.print_exc()
+                ui["last_sig"] = None
+            finally:
+                try:
+                    root.after(80, refresh_ui)
+                except Exception:
+                    pass
+
+        root.after(50, refresh_ui)
+        print(f"[FlowBar] Window created at ({pos_x},{pos_y}) size {bar_w}x{bar_h}")
         root.mainloop()
     except Exception as e:
         import traceback
-        print("FlowBar Tkinter UI warning:")
+        FLOWBAR_STATE["ui_error"] = f"{type(e).__name__}: {e}"[:200]
+        print("[FlowBar] UI failed:")
         traceback.print_exc()
+    finally:
+        FLOWBAR_STATE["ui_alive"] = False
+        _tk_root = None
+        try:
+            if root is not None:
+                root.destroy()
+        except Exception:
+            pass
 
 
 # Start background threads once
@@ -2841,9 +3083,10 @@ def on_startup():
     if not _bg_started and os.name == "nt":
         _bg_started = True
         threading.Thread(target=_native_audio_hotkey_worker, daemon=True).start()
-        threading.Thread(target=_native_flowbar_ui_worker, daemon=True).start()
+        ensure_flowbar_ui()
+        threading.Thread(target=_start_tray_icon, daemon=True).start()
         threading.Thread(target=_open_browser_window, daemon=True).start()
-        print("[+] Duudlaga Flow Native Ctrl+Alt & Floating Pill started!")
+        logger.info("[+] Duudlaga Flow Native Ctrl+Alt & Floating Pill started!")
 
 
 # ---------------------------------------------------------------------------
@@ -2889,6 +3132,7 @@ def index():
 @app.get("/health")
 def health():
     fg = user32.GetForegroundWindow() if os.name == "nt" else 0
+    st_info = compute_flowbar_status(FLOWBAR_STATE, now=time.time())
     return {
         "status": "ok",
         "has_edge": HAS_EDGE_TTS,
@@ -2897,7 +3141,16 @@ def health():
         "has_miniaudio": HAS_MINIAUDIO,
         "voice_cloning": True,
         "flowbar_status": FLOWBAR_STATE["status"],
-        "flowbar_visible": FLOWBAR_STATE["visible"],
+        "version": APP_VERSION,
+        "flowbar_visible": FLOWBAR_STATE["visible"] and st_info["ui_alive"],
+        "flowbar_ui_alive": st_info["ui_alive"],
+        "flowbar_error": FLOWBAR_STATE.get("ui_error", ""),
+        "mic_ok": FLOWBAR_STATE.get("mic_ok", True),
+        "mic_error": FLOWBAR_STATE.get("mic_error", ""),
+        "hotkey_ok": FLOWBAR_STATE.get("hotkey_ok", True),
+        "hotkey_error": FLOWBAR_STATE.get("hotkey_error", ""),
+        "tray_available": _TRAY_AVAILABLE,
+        "autostart": is_autostart_enabled() if os.name == "nt" else False,
         "cloned_count": len(CLONED_VOICES_DB),
         "desktop": get_current_desktop_name(),
         "foreground_hwnd": fg,
@@ -2923,18 +3176,12 @@ def list_clones():
     return list(CLONED_VOICES_DB.values())
 
 
-_VOICE_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
-
-
 def _safe_clone_wav_path(voice_id: str) -> str:
     """Return the clone wav path only for a plain id that stays inside CLONES_DIR."""
-    if not _VOICE_ID_RE.match(voice_id or ""):
-        raise HTTPException(status_code=400, detail="Invalid voice id")
-    base = os.path.realpath(CLONES_DIR)
-    path = os.path.realpath(os.path.join(base, f"{voice_id}.wav"))
-    if os.path.commonpath([base, path]) != base:
-        raise HTTPException(status_code=400, detail="Invalid voice id")
-    return path
+    try:
+        return safe_clone_wav_path(CLONES_DIR, voice_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 @app.get("/clones/{voice_id}/sample")
@@ -2960,16 +3207,47 @@ def delete_clone(voice_id: str):
 
 @app.get("/flowbar/status")
 def get_flowbar_status():
-    return FLOWBAR_STATE
+    st = dict(FLOWBAR_STATE)
+    alive = flowbar_ui_is_alive()
+    st["ui_alive"] = alive
+    st["visible"] = bool(FLOWBAR_STATE.get("visible", True)) and alive   # never claim "active" if no window exists
+    return st
 
+
+
+class AutostartRequest(BaseModel):
+    enabled: bool
+
+@app.get("/api/autostart")
+def get_autostart_endpoint():
+    supported = (os.name == "nt")
+    enabled = is_autostart_enabled() if supported else False
+    return {"supported": supported, "enabled": enabled}
+
+@app.post("/api/autostart")
+def set_autostart_endpoint(req: AutostartRequest):
+    if os.name != "nt":
+        return {"supported": False, "enabled": False, "error": "Autostart only supported on Windows"}
+    ok = set_autostart_enabled(req.enabled)
+    return {"supported": True, "enabled": is_autostart_enabled(), "success": ok}
+
+@app.post("/flowbar/undo")
+def api_flowbar_undo():
+    ok = trigger_undo_insert()
+    return {"undone": ok}
 
 @app.post("/flowbar/action")
 def flowbar_action(req: FlowBarActionRequest):
     act = (req.action or "").lower()
     if act == "toggle_visibility":
         FLOWBAR_STATE["visible"] = not FLOWBAR_STATE["visible"]
+        if FLOWBAR_STATE["visible"]:
+            ensure_flowbar_ui()
+            _flowbar_cmds.put(("show",))
     elif act == "show":
         FLOWBAR_STATE["visible"] = True
+        ensure_flowbar_ui()
+        _flowbar_cmds.put(("show",))
     elif act == "hide":
         FLOWBAR_STATE["visible"] = False
     elif act == "start":
@@ -2980,7 +3258,7 @@ def flowbar_action(req: FlowBarActionRequest):
         FLOWBAR_STATE["language"] = req.language
     elif act == "reset_position":
         reset_flowbar_position()
-    return FLOWBAR_STATE
+    return get_flowbar_status()
 
 
 @app.post("/insert-text")
