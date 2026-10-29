@@ -2366,6 +2366,29 @@ def _native_flowbar_ui_worker() -> None:
 _bg_started = False
 
 
+def _open_browser_window() -> None:
+    """Auto-launch the desktop dashboard in Edge/Chrome app mode once the server is listening."""
+    time.sleep(1.0)
+    url = f"http://127.0.0.1:{SERVER_PORT}/dashboard"
+    candidates = [
+        os.path.expandvars(r"%ProgramFiles(x86)%\Microsoft\Edge\Application\msedge.exe"),
+        os.path.expandvars(r"%ProgramFiles%\Microsoft\Edge\Application\msedge.exe"),
+        os.path.expandvars(r"%ProgramFiles%\Google\Chrome\Application\chrome.exe"),
+    ]
+    for c in candidates:
+        if os.path.isfile(c):
+            try:
+                subprocess.Popen([c, f"--app={url}", "--window-size=1280,820"])
+                return
+            except Exception:
+                pass
+    try:
+        import webbrowser
+        webbrowser.open(url)
+    except Exception:
+        pass
+
+
 @app.on_event("startup")
 def on_startup():
     global _bg_started
@@ -2373,6 +2396,7 @@ def on_startup():
         _bg_started = True
         threading.Thread(target=_native_audio_hotkey_worker, daemon=True).start()
         threading.Thread(target=_native_flowbar_ui_worker, daemon=True).start()
+        threading.Thread(target=_open_browser_window, daemon=True).start()
         print("[+] Duudlaga Flow Native Ctrl+Alt & Floating Pill started!")
 
 
