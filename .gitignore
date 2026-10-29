@@ -1,25 +1,34 @@
+# Dependencies
 node_modules/
-.next/
-build/
-dist/
-.DS_Store
-*.pem
-*.tsbuildinfo
-next-env.d.ts
-.env*.local
-
 .venv/
 __pycache__/
 *.pyc
-*.mp3
-*.wav
 
+# Next.js build
+.next/
+build/
+dist/
+dist-package/
+out/
+*.tsbuildinfo
+next-env.d.ts
+
+# OS & Environment
+.DS_Store
+*.pem
+.env*.local
+
+# Logs and runtime artifacts
+*.log
+voice-server.log
+stdout.txt
+stderr.txt
+flowbar_pos.txt
+voice_settings.json
+
+# Audio and binaries
+*.wav
+*.mp3
 *.exe
 *.zip
-out/
-voice-server.log
-flowbar_pos.txt
-flow_audio.wav
-voice_recording.wav
 VOICE-Windows-*.zip
-run_test*.log

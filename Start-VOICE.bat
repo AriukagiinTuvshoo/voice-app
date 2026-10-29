@@ -1,29 +1,34 @@
 @echo off
 setlocal
+chcp 65001 >nul
 cd /d "%~dp0"
 
 set "PYW=%~dp0.venv\Scripts\pythonw.exe"
 if not exist "%PYW%" goto not_installed
 
 rem ---- Is OUR server already running on port 8000? --------------------------------
-powershell -NoProfile -Command "try { if ((Invoke-RestMethod -Uri 'http://127.0.0.1:8000/health' -TimeoutSec 2).voice_cloning) { exit 0 } } catch { }; exit 1"
-if not errorlevel 1 goto open_window
+powershell -NoProfile -Command "try { if ((Invoke-RestMethod -Uri 'http://127.0.0.1:8000/health' -TimeoutSec 2).status -eq 'ok') { exit 0 } } catch { }; exit 1"
+if not errorlevel 1 (
+    powershell -NoProfile -Command "try { Invoke-RestMethod -Uri 'http://127.0.0.1:8000/flowbar/action' -Method Post -ContentType 'application/json' -Body '{\"action\":\"show\"}' -TimeoutSec 1 } catch { }" >nul 2>&1
+    goto open_window
+)
 
 rem ---- Port 8000 used by some other program? ---------------------------------------
 netstat -ano | findstr /R /C:":8000 .*LISTENING" >nul
 if not errorlevel 1 goto port_busy
 
 rem ---- Start the engine (hidden). It also starts the floating FlowBar. -----------
+set "VOICE_NO_BROWSER=1"
 start "" "%PYW%" "%~dp0tts_server.py"
 
 rem ---- Wait up to ~20 s until it answers ---------------------------------------------
 set /a TRIES=0
 :wait_loop
-powershell -NoProfile -Command "try { if ((Invoke-RestMethod -Uri 'http://127.0.0.1:8000/health' -TimeoutSec 2).voice_cloning) { exit 0 } } catch { }; exit 1"
+powershell -NoProfile -Command "try { if ((Invoke-RestMethod -Uri 'http://127.0.0.1:8000/health' -TimeoutSec 2).status -eq 'ok') { exit 0 } } catch { }; exit 1"
 if not errorlevel 1 goto open_window
 set /a TRIES+=1
 if %TRIES% GEQ 20 goto start_failed
-timeout /t 1 /nobreak >nul
+ping 127.0.0.1 -n 2 >nul
 goto wait_loop
 
 :open_window

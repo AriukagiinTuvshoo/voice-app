@@ -14,6 +14,7 @@ import {
 } from "react";
 import {
   languages,
+  sttEngines,
   recordingModes,
   shortcuts,
   modes,
@@ -59,6 +60,8 @@ interface Ctx {
   };
   toggleFlowBar: () => Promise<void>;
   triggerFlowBarRecording: () => Promise<void>;
+  resetFlowBarPosition: () => Promise<void>;
+  quitVoiceApp: () => Promise<void>;
 }
 
 const SettingsContext = createContext<Ctx | null>(null);
@@ -195,6 +198,48 @@ function Provider({ children }: { children: ReactNode }) {
     } catch {}
   }, [flowbarStatus.status]);
 
+  const resetFlowBarPosition = useCallback(async () => {
+    try {
+      const res = await fetch("/api/flowbar", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "reset_position" }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setFlowbarStatus((prev) => ({
+          ...prev,
+          visible: true,
+          status: data.status || prev.status,
+        }));
+      }
+    } catch {}
+  }, []);
+
+  const quitVoiceApp = useCallback(async () => {
+    if (confirm("VOICE системийг бүрэн хаах уу?")) {
+      try {
+        await fetch("/api/quit", { method: "POST" });
+        window.close();
+      } catch {}
+    }
+  }, []);
+
+  // Sync settings with Python server
+  useEffect(() => {
+    fetch("/api/settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        hotkey: settings.desktopHotkey || "ctrl_alt",
+        stt_engine: settings.sttEngine === "auto" ? "google" : settings.sttEngine,
+        whisper_model: settings.whisperModel || "small",
+        chimege_token: settings.chimegeToken || "",
+        language: settings.language || "auto",
+      }),
+    }).catch(() => {});
+  }, [settings.desktopHotkey, settings.sttEngine, settings.whisperModel, settings.chimegeToken, settings.language]);
+
   const value = useMemo(
     () => ({
       settings,
@@ -205,8 +250,10 @@ function Provider({ children }: { children: ReactNode }) {
       flowbarStatus,
       toggleFlowBar,
       triggerFlowBarRecording,
+      resetFlowBarPosition,
+      quitVoiceApp,
     }),
-    [settings, workspaceText, flowbarStatus, toggleFlowBar, triggerFlowBarRecording]
+    [settings, workspaceText, flowbarStatus, toggleFlowBar, triggerFlowBarRecording, resetFlowBarPosition, quitVoiceApp]
   );
 
   return <SettingsContext.Provider value={value}>{children}</SettingsContext.Provider>;
@@ -229,7 +276,7 @@ export function AppShell({ children }: { children: ReactNode }) {
 
 function Shell({ children }: { children: ReactNode }) {
   const path = usePathname();
-  const { settings, update, flowbarStatus, toggleFlowBar } = useSettings();
+  const { settings, update, flowbarStatus, toggleFlowBar, resetFlowBarPosition } = useSettings();
 
   // Standalone floating pill route — render WITHOUT sidebar or topbar
   if (path === "/flowbar") {
@@ -318,7 +365,9 @@ function Shell({ children }: { children: ReactNode }) {
                 ? "🔴 Систем дээр яриа бичиж байна..."
                 : "Шууд бичих товчлуур:"}
             </span>
-            <kbd>Ctrl + Alt</kbd>
+            <kbd>
+              {settings.desktopHotkey === "f8" ? "F8" : (settings.desktopHotkey === "ctrl_shift" ? "Ctrl + Shift" : (settings.desktopHotkey === "f9" ? "F9" : (settings.desktopHotkey === "f10" ? "F10" : "Ctrl + Alt")))}
+            </kbd>
           </div>
 
           <div style={{ display: "flex", gap: "10px", alignItems: "center" }}>
@@ -336,6 +385,16 @@ function Shell({ children }: { children: ReactNode }) {
             >
               <FlowBarIcon width={16} height={16} />
               <span>{flowbarStatus.visible ? "FlowBar: Идэвхтэй" : "FlowBar: Нуусан"}</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={resetFlowBarPosition}
+              className="btn-secondary"
+              style={{ fontSize: "12px", padding: "7px 12px" }}
+              title="FlowBar байрлалыг дэлгэцийн баруун доод буланд шилжүүлж сэргээх"
+            >
+              <span>📍 Байрлал сэргээх</span>
             </button>
 
             <LanguageSelect
@@ -1031,7 +1090,7 @@ export function Workspace() {
 }
 
 export function SettingsPanel() {
-  const { settings, update, flowbarStatus, toggleFlowBar, triggerFlowBarRecording } = useSettings();
+  const { settings, update, flowbarStatus, toggleFlowBar, triggerFlowBarRecording, resetFlowBarPosition, quitVoiceApp } = useSettings();
   const [audioDevices, setAudioDevices] = useState<MediaDeviceInfo[]>([]);
 
   useEffect(() => {
@@ -1121,9 +1180,116 @@ export function SettingsPanel() {
           <Toggle
             k="autoInsertText"
             label="Auto-insert text (Шууд бичих)"
-            description="Яриаг таньмагц идэвхтэй цонхонд Unicode-оор шууд бичих."
+            description="Яриаг таньмагц идэвхтэй цонхонд Unicode / Ctrl+V хуулж шууд бичих."
           />
         </div>
+
+        <div style={{ marginTop: "14px" }}>
+          <label style={{ display: "block", fontSize: "13px", fontWeight: 600, marginBottom: "6px" }}>
+            Шууд ярих үндсэн товчлуур (Shortcut):
+          </label>
+          <select
+            value={settings.desktopHotkey || "ctrl_alt"}
+            onChange={(e) => update("desktopHotkey", e.target.value)}
+            style={{
+              width: "100%",
+              padding: "8px 12px",
+              borderRadius: "10px",
+              background: "var(--card)",
+              color: "var(--foreground)",
+              border: "1px solid var(--border)",
+              fontSize: "13px",
+            }}
+          >
+            <option value="ctrl_alt">Ctrl + Alt (Үндсэн товчлуур)</option>
+            <option value="f8">F8 (Санал болгох - Япон/Олон улсын AltGr зөрчилгүй)</option>
+            <option value="ctrl_shift">Ctrl + Shift</option>
+            <option value="f9">F9</option>
+            <option value="f10">F10</option>
+          </select>
+          <small style={{ display: "block", color: "var(--muted)", fontSize: "11px", marginTop: "4px" }}>
+            Япон эсвэл Европын гарын байрлалтай үед Ctrl+Alt нь AltGr болдог тул F8 товчлуурыг ашиглах нь найдвартай.
+          </small>
+        </div>
+
+        <div style={{ display: "flex", gap: "10px", marginTop: "16px", flexWrap: "wrap" }}>
+          <button
+            type="button"
+            onClick={resetFlowBarPosition}
+            className="btn-secondary"
+            style={{ fontSize: "12px", padding: "8px 14px" }}
+          >
+            <span>📍 FlowBar байрлал сэргээх (Дэлгэцийн баруун доод)</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={quitVoiceApp}
+            className="btn-secondary"
+            style={{ fontSize: "12px", padding: "8px 14px", color: "#ef4444", borderColor: "rgba(239, 68, 68, 0.4)" }}
+          >
+            <span>🛑 VOICE-оос бүрэн гарах</span>
+          </button>
+        </div>
+      </section>
+
+      {/* Speech Recognition Engine */}
+      <section className="settings">
+        <h2>Яриа таних хөдөлгүүр (STT Engine)</h2>
+        <p>Яриа таних үндсэн хөдөлгүүр болон интернетгүй үеийн оффлайн горим.</p>
+        <div className="option-list" style={{ marginTop: "10px" }}>
+          {sttEngines.map((x) => (
+            <label className="radio" key={x.value}>
+              <input
+                type="radio"
+                name="stt_engine"
+                checked={settings.sttEngine === x.value}
+                onChange={() => update("sttEngine", x.value)}
+              />
+              <span>
+                <b>{x.label}</b>
+                <small>{x.description}</small>
+              </span>
+            </label>
+          ))}
+        </div>
+
+        {settings.sttEngine === "whisper" && (
+          <div style={{ marginTop: "14px", padding: "12px", background: "var(--subtle)", borderRadius: "10px", border: "1px solid var(--border)" }}>
+            <label style={{ display: "block", fontSize: "12px", fontWeight: 600, marginBottom: "6px" }}>
+              Faster-Whisper AI загварын хэмжээ (Model size):
+            </label>
+            <select
+              value={settings.whisperModel || "small"}
+              onChange={(e) => update("whisperModel", e.target.value)}
+              style={{ width: "100%", padding: "7px 10px", borderRadius: "8px", background: "var(--card)", color: "var(--foreground)", border: "1px solid var(--border)" }}
+            >
+              <option value="tiny">Tiny (Хамгийн хурдан, 39M)</option>
+              <option value="base">Base (Хөнгөн, 74M)</option>
+              <option value="small">Small (Тэнцвэртэй - Санал болгох, 244M)</option>
+              <option value="medium">Medium (Өндөр чанар, 769M)</option>
+              <option value="large-v3">Large-v3 (Хамгийн нарийн, 1550M)</option>
+            </select>
+            <small style={{ display: "block", color: "var(--muted)", fontSize: "11px", marginTop: "4px" }}>
+              Интернетгүй үед оффлайн ажиллана. Эхний удаа сонгоход загварыг автоматаар татаж бэлтгэнэ.
+            </small>
+          </div>
+        )}
+
+        {settings.sttEngine === "chimege" && (
+          <div style={{ marginTop: "14px", padding: "12px", background: "var(--subtle)", borderRadius: "10px", border: "1px solid var(--border)" }}>
+            <label style={{ display: "block", fontSize: "12px", fontWeight: 600, marginBottom: "6px" }}>
+              Chimege API Token:
+            </label>
+            <input
+              type="password"
+              placeholder="Chimege API токен оруулна уу"
+              value={settings.chimegeToken || ""}
+              onChange={(e) => update("chimegeToken", e.target.value)}
+              style={{ width: "100%", padding: "7px 10px", borderRadius: "8px", background: "var(--card)", color: "var(--foreground)", border: "1px solid var(--border)" }}
+            />
+          </div>
+        )}
       </section>
 
       {/* Mobile Connect */}
