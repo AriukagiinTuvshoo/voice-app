@@ -2196,6 +2196,25 @@ def get_window_title(hwnd: int) -> str:
         return ""
 
 
+def attach_to_interactive_desktop() -> bool:
+    """
+    Attach current thread to the interactive user desktop (WinSta0\\Default).
+    This ensures GUI windows (Tkinter FlowBar) render directly on the user's visible physical monitor.
+    """
+    if os.name != "nt":
+        return False
+    try:
+        hwinsta = user32.OpenWindowStationW("WinSta0", False, 0x0000037F)
+        if hwinsta:
+            user32.SetProcessWindowStation(hwinsta)
+        hdesk = user32.OpenDesktopW("Default", 0, False, 0x000001FF)
+        if hdesk:
+            return bool(user32.SetThreadDesktop(hdesk))
+    except Exception:
+        pass
+    return False
+
+
 def get_current_desktop_name() -> str:
     if os.name != "nt":
         return "posix"
@@ -2659,6 +2678,8 @@ def _native_audio_hotkey_worker() -> None:
     if os.name != "nt":
         return
 
+    attach_to_interactive_desktop()
+
     FLOWBAR_STATE["desktop"] = get_current_desktop_name()
     was_hotkey_down = False
     hotkey_press_time = 0.0
@@ -2852,6 +2873,8 @@ def _native_flowbar_ui_worker() -> None:
     global _tk_root, _flowbar_hwnd
     if os.name != "nt":
         return
+
+    attach_to_interactive_desktop()
 
     FLOWBAR_STATE["ui_alive"] = False
     FLOWBAR_STATE["ui_fatal"] = False
