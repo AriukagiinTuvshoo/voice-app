@@ -477,6 +477,158 @@ async function handleFlowbar(req, res) {
 }
 
 // Multilingual STT Handler (Chimege + Google Speech API)
+// Pure JavaScript PCM to FLAC Verbatim Encoder
+function crc8(buf) {
+  let crc = 0;
+  for (let b of buf) {
+    crc ^= b;
+    for (let i = 0; i < 8; i++) {
+      if (crc & 0x80) crc = ((crc << 1) ^ 0x07) & 0xff;
+      else crc = (crc << 1) & 0xff;
+    }
+  }
+  return crc;
+}
+
+function crc16(buf) {
+  let crc = 0;
+  for (let b of buf) {
+    crc ^= (b << 8);
+    for (let i = 0; i < 8; i++) {
+      if (crc & 0x8000) crc = ((crc << 1) ^ 0x8005) & 0xffff;
+      else crc = (crc << 1) & 0xffff;
+    }
+  }
+  return crc;
+}
+
+function pcmToFlac(pcmBuffer, sampleRate = 16000) {
+  const numSamples = Math.floor(pcmBuffer.length / 2);
+  const blockSize = Math.min(numSamples, 4096);
+
+  const streamInfo = Buffer.alloc(34);
+  streamInfo.writeUInt16BE(blockSize, 0);
+  streamInfo.writeUInt16BE(blockSize, 2);
+  streamInfo.writeUIntBE(0, 4, 3);
+  streamInfo.writeUIntBE(0, 7, 3);
+
+  const srBits = (sampleRate & 0xfffff) << 12;
+  const chBits = (0 & 0x7) << 9; // mono
+  const bpsBits = (15 & 0x1f) << 4; // 16-bit
+  const totalHi = Math.floor(numSamples / 0x100000000) & 0xf;
+  streamInfo.writeUInt32BE(srBits | chBits | bpsBits | totalHi, 10);
+  streamInfo.writeUInt32BE(numSamples >>> 0, 14);
+
+  const metaHeader = Buffer.alloc(4);
+  metaHeader[0] = 0x80;
+  metaHeader.writeUIntBE(34, 1, 3);
+
+  const chunks = [
+    Buffer.from("fLaC", "ascii"),
+    metaHeader,
+    streamInfo
+  ];
+
+  let sampleOffset = 0;
+  let frameNumber = 0;
+
+  while (sampleOffset < numSamples) {
+    const curBlockSize = Math.min(numSamples - sampleOffset, 4096);
+
+    let bsCode = 0;
+    if (curBlockSize === 4096) bsCode = 12;
+    else if (curBlockSize <= 256) bsCode = 6;
+    else bsCode = 7;
+
+    const srCode = (sampleRate === 16000) ? 8 : (sampleRate === 44100 ? 9 : 4);
+    const byte1 = 0xff;
+    const byte2 = 0xf8;
+    const byte3 = (bsCode << 4) | (srCode & 0xf);
+    const byte4 = (0 << 4) | (4 << 1) | 0;
+
+    const headerBytes = [byte1, byte2, byte3, byte4];
+
+    if (frameNumber < 128) {
+      headerBytes.push(frameNumber);
+    } else {
+      headerBytes.push(0xc0 | (frameNumber >> 6));
+      headerBytes.push(0x80 | (frameNumber & 0x3f));
+    }
+
+    if (bsCode === 6) headerBytes.push(curBlockSize - 1);
+    else if (bsCode === 7) {
+      headerBytes.push((curBlockSize - 1) >> 8);
+      headerBytes.push((curBlockSize - 1) & 0xff);
+    }
+
+    const headerBuf = Buffer.from(headerBytes);
+    const headerCrc = crc8(headerBuf);
+
+    const subframeHeader = Buffer.from([0x02]);
+
+    const pcmChunk = pcmBuffer.slice(sampleOffset * 2, (sampleOffset + curBlockSize) * 2);
+    const bePcm = Buffer.alloc(pcmChunk.length);
+    for (let i = 0; i < pcmChunk.length; i += 2) {
+      bePcm[i] = pcmChunk[i + 1];
+      bePcm[i + 1] = pcmChunk[i];
+    }
+
+    const frameBody = Buffer.concat([headerBuf, Buffer.from([headerCrc]), subframeHeader, bePcm]);
+    const frameCrc16 = crc16(frameBody);
+    const crcBuf = Buffer.alloc(2);
+    crcBuf.writeUInt16BE(frameCrc16, 0);
+
+    chunks.push(frameBody);
+    chunks.push(crcBuf);
+
+    sampleOffset += curBlockSize;
+    frameNumber++;
+  }
+
+  return Buffer.concat(chunks);
+}
+
+function queryGoogleSpeech(flacBuffer, lang) {
+  const url = `https://www.google.com/speech-api/v2/recognize?client=chromium&lang=${lang}&key=AIzaSyBOti4mM-6x9WDnZIjIeyEU21OpBXqWBgw&pFilter=0`;
+  return new Promise((resolve) => {
+    const req = https.request(
+      url,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "audio/x-flac; rate=16000",
+          "User-Agent": "Mozilla/5.0",
+        },
+        timeout: 12000,
+      },
+      (gRes) => {
+        let body = "";
+        gRes.on("data", (chunk) => (body += chunk));
+        gRes.on("end", () => {
+          let text = "";
+          let confidence = 0;
+          try {
+            const lines = body.split("\n").filter((l) => l.trim().length > 0);
+            for (const line of lines) {
+              const parsed = JSON.parse(line);
+              if (parsed.result && parsed.result[0] && parsed.result[0].alternative) {
+                const alt = parsed.result[0].alternative[0];
+                if (alt && alt.transcript) {
+                  text = alt.transcript;
+                  confidence = Number(alt.confidence || 0.85);
+                }
+              }
+            }
+          } catch {}
+          resolve({ text: text.trim(), confidence });
+        });
+      }
+    );
+    req.on("error", () => resolve({ text: "", confidence: 0 }));
+    req.end(flacBuffer);
+  });
+}
+
 async function handleTranscribe(req, res) {
   if (req.method !== "POST") throw new HttpError(405, "Method Not Allowed");
 
@@ -496,7 +648,7 @@ async function handleTranscribe(req, res) {
 
     return new Promise((resolve) => {
       const upstream = https.request(
-        "https://api.chimege.com/v2/transcribe",
+        "https://api.chimege.com/v1.2/transcribe",
         {
           method: "POST",
           headers: {
@@ -514,7 +666,8 @@ async function handleTranscribe(req, res) {
             let finalText = raw;
             try {
               const j = JSON.parse(raw);
-              if (j.text) finalText = j.text;
+              if (j.transcription) finalText = j.transcription;
+              else if (j.text) finalText = j.text;
             } catch {}
             finalText = applyCodeSwitching(finalText.trim());
             sendJson(res, 200, { text: finalText, engine: "Chimege STT" });
@@ -534,61 +687,63 @@ async function handleTranscribe(req, res) {
     });
   }
 
-  // Google Chromium Multilingual STT Fallback (No token needed, supports MN + EN + JA)
-  return new Promise((resolve) => {
-    // Determine language parameter
-    const lang = flowbarState.language === "en" ? "en-US" : flowbarState.language === "ja" ? "ja-JP" : "mn-MN";
-    const googleUrl = `https://www.google.com/speech-api/v2/recognize?client=chromium&lang=${lang}&maxresults=5`;
-
-    const gReq = https.request(
-      googleUrl,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "audio/l16; rate=16000",
-          "User-Agent": "Mozilla/5.0",
-        },
-        timeout: 10000,
-      },
-      (gRes) => {
-        let body = "";
-        gRes.on("data", (chunk) => (body += chunk));
-        gRes.on("end", () => {
-          try {
-            // Google returns multiple JSON chunks separated by newlines
-            const lines = body.split("\n").filter((l) => l.trim().length > 0);
-            let transcribedText = "";
-            for (const line of lines) {
-              try {
-                const parsed = JSON.parse(line);
-                if (parsed.result && parsed.result[0] && parsed.result[0].alternative) {
-                  transcribedText = parsed.result[0].alternative[0].transcript;
-                }
-              } catch {}
-            }
-            if (transcribedText) {
-              const cleaned = applyCodeSwitching(transcribedText.trim());
-              sendJson(res, 200, { text: cleaned, engine: "Google Multilingual STT" });
-            } else {
-              sendJson(res, 200, { text: "", engine: "Google Multilingual STT", notice: "Яриа танигдсангүй." });
-            }
-          } catch {
-            sendJson(res, 200, { text: "", error: "Яриа танихад алдаа гарлаа." });
-          }
-          resolve();
-        });
+  // Google Multilingual STT with FLAC Encoding
+  let pcm = audio;
+  let sampleRate = 16000;
+  if (audio.length > 44 && audio.slice(0, 4).toString("ascii") === "RIFF") {
+    sampleRate = audio.readUInt32LE(24) || 16000;
+    let offset = 12;
+    while (offset < audio.length - 8) {
+      const chunkId = audio.slice(offset, offset + 4).toString("ascii");
+      const chunkSize = audio.readUInt32LE(offset + 4);
+      if (chunkId === "data") {
+        pcm = audio.slice(offset + 8, offset + 8 + chunkSize);
+        break;
       }
-    );
+      offset += 8 + chunkSize;
+    }
+    if (pcm === audio) pcm = audio.slice(44);
+  }
 
-    gReq.on("error", () => {
-      sendJson(res, 200, { text: "", error: "Сүлжээний холболт шалгана уу." });
-      resolve();
-    });
+  const flac = pcmToFlac(pcm, sampleRate);
+  const selectedLang = flowbarState.language || "auto";
+  let finalText = "";
 
-    // Strip WAV header (first 44 bytes) if present to send pure PCM
-    const pcm = audio.length > 44 && audio.slice(0, 4).toString() === "RIFF" ? audio.slice(44) : audio;
-    gReq.end(pcm);
-  });
+  if (selectedLang === "en") {
+    const r = await queryGoogleSpeech(flac, "en-US");
+    finalText = r.text;
+  } else if (selectedLang === "ja") {
+    const r = await queryGoogleSpeech(flac, "ja-JP");
+    finalText = r.text;
+  } else if (selectedLang === "mn") {
+    const r = await queryGoogleSpeech(flac, "mn-MN");
+    finalText = r.text;
+  } else {
+    // Trilingual auto-detection
+    const [rMn, rEn, rJa] = await Promise.all([
+      queryGoogleSpeech(flac, "mn-MN"),
+      queryGoogleSpeech(flac, "en-US"),
+      queryGoogleSpeech(flac, "ja-JP"),
+    ]);
+
+    const jaHasKana = /[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff]/.test(rJa.text);
+    const enHasLetters = /[a-zA-Z]{3,}/.test(rEn.text);
+
+    if (jaHasKana && rJa.confidence >= 0.70) {
+      finalText = rJa.text;
+    } else if (enHasLetters && rEn.confidence > rMn.confidence + 0.1) {
+      finalText = rEn.text;
+    } else {
+      finalText = rMn.text || rEn.text || rJa.text;
+    }
+  }
+
+  finalText = applyCodeSwitching(finalText);
+  if (finalText) {
+    sendJson(res, 200, { text: finalText, engine: "Google Multilingual STT" });
+  } else {
+    sendJson(res, 200, { text: "", notice: "Яриа танигдсангүй." });
+  }
 }
 
 // VoiceStudio TTS Handler
