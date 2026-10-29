@@ -95,6 +95,9 @@ from voice_core import (
     normalize_mongolian_numbers,
     format_speech_text,
     enhance_ssml_cadence,
+    apply_voice_commands,
+    strip_filler_words,
+    generate_srt,
     LANG_CYCLE,
     LANG_LABELS,
     HOTKEY_NAMES,
@@ -134,11 +137,21 @@ _ALLOWED_ORIGINS = {
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 SETTINGS_FILE = os.path.join(BASE_DIR, "voice_settings.json")
 DEFAULT_SERVER_SETTINGS = {
-    "hotkey": "ctrl_alt",   # "ctrl_alt" | "f8" | "ctrl_shift" | "f9" | "f10"
+    "hotkey": "f8",         # "f8" | "ctrl_alt" | "ctrl_shift" | "f9" | "f10"
     "stt_engine": "google", # "google" | "whisper" | "chimege"
     "whisper_model": "small",
     "chimege_token": "",
     "language": "auto",
+    "sound_cues": True,
+    "number_normalization": True,
+    "auto_punctuation": True,
+    "voice_actions": True,
+    "filler_word_cleaner": True,
+    "noise_gate": True,
+    "auto_insert_text": True,
+    "restore_clipboard": True,
+    "undo_button": True,
+    "start_with_windows": True,
 }
 
 def load_server_settings() -> dict:
@@ -2635,11 +2648,18 @@ def _process_native_recording() -> None:
             time.sleep(1.5)
             return
 
+        cfg = load_server_settings()
+        if cfg.get("noise_gate", True) and audio_np is not None and len(audio_np) > 0:
+            audio_np = trim_silence(audio_np, 16000, threshold_db=-40.0)
+
         wav_bytes = encode_wav_bytes(audio_np, 16000)
         text, err = transcribe_wav_bytes(wav_bytes, language=FLOWBAR_STATE.get("language", "mn"))
         _last_stop_time = time.time()
         if text:
-            cfg = load_server_settings()
+            if cfg.get("filler_word_cleaner", True):
+                text = strip_filler_words(text)
+            if cfg.get("voice_actions", True):
+                text = apply_voice_commands(text)
             if cfg.get("number_normalization", True):
                 text = normalize_mongolian_numbers(text)
             if cfg.get("auto_punctuation", True):
@@ -2647,7 +2667,8 @@ def _process_native_recording() -> None:
             FLOWBAR_STATE["last_text"] = text
             FLOWBAR_STATE["last_timestamp"] = int(time.time() * 1000)
             FLOWBAR_STATE["status"] = "success"
-            insert_text_to_active_window(text, _target_hwnd)
+            if cfg.get("auto_insert_text", True):
+                insert_text_to_active_window(text, _target_hwnd)
             play_sound_cue("finish")
             time.sleep(1.8)
         else:
@@ -2890,7 +2911,7 @@ def _native_flowbar_ui_worker() -> None:
     try:
         root = tk.Tk()
         _tk_root = root
-        root.title("VOICE FlowBar")
+        root.title("VOICE Capsule")
         root.overrideredirect(True)
         root.attributes("-topmost", True)
         root.attributes("-alpha", 0.96)
@@ -3021,7 +3042,7 @@ def _native_flowbar_ui_worker() -> None:
                 canvas.configure(bg="#0b0f19", highlightbackground="#3b82f6", highlightthickness=1)
                 canvas.create_oval(24, 11, 54, 41, fill="#1e1b4b", outline="#6366f1", width=2)
                 canvas.create_oval(34, 21, 44, 31, fill="#818cf8", outline="")
-                canvas.create_text(140, 18, text="VOICE FLOW", fill="#ffffff", font=F(13, True))
+                canvas.create_text(140, 18, text="VOICE CAPSULE", fill="#ffffff", font=F(13, True))
                 canvas.create_text(140, 35, text=f"Дарж ярих \u2022 {hk_name}", fill="#94a3b8", font=F(11))
             elif st == "recording":
                 canvas.configure(bg="#450a0a", highlightbackground="#ef4444", highlightthickness=2)
@@ -3722,6 +3743,17 @@ def api_save_settings(req: dict):
     global SERVER_SETTINGS
     SERVER_SETTINGS = saved
     return saved
+
+@app.post("/api/export-srt")
+def api_export_srt(req: dict):
+    segments = req.get("segments", [])
+    srt_content = generate_srt(segments)
+    return Response(
+        content=srt_content,
+        media_type="text/plain; charset=utf-8",
+        headers={"Content-Disposition": "attachment; filename=voice_subtitles.srt"},
+    )
+
 
 @app.post("/api/quit")
 def api_quit_server():

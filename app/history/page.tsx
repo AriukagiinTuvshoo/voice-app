@@ -120,6 +120,14 @@ export default function HistoryPage() {
           >
             Export JSON
           </button>
+          <button
+            className="btn-secondary"
+            onClick={() => HistoryStore.exportAsSRT()}
+            disabled={records.length === 0}
+            title="Premiere, CapCut-д зориулсан SRT хадмал файл татах"
+          >
+            Export SRT (Хадмал)
+          </button>
           {records.length > 0 && (
             <button className="btn-danger" onClick={handleClearAll}>
               <TrashIcon width={14} height={14} />

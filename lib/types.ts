@@ -34,11 +34,18 @@ export interface Settings {
   defaultVoiceId: string;
   ttsSpeed: number;
   ttsPitch: number;
-  // Desktop mode settings (Duudlaga Flow)
+  // Desktop mode settings (Duudlaga Flow / VOICE Capsule)
   desktopHotkey: string;
   autoInsertText: boolean;
   showFlowBar: boolean;
   whisperModel?: string;
+  // Enhanced features (v1.2.8)
+  soundCues?: boolean;
+  numberNormalization?: boolean;
+  voiceActions?: boolean;
+  fillerWordCleaner?: boolean;
+  noiseGate?: boolean;
+  startWithWindows?: boolean;
 }
 
 export interface TranscriptionRecord {

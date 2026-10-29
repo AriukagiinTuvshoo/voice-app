@@ -231,14 +231,34 @@ function Provider({ children }: { children: ReactNode }) {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        hotkey: settings.desktopHotkey || "ctrl_alt",
+        hotkey: settings.desktopHotkey || "f8",
         stt_engine: settings.sttEngine === "auto" ? "google" : settings.sttEngine,
         whisper_model: settings.whisperModel || "small",
         chimege_token: settings.chimegeToken || "",
         language: settings.language || "auto",
+        sound_cues: Boolean(settings.soundCues),
+        number_normalization: Boolean(settings.numberNormalization),
+        voice_actions: Boolean(settings.voiceActions),
+        filler_word_cleaner: Boolean(settings.fillerWordCleaner),
+        noise_gate: Boolean(settings.noiseGate),
+        auto_insert_text: Boolean(settings.autoInsertText),
+        start_with_windows: Boolean(settings.startWithWindows),
       }),
     }).catch(() => {});
-  }, [settings.desktopHotkey, settings.sttEngine, settings.whisperModel, settings.chimegeToken, settings.language]);
+  }, [
+    settings.desktopHotkey,
+    settings.sttEngine,
+    settings.whisperModel,
+    settings.chimegeToken,
+    settings.language,
+    settings.soundCues,
+    settings.numberNormalization,
+    settings.voiceActions,
+    settings.fillerWordCleaner,
+    settings.noiseGate,
+    settings.autoInsertText,
+    settings.startWithWindows,
+  ]);
 
   const value = useMemo(
     () => ({
@@ -391,10 +411,10 @@ function Shell({ children }: { children: ReactNode }) {
                 borderColor: flowbarStatus.visible ? "rgba(16, 185, 129, 0.4)" : undefined,
                 background: flowbarStatus.visible ? "rgba(16, 185, 129, 0.08)" : undefined,
               }}
-              title="Дэлгэцийн доод хэсэгт хөвөх жижиг FlowBar цонхыг харуулах / нуух"
+              title="Дэлгэцийн баруун доод буланд хөвөх жижиг VOICE Капсул цонхыг харуулах / нуух"
             >
               <FlowBarIcon width={16} height={16} />
-              <span>{flowbarStatus.visible ? "FlowBar: Идэвхтэй" : "FlowBar: Нуусан"}</span>
+              <span>{flowbarStatus.visible ? "VOICE Капсул: Идэвхтэй" : "VOICE Капсул: Нуусан"}</span>
             </button>
 
             <button
@@ -402,9 +422,9 @@ function Shell({ children }: { children: ReactNode }) {
               onClick={resetFlowBarPosition}
               className="btn-secondary"
               style={{ fontSize: "12px", padding: "7px 12px" }}
-              title="FlowBar байрлалыг дэлгэцийн баруун доод буланд шилжүүлж сэргээх"
+              title="VOICE Капсул байрлалыг дэлгэцийн баруун доод буланд шилжүүлж сэргээх"
             >
-              <span>📍 Байрлал сэргээх</span>
+              <span>📍 Капсул байрлал</span>
             </button>
 
             <LanguageSelect
@@ -836,10 +856,10 @@ export function Workspace() {
     <section className="workspace">
       <div className="heading">
         <div>
-          <small>VOICE AI & DUUDLAGA FLOW WORKSPACE</small>
+          <small>VOICE INTELLIGENCE STUDIO — Ухаалаг Дуу Хоолойн Орчин</small>
           <h1>Ярихыг урлаг болго.</h1>
           <p>
-            Монгол болон олон улсын яриа таних, зөв бичих дүрэм, дуу хоолой хувилах (VoiceStudio) болон Word/Facebook дээр <kbd>Ctrl+Alt</kbd> дарж шууд бичих систем.
+            Монгол болон олон улсын яриа таних, зөв бичих дүрэм, дуу хоолой хувилах (VoiceStudio) болон Word/Facebook/Chrome дээр <kbd>F8</kbd> эсвэл <kbd>Ctrl+Alt</kbd> дарж шууд бичих систем.
           </p>
         </div>
       </div>
@@ -1135,46 +1155,26 @@ export function SettingsPanel() {
 
   return (
     <div className="settings-grid">
-      {/* VoiceStudio AI & Voice Cloning */}
+      {/* Desktop Mode / VOICE Capsule */}
       <section className="settings">
-        <h2>VoiceStudio AI & Дуу Хоолой Хувилах</h2>
-        <p>
-          Хүний дууны өнгө төрх, формант (F₁–F₄), тембрийг шинжлэн хувилах болон Broadcast DSP эффектүүдээр уншуулах студи.
-        </p>
-
-        <div style={{ display: "flex", alignItems: "center", gap: "8px", margin: "14px 0 16px" }}>
-          <span style={{ width: "8px", height: "8px", borderRadius: "50%", background: "#10b981", boxShadow: "0 0 8px #10b981", display: "inline-block" }} />
-          <span style={{ fontSize: "13px", fontWeight: 600 }}>
-            Voice Cloning + Broadcast DSP • 100% Үнэгүй, Хязгааргүй
-          </span>
-        </div>
-
-        <Link href="/tts" className="btn-primary" style={{ fontSize: "13px", textDecoration: "none" }}>
-          <VolumeIcon width={15} height={15} />
-          <span>VoiceStudio руу орох →</span>
-        </Link>
-      </section>
-
-      {/* Desktop Mode like Duudlaga Flow */}
-      <section className="settings">
-        <h2>Facebook & Word дээр шууд бичих (Duudlaga Flow)</h2>
-        <p>Дэлгэцийн хаанаас ч товч дараад ярихад тухайн курсор байгаа газарт шууд текст болж бичигдэнэ.</p>
+        <h2>VOICE Капсул & Шууд бичих (Desktop Flow)</h2>
+        <p>Word, Chrome, Facebook, Telegram гэх мэт дурын цонхон дээр шууд ярьж бичих тохиргоо.</p>
 
         <div style={{ background: "var(--subtle)", padding: "14px", borderRadius: "14px", fontSize: "12px", lineHeight: 1.65, marginBottom: "14px", border: "1px solid var(--border)" }}>
-          <div><b>1. Курсороо байрлуулах:</b> Facebook, Word, Chrome, Telegram-ийн бичих нүдэн дээр дарна.</div>
+          <div><b>1. Курсороо байрлуулах:</b> Бичих гэж буй програмынхаа (Word, Chrome, Telegram) текст бичих нүдэн дээр дарна.</div>
           <div style={{ marginTop: "4px" }}>
-            <b>2. Ярьж эхлэх:</b> Гар дээрээ <kbd>Ctrl</kbd> + <kbd>Alt</kbd> хоёрыг зэрэг дарна (эсвэл дэлгэцийн доод хэсэгт хөвөх <b>VOICE FLOW</b> товч дээр дарна).
+            <b>2. Ярьж эхлэх:</b> Гар дээрээ <kbd>F8</kbd> эсвэл <kbd>Ctrl</kbd> + <kbd>Alt</kbd> дарна (эсвэл баруун доод хөвөх <b>VOICE Капсул</b> дээр дарна).
           </div>
           <div style={{ marginTop: "4px" }}>
-            <b>3. Автомат бичих:</b> Ярьж дуусмагц (2.5с чимээгүй болоход эсвэл <kbd>Ctrl+Alt</kbd> дахин дарахад) текст шууд тухайн цонхонд бичигдэнэ!
+            <b>3. Шууд бичигдэх:</b> Ярьж дуусмагц таны курсор байрласан цонхонд текст автоматаар шууд бичигдэнэ!
           </div>
         </div>
 
-        <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
+        <div style={{ display: "flex", gap: "10px", flexWrap: "wrap", marginBottom: "14px" }}>
           <button type="button" onClick={toggleFlowBar} className="btn-primary">
             <FlowBarIcon width={16} height={16} />
             <span>
-              {flowbarStatus.visible ? "Хөвөгч FlowBar нуух" : "Хөвөгч FlowBar харуулах"}
+              {flowbarStatus.visible ? "Хөвөгч Капсул нуух" : "Хөвөгч Капсул харуулах"}
             </span>
           </button>
 
@@ -1184,22 +1184,23 @@ export function SettingsPanel() {
               {flowbarStatus.status === "recording" ? "Бичлэг зогсоох" : "Шууд ярьж шалгах"}
             </span>
           </button>
+
+          <button
+            type="button"
+            onClick={resetFlowBarPosition}
+            className="btn-secondary"
+            style={{ fontSize: "12px", padding: "8px 14px" }}
+          >
+            <span>📍 Капсул байрлал сэргээх</span>
+          </button>
         </div>
 
-        <div style={{ marginTop: "14px" }}>
-          <Toggle
-            k="autoInsertText"
-            label="Auto-insert text (Шууд бичих)"
-            description="Яриаг таньмагц идэвхтэй цонхонд Unicode / Ctrl+V хуулж шууд бичих."
-          />
-        </div>
-
-        <div style={{ marginTop: "14px" }}>
+        <div>
           <label style={{ display: "block", fontSize: "13px", fontWeight: 600, marginBottom: "6px" }}>
             Шууд ярих үндсэн товчлуур (Shortcut):
           </label>
           <select
-            value={settings.desktopHotkey || "ctrl_alt"}
+            value={settings.desktopHotkey || "f8"}
             onChange={(e) => update("desktopHotkey", e.target.value)}
             style={{
               width: "100%",
@@ -1211,8 +1212,8 @@ export function SettingsPanel() {
               fontSize: "13px",
             }}
           >
-            <option value="f8">F8 (Санал болгох — Chrome, Word, Notepad-д 100% найдвартай)</option>
-            <option value="ctrl_alt">Ctrl + Alt (Үндсэн товчлуур)</option>
+            <option value="f8">F8 (Санал болгох — Chrome Omnibox, Word, Notepad-д 100% найдвартай)</option>
+            <option value="ctrl_alt">Ctrl + Alt (Хосолсон товчлуур)</option>
             <option value="ctrl_shift">Ctrl + Shift</option>
             <option value="alt_shift">Alt + Shift</option>
             <option value="ctrl_space">Ctrl + Space</option>
@@ -1222,36 +1223,90 @@ export function SettingsPanel() {
             <option value="f4">F4</option>
           </select>
           <small style={{ display: "block", color: "var(--muted)", fontSize: "11px", marginTop: "4px" }}>
-            Япон эсвэл Европын гарын байрлалтай үед Ctrl+Alt нь AltGr болдог тул F8 товчлуурыг ашиглах нь найдвартай.
+            Санамж: F8 болон Ctrl+Alt товчлуурууд аль аль нь байнга идэвхтэй ажиллана.
           </small>
         </div>
 
-        <div style={{ display: "flex", gap: "10px", marginTop: "16px", flexWrap: "wrap" }}>
-          <button
-            type="button"
-            onClick={resetFlowBarPosition}
-            className="btn-secondary"
-            style={{ fontSize: "12px", padding: "8px 14px" }}
-          >
-            <span>📍 FlowBar байрлал сэргээх (Дэлгэцийн баруун доод)</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={quitVoiceApp}
-            className="btn-secondary"
-            style={{ fontSize: "12px", padding: "8px 14px", color: "#ef4444", borderColor: "rgba(239, 68, 68, 0.4)" }}
-          >
-            <span>🛑 VOICE-оос бүрэн гарах</span>
-          </button>
+        <div style={{ marginTop: "14px" }}>
+          <Toggle
+            k="autoInsertText"
+            label="Auto-insert text (Шууд бичих)"
+            description="Яриаг таньмагц идэвхтэй цонхонд автоматаар буулгах."
+          />
+          <Toggle
+            k="soundCues"
+            label="Дуут дохио (Audio Feedback)"
+            description="Бичлэг эхлэх болон дуусахад тааламжтай дуут дохио өгөх."
+          />
+          <Toggle
+            k="startWithWindows"
+            label="Windows асахад автоматаар эхлэх"
+            description="Компьютер асмагц VOICE Капсул цаанаа бэлэн ажиллаж эхэлнэ."
+          />
         </div>
       </section>
 
-      {/* Speech Recognition Engine */}
+      {/* Smart Writing & Voice Actions */}
       <section className="settings">
-        <h2>Яриа таних хөдөлгүүр (STT Engine)</h2>
-        <p>Яриа таних үндсэн хөдөлгүүр болон интернетгүй үеийн оффлайн горим.</p>
-        <div className="option-list" style={{ marginTop: "10px" }}>
+        <h2>Ухаалаг Текст & Дуут Командууд</h2>
+        <p>Яриаг цэгцтэй найруулга бүхий мэргэжлийн бичвэр болгох ухаалаг шүүлтүүрүүд.</p>
+
+        <Toggle
+          k="voiceActions"
+          label="Дуут тушаалууд (Voice-to-Action)"
+          description="'Шинэ мөр', 'Цэг', 'Таслал', 'Хашилт', 'Асуултын тэмдэг' гэж хэлэхэд автоматаар тэмдэгт болгон буулгах."
+        />
+        <Toggle
+          k="fillerWordCleaner"
+          label="Сул үг автоматаар цэвэрлэх"
+          description="Яриан дахь 'нөгөө', 'аан', 'тиймээ', 'ер нь бол', 'юу л даа' гэх мэт илүүц сул үгсийг арилгах."
+        />
+        <Toggle
+          k="numberNormalization"
+          label="Монгол тоог автоматаар цифр болгох"
+          description="'хоёр мянга хорин зургаа' -> '2026', 'ерэн таван хувь' -> '95%' гэж шууд хөрвүүлэх."
+        />
+        <Toggle
+          k="autoPunctuation"
+          label="Өгүүлбэр, цэг тэмдэг автоматаар янзлах"
+          description="Эхний үсгийг томруулж, өгүүлбэрийн төгсгөлд цэг/асуултын тэмдэг тавих."
+        />
+        <Toggle
+          k="noiseGate"
+          label="Арын чимээ шүүгч (Noise Gate)"
+          description="Амьсгаа болон өрөөний арын сул шуугианыг таслах шүүлтүүр."
+        />
+        <Toggle
+          k="autoCorrection"
+          label="Зөв бичгийн дүрэм (Spellcheck)"
+          description="Бичвэр бэлэн болмогц зөв бичгийн алдааг шалгаж санал болгох."
+        />
+      </section>
+
+      {/* STT Engine & Microphone */}
+      <section className="settings">
+        <h2>Яриа таних хөдөлгүүр & Микрофон</h2>
+        <p>Ашиглах микрофон төхөөрөмж болон яриа таних хиймэл оюуны загвар.</p>
+
+        <div style={{ marginBottom: "14px" }}>
+          <label style={{ display: "block", fontSize: "12px", fontWeight: 600, marginBottom: "6px" }}>
+            Микрофон төхөөрөмж:
+          </label>
+          <select
+            value={settings.selectedAudioDevice}
+            onChange={(e) => update("selectedAudioDevice", e.target.value)}
+            style={{ width: "100%", padding: "8px 10px", borderRadius: "8px", background: "var(--card)", color: "var(--foreground)", border: "1px solid var(--border)", fontSize: "13px" }}
+          >
+            <option value="">Default Microphone (Анхдагч систем)</option>
+            {audioDevices.map((d) => (
+              <option key={d.deviceId} value={d.deviceId}>
+                {d.label || `Microphone (${d.deviceId.slice(0, 6)}...)`}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div className="option-list">
           {sttEngines.map((x) => (
             <label className="radio" key={x.value}>
               <input
@@ -1271,7 +1326,7 @@ export function SettingsPanel() {
         {settings.sttEngine === "whisper" && (
           <div style={{ marginTop: "14px", padding: "12px", background: "var(--subtle)", borderRadius: "10px", border: "1px solid var(--border)" }}>
             <label style={{ display: "block", fontSize: "12px", fontWeight: 600, marginBottom: "6px" }}>
-              Faster-Whisper AI загварын хэмжээ (Model size):
+              Faster-Whisper AI загварын хэмжээ:
             </label>
             <select
               value={settings.whisperModel || "small"}
@@ -1285,7 +1340,7 @@ export function SettingsPanel() {
               <option value="large-v3">Large-v3 (Хамгийн нарийн, 1550M)</option>
             </select>
             <small style={{ display: "block", color: "var(--muted)", fontSize: "11px", marginTop: "4px" }}>
-              Интернетгүй үед оффлайн ажиллана. Эхний удаа сонгоход загварыг автоматаар татаж бэлтгэнэ.
+              Интернетгүй үед оффлайн ажиллана.
             </small>
           </div>
         )}
@@ -1306,123 +1361,31 @@ export function SettingsPanel() {
         )}
       </section>
 
-      {/* Mobile Connect */}
+      {/* VoiceStudio AI & Voice Cloning */}
       <section className="settings">
-        <h2>📱 Утсан дээрээ ашиглах (Mobile PWA)</h2>
-        <p>Өөрийн iPhone эсвэл Android утаснаасаа ярьж, текстээ хуулж авах боломжтой.</p>
-        <div style={{ background: "var(--subtle)", padding: "14px 16px", borderRadius: "14px", border: "1px solid var(--border)", margin: "12px 0" }}>
-          <div style={{ fontSize: "12px", color: "var(--muted)", marginBottom: "6px" }}>Таны компьютерын сүлжээний хаяг:</div>
-          <code style={{ fontSize: "15px", fontWeight: 700, color: "var(--accent)", display: "inline-block" }}>http://192.168.3.4:3000</code>
-          <div style={{ margin: "10px 0 0", fontSize: "12px", color: "var(--muted)", lineHeight: 1.6 }}>
-            1. Компьютер ба утас нэг Wi-Fi сүлжээнд холбогдсон байна.<br />
-            2. Утасныхаа браузераар (Safari/Chrome) дээрх хаягийг нээнэ.<br />
-            3. Браузерын цэснээс &ldquo;Add to Home Screen&rdquo; (Дэлгэцэнд нэмэх) сонгоход бие даасан утасны апп шиг сууна.
-          </div>
+        <h2>VoiceStudio AI & Дуу Хоолой Хувилах</h2>
+        <p>
+          Хүний дууны өнгө төрх, формант (F₁–F₄), тембрийг шинжлэн хувилах болон Broadcast DSP эффектүүдээр уншуулах студи.
+        </p>
+
+        <div style={{ display: "flex", alignItems: "center", gap: "8px", margin: "14px 0 16px" }}>
+          <span style={{ width: "8px", height: "8px", borderRadius: "50%", background: "#10b981", boxShadow: "0 0 8px #10b981", display: "inline-block" }} />
+          <span style={{ fontSize: "13px", fontWeight: 600 }}>
+            Voice Cloning + Broadcast DSP • 100% Үнэгүй, Хязгааргүй
+          </span>
         </div>
+
+        <Link href="/tts" className="btn-primary" style={{ fontSize: "13px", textDecoration: "none" }}>
+          <VolumeIcon width={15} height={15} />
+          <span>VoiceStudio руу орох →</span>
+        </Link>
       </section>
 
-      {/* Recording Mode */}
+      {/* Appearance & System */}
       <section className="settings">
-        <h2>Бичлэг хийх тохиргоо</h2>
-        <p>Бичлэгийг хэрхэн эхлүүлэх болон дуусгах горим.</p>
-        {recordingModes.map((x) => (
-          <label className="radio" key={x.value}>
-            <input
-              type="radio"
-              name="mode"
-              checked={settings.recordingMode === x.value}
-              onChange={() => update("recordingMode", x.value)}
-            />
-            <span>
-              <b>{x.label}</b>
-              <small>{x.description}</small>
-            </span>
-          </label>
-        ))}
-        <Toggle
-          k="autoStop"
-          label="Auto stop (Дуугүй болоход зогсох)"
-          description="2.5 секунд чимээгүй болмогц бичлэгийг автоматаар зогсоож хөрвүүлнэ."
-        />
-      </section>
-
-      {/* Microphone Selection */}
-      <section className="settings">
-        <h2>Microphone Device (Микрофон)</h2>
-        <p>Ашиглах оролтын төхөөрөмжөө сонгоно.</p>
-        <select
-          value={settings.selectedAudioDevice}
-          onChange={(e) => update("selectedAudioDevice", e.target.value)}
-          style={{ width: "100%" }}
-        >
-          <option value="">Default Microphone (Анхдагч)</option>
-          {audioDevices.map((d) => (
-            <option key={d.deviceId} value={d.deviceId}>
-              {d.label || `Microphone (${d.deviceId.slice(0, 6)}...)`}
-            </option>
-          ))}
-        </select>
-      </section>
-
-      {/* Keyboard Shortcut */}
-      <section className="settings">
-        <h2>Keyboard Shortcut (Апп доторх товч)</h2>
-        <p>Апп дотор бичлэг эхлүүлэх, зогсоох товч.</p>
-        <select
-          value={settings.shortcut}
-          onChange={(e) => update("shortcut", e.target.value as Shortcut)}
-          style={{ width: "100%" }}
-        >
-          {shortcuts.map((x) => (
-            <option key={x} value={x}>
-              {x}
-            </option>
-          ))}
-        </select>
-      </section>
-
-      {/* Text Processing & Spellcheck */}
-      <section className="settings">
-        <h2>Зөв бичих дүрэм ба Сул үг</h2>
-        <p>Текст цэгцлэх болон зөв бичгийн дүрэм шалгах тохиргоо.</p>
-        <Toggle
-          k="autoPunctuation"
-          label="Auto punctuation"
-          description="Цэг таслал, эхний үсгийг автоматаар томруулах."
-        />
-        <Toggle
-          k="autoCorrection"
-          label="Auto spellcheck"
-          description="Бичвэр бэлэн болмогц зөв бичгийн алдааг шалгаж санал болгох."
-        />
-        <Toggle
-          k="removeFillers"
-          label="Remove fillers (Сул үг арилгах)"
-          description="Монгол хэлний сул үгсийг (нөгөө, ер нь, аан, тэгээд...) хасах."
-        />
-        <div className="option-list" style={{ marginTop: "10px" }}>
-          {modes.map((x) => (
-            <label className="radio" key={x.value}>
-              <input
-                type="radio"
-                name="processing"
-                checked={settings.processingMode === x.value}
-                onChange={() => update("processingMode", x.value)}
-              />
-              <span>
-                <b>{x.label}</b>
-                <small>{x.description}</small>
-              </span>
-            </label>
-          ))}
-        </div>
-      </section>
-
-      {/* Appearance */}
-      <section className="settings">
-        <h2>Харагдац (Appearance)</h2>
-        <p>Өнгөний горим сонгох.</p>
-        <div className="themes">
+        <h2>Харагдац & Систем</h2>
+        <p>Өнгөний горим болон програмын хадгалалт, гарах үйлдлүүд.</p>
+        <div className="themes" style={{ marginBottom: "14px" }}>
           {themes.map((x) => (
             <button
               key={x.value}
@@ -1433,18 +1396,14 @@ export function SettingsPanel() {
             </button>
           ))}
         </div>
-      </section>
 
-      {/* Privacy & Storage */}
-      <section className="settings">
-        <h2>Хадгалалт ба Цэвэрлэгээ</h2>
-        <p>Түүх хадгалах болон цэвэрлэх үйлдлүүд.</p>
         <Toggle
           k="saveTranscripts"
           label="Save transcripts"
-          description="Бүх хөрвүүлсэн текстийг History хэсэгт хадгалах."
+          description="Бүх хөрвүүлсэн текстийг Түүх (History) хэсэгт хадгалах."
         />
-        <div style={{ marginTop: "16px" }}>
+
+        <div style={{ display: "flex", gap: "10px", marginTop: "16px", flexWrap: "wrap" }}>
           <button
             className="btn-danger"
             onClick={() => {
@@ -1456,6 +1415,15 @@ export function SettingsPanel() {
           >
             <TrashIcon width={15} height={15} />
             <span>Түүхийг бүрэн цэвэрлэх</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={quitVoiceApp}
+            className="btn-secondary"
+            style={{ fontSize: "12px", padding: "8px 14px", color: "#ef4444", borderColor: "rgba(239, 68, 68, 0.4)" }}
+          >
+            <span>🛑 VOICE-оос бүрэн гарах</span>
           </button>
         </div>
       </section>

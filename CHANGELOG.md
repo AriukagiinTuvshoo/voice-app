@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.2.8
+Five Major Upgrades, Re-designed Settings & VOICE Capsule:
+- **Renamed FlowBar to VOICE Capsule (VOICE Капсул)**: Modernized naming and UI styling across all workspace headers, settings, floating controls, and native Tkinter canvas window.
+- **VOICE INTELLIGENCE STUDIO Workspace**: Re-branded primary workspace header to "VOICE INTELLIGENCE STUDIO — Ухаалаг Дуу Хоолойн Орчин" with streamlined navigation.
+- **Settings Modernization & Decluttering**: Completely cleaned up redundant technical options (removed confusing processing modes, hardcoded IPs, and duplicate shortcuts); replaced them with high-value toggle controls for audio feedback, number normalizer, filler word cleaner, voice commands, auto-insert, and noise gate.
+- **Voice-to-Action Spoken Commands**: Added spoken voice punctuation and newline execution in Mongolian ("шинэ мөр" -> `\n`, "цэг" -> `.`, "таслал" -> `,`, "хашилт нээх/хаах" -> `"`, "асуултын тэмдэг" -> `?`).
+- **Smart Filler Word Cleaner**: Automatically strips common spoken filler words ("нөгөө", "аан", "тиймээ", "ер нь бол", "юу л даа") from transcripts.
+- **Noise Gate & Silence Trimmer**: Pure-Python PCM silence trimmer and RMS noise filter preventing hallucinations on background room ambient noise.
+- **SRT Subtitle Export**: One-click export of transcripts to SubRip Subtitle (`.srt`) format for video editors (CapCut, Adobe Premiere, DaVinci Resolve, YouTube).
+- **24 Unit Tests Passing**: Expanded test suite in `tests/test_logic.py` covering all new voice commands, filler cleaning, silence trimming, SRT generation, and API endpoints.
+
 ## 1.2.7
 Phase 1-4 Feature Enhancements & Chrome / Web Compatibility:
 - **Chrome & Browser Input Focus Fix**: Resolved Chromium Omnibox / search input unfocusing caused by Windows Alt menu activation; implemented chorded _suppress_alt_menu_activation() and atomic 4-keystroke SendInput for Ctrl+V pasting.

@@ -74,7 +74,13 @@ export const defaultSettings: Settings = {
   autoInsertText: true,
   showFlowBar: true,
   whisperModel: "small",
-  desktopHotkey: "ctrl_alt",
+  desktopHotkey: "f8",
+  soundCues: true,
+  numberNormalization: true,
+  voiceActions: true,
+  fillerWordCleaner: true,
+  noiseGate: true,
+  startWithWindows: true,
 };
 
 export const CHIMEGE_API_URL = "https://api.chimege.com/v1.2";
