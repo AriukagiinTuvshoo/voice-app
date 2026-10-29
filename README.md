@@ -26,6 +26,11 @@ Windows Smart App Control болон антивируст блоклогдох �
 ### Алхам 1: Багц татаж авах
 👉 [**VOICE-Windows-v1.2.0.zip татах (GitHub Release)**](https://github.com/AriukagiinTuvshoo/voice-app/releases/download/v1.2.0/VOICE-Windows-v1.2.0.zip) *(Хэмжээ: ~390 KB)*
 
+> 💡 **Smart App Control-оос сэргийлэх (Чухал зөвлөмж):**  
+> ZIP татаж авсны дараа уг `VOICE-Windows-v1.2.0.zip` файл дээрээ хулганы баруун товчоор дарж **Properties (Шинж чанар)** цонхыг нээн, доод талын **Unblock (Блоклолтыг гаргах)** нүдийг чагтлаад **OK** дарна уу. Ингэснээр задлахад Windows 11-ийн Smart App Control хориг тавихгүй.
+> 
+> *(Эсвэл PowerShell нээгээд: `Unblock-File "$env:USERPROFILE\Downloads\VOICE-Windows-v1.2.0.zip"` гэж ажиллуулж болно).*
+
 ### Алхам 2: Системд суулгах (1 удаа хийнэ)
 1. Татсан `VOICE-Windows-v1.2.0.zip` файлыг хулганы баруун товчоор дарж **Extract All... (Бүгдийг задлах)** сонгоно.
 2. Задалсан хавтас доторх **`Install-VOICE.bat`** файл дээр давхар товшиж ажиллуулна.
