@@ -143,6 +143,42 @@ class TestVoiceCoreLogic(unittest.TestCase):
         self.assertIn('<break time="200ms"/>', ssml)
         self.assertIn('<break time="450ms"/>', ssml)
 
+    def test_apply_voice_commands(self):
+        raw = "Сайн байна уу цэг би өнөөдөр хичээлтэй таслал гэхдээ маргааш завтай цэг шинэ мөр та юу хийж байна асуултын тэмдэг"
+        formatted = voice_core.apply_voice_commands(raw)
+        self.assertIn("Сайн байна уу.", formatted)
+        self.assertIn("хичээлтэй, гэхдээ", formatted)
+        self.assertIn("\n", formatted)
+        self.assertTrue(formatted.endswith("?"))
+
+    def test_strip_filler_words(self):
+        raw = "Би нөгөө өнөөдөр аан ирж чадахгүй тиймээ"
+        cleaned = voice_core.strip_filler_words(raw)
+        self.assertNotIn("нөгөө", cleaned)
+        self.assertNotIn("аан", cleaned)
+        self.assertNotIn("тиймээ", cleaned)
+        self.assertIn("Би", cleaned)
+        self.assertIn("өнөөдөр", cleaned)
+        self.assertIn("ирж чадахгүй", cleaned)
+
+    def test_trim_silence_pcm(self):
+        import struct, math
+        silence = b"\x00\x00" * 3200  # 0.2s silence
+        speech = struct.pack("<500h", *[int(2500 * math.sin(i * 0.1)) for i in range(500)])
+        audio = silence + speech + silence
+        trimmed = voice_core.trim_silence_pcm(audio, threshold_rms=500.0)
+        self.assertLess(len(trimmed), len(audio))
+        self.assertGreater(len(trimmed), 0)
+
+    def test_generate_srt(self):
+        segments = [
+            {"start": 1.0, "end": 3.5, "text": "Сайн байна уу"},
+            {"start": 4.0, "end": 7.0, "text": "VOICE системд тавтай морил"},
+        ]
+        srt = voice_core.generate_srt(segments)
+        self.assertIn("1\r\n00:00:01,000 --> 00:00:03,500\r\nСайн байна уу", srt)
+        self.assertIn("2\r\n00:00:04,000 --> 00:00:07,000\r\nVOICE системд тавтай морил", srt)
+
 
 class TestFakeTkSmoke(unittest.TestCase):
     """Smoke test for the FlowBar UI command queue and event loop logic using Tk mocks."""
@@ -273,6 +309,16 @@ class TestFastAPIEngineLimits(unittest.TestCase):
         self.assertIn("current_version", data)
         self.assertIn("latest_version", data)
         self.assertIn("has_update", data)
+
+    def test_export_srt_endpoint(self):
+        res = self.client.post("/api/export-srt", json={
+            "segments": [
+                {"start": 0.5, "end": 2.5, "text": "Туршилтын хадмал"}
+            ]
+        })
+        self.assertEqual(res.status_code, 200)
+        self.assertIn("00:00:00,500 --> 00:00:02,500", res.text)
+        self.assertIn("Туршилтын хадмал", res.text)
 
     def test_transcribe_upload_limit(self):
         # 100 bytes is too short

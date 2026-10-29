@@ -9,7 +9,7 @@ import time
 from typing import Any, Optional, Tuple, Dict, Set
 
 # Version
-CORE_VERSION = "1.2.7"
+CORE_VERSION = "1.2.8"
 
 # Setting choices allowed by the engine
 SETTING_CHOICES: Dict[str, Set[str]] = {
@@ -36,6 +36,10 @@ BOOLEAN_SETTINGS: Set[str] = {
     "sound_cues",
     "auto_punctuation",
     "number_normalization",
+    "voice_actions",
+    "filler_word_cleaner",
+    "noise_gate",
+    "auto_insert_text",
 }
 
 VOICE_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
@@ -343,3 +347,159 @@ def enhance_ssml_cadence(text: str) -> str:
     # Add cadence pause after exclamation and question marks
     s = re.sub(r"([?？!！])(\s+|$)", r'\1 <break time="400ms"/> ', s)
     return re.sub(r"\s+", " ", s).strip()
+
+
+def apply_voice_commands(text: str) -> str:
+    """
+    Converts spoken voice commands in Mongolian to punctuation, newlines, and symbols.
+    e.g. 'сайн байна уу цэг шинэ мөр би өнөөдөр хичээлтэй таслал гэхдээ' ->
+    'сайн байна уу.\nби өнөөдөр хичээлтэй, гэхдээ'
+    """
+    if not text or not isinstance(text, str):
+        return ""
+    s = text
+
+    commands = [
+        (r"(?i)\b(шинэ мөр|догол мөр|шинэ мөрөөр)\b", "\n"),
+        (r"(?i)\b(давхар цэг|тодорхойлох цэг)\b", ":"),
+        (r"(?i)\b(асуултын тэмдэг)\b", "?"),
+        (r"(?i)\b(анхаарлын тэмдэг)\b", "!"),
+        (r"(?i)\b(хашилт нээх|хашилт нээ)\b", '"'),
+        (r"(?i)\b(хашилт хаах|хашилт хаа)\b", '"'),
+        (r"(?i)\b(хаалт нээх|хаалт нээ)\b", "("),
+        (r"(?i)\b(хаалт хаах|хаалт хаа)\b", ")"),
+        (r"(?i)\b(цэг)\b", "."),
+        (r"(?i)\b(таслал)\b", ","),
+        (r"(?i)\b(зураас)\b", " - "),
+    ]
+
+    for pat, rep in commands:
+        s = re.sub(pat, rep, s)
+
+    # Clean up spaces before punctuation
+    s = re.sub(r"\s+([.,!?:;\)])", r"\1", s)
+    # Ensure space after punctuation if followed by a letter/digit
+    s = re.sub(r"([.,!?:;])([^\s\d.,!?:;\"'\)])", r"\1 \2", s)
+    # Clean space after opening bracket/quote
+    s = re.sub(r"([\(\"])\s+", r"\1", s)
+    # Clean space before opening bracket
+    s = re.sub(r"(\S)(\()", r"\1 \2", s)
+    # Clean up newline spaces
+    s = re.sub(r"[ \t]*\n[ \t]*", "\n", s)
+    lines = [re.sub(r"[ \t]+", " ", line).strip() for line in s.split("\n")]
+    return "\n".join(lines).strip()
+
+
+def strip_filler_words(text: str) -> str:
+    """
+    Remove Mongolian conversational filler words like 'нөгөө', 'аан', 'тиймээ', etc.
+    """
+    if not text or not isinstance(text, str):
+        return ""
+
+    filler_patterns = [
+        r"(?i)\b(нөгөө нэг|юу л даа|ер нь бол|за тэгээд|тэгээд нөгөө)\b",
+        r"(?i)\b(нөгөө|нөгөөх|аан|тиймээ|тийм ээ|ер нь)\b",
+    ]
+    s = text
+    for pat in filler_patterns:
+        s = re.sub(pat, "", s)
+
+    # Clean punctuation immediately preceded by empty spaces
+    s = re.sub(r"\s+([.,!?:;])", r"\1", s)
+    # Collapse multiple spaces
+    s = re.sub(r"[ \t]+", " ", s).strip()
+    return s
+
+
+def calculate_pcm_rms(pcm_bytes: bytes) -> float:
+    """Calculate RMS amplitude of 16-bit PCM mono audio without external libraries."""
+    import struct, math
+    if not pcm_bytes or len(pcm_bytes) < 2:
+        return 0.0
+    count = len(pcm_bytes) // 2
+    shorts = struct.unpack(f"<{count}h", pcm_bytes[:count * 2])
+    sum_sq = sum(s * s for s in shorts)
+    return math.sqrt(sum_sq / count)
+
+
+def trim_silence_pcm(
+    pcm_bytes: bytes,
+    sample_rate: int = 16000,
+    sample_width: int = 2,
+    chunk_ms: int = 30,
+    threshold_rms: float = 300.0,
+    lead_in_ms: int = 120,
+) -> bytes:
+    """
+    Trim leading and trailing silence below threshold_rms from 16-bit PCM audio.
+    Preserves speech head and tail padding.
+    """
+    if not pcm_bytes or len(pcm_bytes) < 2:
+        return pcm_bytes
+
+    bytes_per_sample = sample_width
+    chunk_bytes = int(sample_rate * (chunk_ms / 1000.0) * bytes_per_sample)
+    if chunk_bytes <= 0:
+        return pcm_bytes
+
+    total_len = len(pcm_bytes)
+    first_speech_byte = None
+    last_speech_byte = None
+
+    for offset in range(0, total_len, chunk_bytes):
+        chunk = pcm_bytes[offset:offset + chunk_bytes]
+        if len(chunk) < 4:
+            break
+        rms = calculate_pcm_rms(chunk)
+        if rms >= threshold_rms:
+            if first_speech_byte is None:
+                first_speech_byte = offset
+            last_speech_byte = offset + len(chunk)
+
+    if first_speech_byte is None:
+        return pcm_bytes
+
+    lead_pad = int(sample_rate * (lead_in_ms / 1000.0) * bytes_per_sample)
+    start_idx = max(0, first_speech_byte - lead_pad)
+    end_idx = min(total_len, last_speech_byte + lead_pad)
+
+    # Align to 2-byte boundary
+    start_idx = (start_idx // 2) * 2
+    end_idx = (end_idx // 2) * 2
+
+    return pcm_bytes[start_idx:end_idx]
+
+
+def format_srt_time(seconds: float) -> str:
+    """Format seconds (float) as standard SubRip timestamp HH:MM:SS,mmm"""
+    if seconds < 0:
+        seconds = 0.0
+    hrs = int(seconds // 3600)
+    mins = int((seconds % 3600) // 60)
+    secs = int(seconds % 60)
+    millis = int(round((seconds - int(seconds)) * 1000))
+    if millis >= 1000:
+        millis = 999
+    return f"{hrs:02d}:{mins:02d}:{secs:02d},{millis:03d}"
+
+
+def generate_srt(segments: list) -> str:
+    """
+    Generate SubRip (.srt) subtitle content from a list of dicts.
+    Each item: {'start': float, 'end': float, 'text': str}
+    """
+    if not segments:
+        return ""
+    lines = []
+    for idx, seg in enumerate(segments, start=1):
+        start_t = float(seg.get("start", 0.0))
+        end_t = float(seg.get("end", start_t + 2.5))
+        if end_t <= start_t:
+            end_t = start_t + 1.0
+        text = str(seg.get("text", "")).strip()
+        lines.append(str(idx))
+        lines.append(f"{format_srt_time(start_t)} --> {format_srt_time(end_t)}")
+        lines.append(text)
+        lines.append("")
+    return "\r\n".join(lines).strip() + "\r\n"

@@ -73,6 +73,35 @@ export class HistoryStore {
     downloadFile(txt, `voice-history-${new Date().toISOString().slice(0, 10)}.txt`, "text/plain");
   }
 
+  static exportAsSRT(): void {
+    const items = this.getAll();
+    let currentOffset = 1.0;
+    const srtLines: string[] = [];
+
+    items.forEach((item, index) => {
+      const dur = item.durationSeconds > 0 ? item.durationSeconds : Math.max(2.5, item.text.length * 0.08);
+      const startT = currentOffset;
+      const endT = currentOffset + dur;
+      currentOffset = endT + 0.8;
+
+      const formatTime = (sec: number) => {
+        const hrs = Math.floor(sec / 3600).toString().padStart(2, "0");
+        const mins = Math.floor((sec % 3600) / 60).toString().padStart(2, "0");
+        const s = Math.floor(sec % 60).toString().padStart(2, "0");
+        const ms = Math.floor((sec % 1) * 1000).toString().padStart(3, "0");
+        return `${hrs}:${mins}:${s},${ms}`;
+      };
+
+      srtLines.push(String(index + 1));
+      srtLines.push(`${formatTime(startT)} --> ${formatTime(endT)}`);
+      srtLines.push(item.text.trim());
+      srtLines.push("");
+    });
+
+    const srt = srtLines.join("\r\n");
+    downloadFile(srt, `voice-subtitles-${new Date().toISOString().slice(0, 10)}.srt`, "text/plain");
+  }
+
   private static saveAll(records: TranscriptionRecord[]) {
     if (typeof window === "undefined") return;
     try {
