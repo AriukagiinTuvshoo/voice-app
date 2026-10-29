@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/AriukagiinTuvshoo/voice-app/releases/latest"><img src="https://img.shields.io/badge/Release-v1.2.1-6366f1?style=for-the-badge&logo=windows" alt="Version 1.2.1" /></a>
+  <a href="https://github.com/AriukagiinTuvshoo/voice-app/releases/latest"><img src="https://img.shields.io/badge/Release-v1.2.3-6366f1?style=for-the-badge&logo=windows" alt="Version 1.2.1" /></a>
   <img src="https://img.shields.io/badge/Platform-Windows%2010%20%7C%2011%20(64--bit)-blue?style=for-the-badge&logo=windows" alt="Platform Windows" />
   <img src="https://img.shields.io/badge/Python-3.10%2B-brightgreen?style=for-the-badge&logo=python" alt="Python 3.10+" />
   <img src="https://img.shields.io/badge/Node.js-Not%20Required-blueviolet?style=for-the-badge" alt="No Node Needed" />
@@ -24,15 +24,7 @@
 Windows Smart App Control болон антивируст блоклогдох эрсдэлгүй, 100% цэвэр нээлттэй эхийн багц.
 
 ### Алхам 1: Багц татаж авах
-👉 [**VOICE-Windows-v1.2.1.zip татах (GitHub Releases)**](https://github.com/AriukagiinTuvshoo/voice-app/releases/download/v1.2.1/VOICE-Windows-v1.2.1.zip)
-
-> 💡 **Smart App Control-оос сэргийлэх (Чухал зөвлөмж):**  
-> Татаж авсан `VOICE-Windows-v1.2.1.zip` файл дээрээ хулганы баруун товчоор дарж **Properties (Шинж чанар)** цонхыг нээн, доод талын **Unblock (Блоклолтыг гаргах)** нүдийг чагтлаад **OK** дарна уу. Ингэснээр задлахад Windows 11-ийн Smart App Control хориг тавихгүй.
-> 
-> *(Эсвэл PowerShell нээгээд: `Unblock-File "$env:USERPROFILE\Downloads\VOICE-Windows-v1.2.1.zip"` гэж ажиллуулж болно).*
-
-### Алхам 2: Системд суулгах (1 удаа хийнэ)
-1. Татсан `VOICE-Windows-v1.2.1.zip` файлыг хулганы баруун товчоор дарж **Extract All... (Бүгдийг задлах)** сонгоно.
+👉 [**VOICE-Windows-v1.2.3.zip татах (GitHub Releases)**](https://github.com/AriukagiinTuvshoo/voice-app/releases/latest/download/VOICE-Windows-v1.2.3.zip` файлыг хулганы баруун товчоор дарж **Extract All... (Бүгдийг задлах)** сонгоно.
 2. Задалсан хавтас доторх **`Install-VOICE.bat`** файл дээр давхар товшиж ажиллуулна.
    - Энэ нь шаардлагатай сангуудыг таны компьютерын `%LOCALAPPDATA%\VOICE-App\.venv` тусгаарлагдсан орчинд найдвартай бэлтгэнэ.
    - Дэлгэц (Desktop) дээр **`VOICE`** нэртэй нил ягаан өнгийн товчлолыг автоматаар үүсгэнэ.

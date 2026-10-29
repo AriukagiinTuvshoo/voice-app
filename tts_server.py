@@ -1,3 +1,16 @@
+import os
+import sys
+import ctypes
+
+if os.name == "nt":
+    try:
+        ctypes.windll.shcore.SetProcessDpiAwareness(2)  # Per-monitor DPI aware
+    except Exception:
+        try:
+            ctypes.windll.user32.SetProcessDPIAware()
+        except Exception:
+            pass
+
 import sys
 import os as _os
 
@@ -38,9 +51,21 @@ import numpy as np
 from scipy import signal as sp_signal
 from scipy.io import wavfile
 
+def get_app_version() -> str:
+    v_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "VERSION")
+    if os.path.isfile(v_file):
+        try:
+            with open(v_file, "r", encoding="utf-8") as f:
+                return f.read().strip() or "1.2.3"
+        except Exception:
+            pass
+    return "1.2.3"
+
+APP_VERSION = get_app_version()
+
 app = FastAPI(
     title="VOICE & VoiceStudio AI Engine (TTS, STT, Voice Cloning & Duudlaga Flow)",
-    version="1.2.1",
+    version=APP_VERSION,
 )
 
 SERVER_PORT = int(os.environ.get("VOICE_PORT", "8000"))
@@ -1546,15 +1571,13 @@ def prepare_audio_for_asr(samples: np.ndarray, sample_rate: int = 16000) -> np.n
     return np.concatenate([lead_pad, y32, trail_pad])
 
 
-def split_audio_on_pauses(samples: np.ndarray, sample_rate: int = 16000) -> list[np.ndarray]:
+def split_audio_on_pauses(samples: np.ndarray, sample_rate: int = 16000, min_duration: float = 2.8) -> list[np.ndarray]:
     """
-    Splits audio only at genuine inter-phrase pauses (>= 300ms = 15 frames) with minimum segment length 1.25s,
+    Splits audio only at genuine inter-phrase pauses (>= 280ms = 14 frames) with minimum segment length min_duration,
     preventing mid-word splits that break consonant closures or glue words together.
     """
     duration = samples.size / float(sample_rate)
-    # If in pure single-language mode, keep sentences longer for grammar context.
-    # If in AUTO multilingual mode, allow natural pause splitting (>= 2.5s) to classify mixed languages cleanly.
-    if duration < (2.8 if req_lang == "auto" else 12.0):
+    if duration < min_duration:
         return [samples]
 
     frame_len = int(0.02 * sample_rate)  # 20ms frames
@@ -1735,7 +1758,8 @@ def transcribe_wav_bytes(raw_bytes: bytes, language: str = "mn") -> tuple[str, s
     samples = prepare_audio_for_asr(samples, 16000)
 
     req_lang = (language or "mn").lower().strip()
-    segments = split_audio_on_pauses(samples, 16000)
+    split_dur = 2.5 if req_lang == "auto" else 12.0
+    segments = split_audio_on_pauses(samples, 16000, min_duration=split_dur)
 
     final_clauses: list[str] = []
 
@@ -2299,38 +2323,44 @@ def stop_native_flowbar_recording() -> None:
 
 def _process_native_recording() -> None:
     global _last_stop_time
-    with _recording_lock:
-        if not _recording_Buffer:
+    try:
+        with _recording_lock:
+            if not _recording_Buffer:
+                FLOWBAR_STATE["status"] = "error"
+                FLOWBAR_STATE["error"] = "Яриа сонсогдсонгүй"
+                time.sleep(1.5)
+                return
+            audio_np = np.concatenate(_recording_Buffer, axis=0).reshape(-1)
+            _recording_Buffer.clear()
+
+        if audio_np.size < 3200:
             FLOWBAR_STATE["status"] = "error"
-            FLOWBAR_STATE["error"] = "Яриа сонсогдсонгүй"
+            FLOWBAR_STATE["error"] = "Хэт богино байна"
             time.sleep(1.5)
-            FLOWBAR_STATE["status"] = "idle"
             return
-        audio_np = np.concatenate(_recording_Buffer, axis=0).reshape(-1)
-        _recording_Buffer.clear()
 
-    if audio_np.size < 3200:
+        wav_bytes = encode_wav_bytes(audio_np, 16000)
+        text, err = transcribe_wav_bytes(wav_bytes, language=FLOWBAR_STATE.get("language", "mn"))
+        _last_stop_time = time.time()
+        if text:
+            FLOWBAR_STATE["last_text"] = text
+            FLOWBAR_STATE["last_timestamp"] = int(time.time() * 1000)
+            FLOWBAR_STATE["status"] = "success"
+            insert_text_to_active_window(text, _target_hwnd)
+            time.sleep(1.8)
+        else:
+            FLOWBAR_STATE["status"] = "error"
+            FLOWBAR_STATE["error"] = err[:28] if err else "Тод ярина уу"
+            print("[FlowBar] STT empty:", err)
+            time.sleep(2.0)
+    except Exception as e:
+        import traceback
+        print("[FlowBar] Recording processing error:")
+        traceback.print_exc()
         FLOWBAR_STATE["status"] = "error"
-        FLOWBAR_STATE["error"] = "Хэт богино байна"
+        FLOWBAR_STATE["error"] = "Алдаа гарлаа"
         time.sleep(1.5)
-        FLOWBAR_STATE["status"] = "idle"
-        return
-
-    wav_bytes = encode_wav_bytes(audio_np, 16000)
-    text, err = transcribe_wav_bytes(wav_bytes, language=FLOWBAR_STATE.get("language", "mn"))
-    _last_stop_time = time.time()
-    if text:
-        FLOWBAR_STATE["last_text"] = text
-        FLOWBAR_STATE["last_timestamp"] = int(time.time() * 1000)
-        FLOWBAR_STATE["status"] = "success"
-        insert_text_to_active_window(text, _target_hwnd)
-        time.sleep(1.8)
-        FLOWBAR_STATE["status"] = "idle"
-    else:
-        FLOWBAR_STATE["status"] = "error"
-        FLOWBAR_STATE["error"] = err[:28] if err else "Тод ярина уу"
-        print("[FlowBar] STT empty:", err)
-        time.sleep(2.0)
+    finally:
         FLOWBAR_STATE["status"] = "idle"
 
 
@@ -2483,7 +2513,9 @@ def _native_flowbar_ui_worker() -> None:
 
     try:
         import tkinter as tk
-    except ImportError:
+    except ImportError as err:
+        print(f"[-] FlowBar unavailable: tkinter missing ({err})")
+        FLOWBAR_STATE["error"] = "FlowBar unavailable: tkinter missing"
         return
 
     try:
@@ -2724,7 +2756,9 @@ def _native_flowbar_ui_worker() -> None:
         root.after(100, refresh_ui)
         root.mainloop()
     except Exception as e:
-        print("FlowBar Tkinter UI warning:", e)
+        import traceback
+        print("FlowBar Tkinter UI warning:")
+        traceback.print_exc()
 
 
 # Start background threads once
@@ -2733,6 +2767,8 @@ _bg_started = False
 
 def _open_browser_window() -> None:
     """Auto-launch the desktop dashboard in Edge/Chrome app mode once the server is listening."""
+    if os.environ.get("VOICE_NO_BROWSER"):
+        return
     time.sleep(1.0)
     url = f"http://127.0.0.1:{SERVER_PORT}/dashboard"
     candidates = [
