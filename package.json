@@ -1,12 +1,14 @@
 {
-  "name": "voice",
-  "version": "0.1.0",
+  "name": "voice-app",
+  "version": "1.2.0",
+  "description": "VOICE Desktop — Монгол хэлний яриа таних, зөв бичих дүрэм (spellcheck.mn), VoiceStudio AI ба Windows шууд бичих систем",
   "private": true,
-  "main": "electron/main.cjs",
+  "main": "server.cjs",
   "scripts": {
     "dev": "next dev -H 0.0.0.0",
     "build": "next build",
-    "start": "next start -H 0.0.0.0",
+    "server": "node server.cjs 8000",
+    "start": "node server.cjs 8000",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "desktop": "electron electron/main.cjs",
