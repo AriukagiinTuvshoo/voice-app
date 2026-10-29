@@ -648,6 +648,19 @@ def apply_voicestudio_dsp(
     sos_hp = sp_signal.butter(2, 65.0 / (sample_rate / 2.0), btype="highpass", output="sos")
     y = sp_signal.sosfiltfilt(sos_hp, y)
 
+    # 1.1 Digital De-Esser (5.8 kHz - 8.5 kHz) to tame harsh sibilance ('с', 'ш', 'ц', 'з')
+    if y.size >= 1024 and sample_rate >= 16000:
+        try:
+            sos_sib = sp_signal.butter(2, [5800.0 / (sample_rate / 2.0), min(0.95, 8400.0 / (sample_rate / 2.0))], btype="bandpass", output="sos")
+            sib_band = sp_signal.sosfiltfilt(sos_sib, y)
+            sib_rms = np.sqrt(np.mean(sib_band ** 2) + 1e-10)
+            broad_rms = np.sqrt(np.mean(y ** 2) + 1e-10)
+            if sib_rms > 0.32 * broad_rms:
+                tame_factor = float(np.clip(1.0 - (sib_rms / broad_rms - 0.32) * 0.75, 0.60, 1.0))
+                y = y - (1.0 - tame_factor) * sib_band
+        except Exception:
+            pass
+
     # 2. 3-band VoiceStudio EQ (Low < 260Hz, Mid ~1600Hz, High > 3800Hz)
     low_db = float(preset.get("low_db", 0.0))
     mid_db = float(preset.get("mid_db", 0.0))
@@ -1539,7 +1552,9 @@ def split_audio_on_pauses(samples: np.ndarray, sample_rate: int = 16000) -> list
     preventing mid-word splits that break consonant closures or glue words together.
     """
     duration = samples.size / float(sample_rate)
-    if duration < 12.0:
+    # If in pure single-language mode, keep sentences longer for grammar context.
+    # If in AUTO multilingual mode, allow natural pause splitting (>= 2.5s) to classify mixed languages cleanly.
+    if duration < (2.8 if req_lang == "auto" else 12.0):
         return [samples]
 
     frame_len = int(0.02 * sample_rate)  # 20ms frames
@@ -1623,6 +1638,48 @@ def _score_candidate_hypothesis(text: str, base_conf: float, lang_code: str) -> 
     return score
 
 
+def apply_voice_punctuations(text: str) -> str:
+    """
+    Converts spoken punctuation commands into real punctuation marks:
+    - 'шинэ мөр' / 'шинэмөр' -> newline
+    - 'догол мөр' -> paragraph newline
+    - 'таслал' -> ,
+    - 'цэг' -> .
+    - 'асуултын тэмдэг' -> ?
+    - 'анхаарлын тэмдэг' -> !
+    - 'new line' -> newline, 'comma' -> ,, 'period' -> .
+    - '改行' -> newline, 'まる' -> 。, 'てん' -> 、
+    """
+    if not text:
+        return text
+
+    patterns = [
+        (r"(?i)(?:\s+|^)(?:шинэ\s+мөр|шинэмөр)(?:\s+|$)", "\n"),
+        (r"(?i)(?:\s+|^)догол\s+мөр(?:\s+|$)", "\n\n"),
+        (r"(?i)\s+таслал(?:\s+|$)", ", "),
+        (r"(?i)\s+цэг(?:\s+|$)", ". "),
+        (r"(?i)\s+асуултын\s+тэмдэг(?:\s+|$)", "? "),
+        (r"(?i)\s+анхаарлын\s+тэмдэг(?:\s+|$)", "! "),
+        (r"(?i)\s+зураас(?:\s+|$)", " - "),
+        (r"(?i)\s+хоёр\s+цэг(?:\s+|$)", ": "),
+        (r"(?i)(?:\s+|^)new\s+line(?:\s+|$)", "\n"),
+        (r"(?i)\s+comma(?:\s+|$)", ", "),
+        (r"(?i)\s+period(?:\s+|$)", ". "),
+        (r"(?i)\s+full\s+stop(?:\s+|$)", ". "),
+        (r"(?i)\s+question\s+mark(?:\s+|$)", "? "),
+        (r"(?i)\s+exclamation\s+mark(?:\s+|$)", "! "),
+        (r"(?:\s+|^)改行(?:\s+|$)", "\n"),
+        (r"\s*まる\s*", "。"),
+        (r"\s*てん\s*", "、"),
+        (r"\s*はてな\s*", "？"),
+    ]
+    out = text
+    for pat, repl in patterns:
+        out = re.sub(pat, repl, out)
+    out = re.sub(r"([.,!?])\s*([.,!?])", r"\1", out)
+    return out.strip()
+
+
 def _recognize_single_lang(wav_bytes: bytes, lang_code: str) -> tuple[str, float, bool]:
     """Run Google STT with show_all=True and rerank all N-best alternatives for maximum word/letter accuracy."""
     r = sr.Recognizer()
@@ -1693,32 +1750,26 @@ def transcribe_wav_bytes(raw_bytes: bytes, language: str = "mn") -> tuple[str, s
             seg_wav = encode_wav_bytes(seg, 16000)
 
             if req_lang in ("mn", "mn-mn"):
-                # Pure Mongolian mode: 100% clean, never hallucinate Japanese words!
                 mn_txt, mn_conf, m_err = _recognize_single_lang(seg_wav, "mn-MN")
                 if m_err:
                     net_err_found = True
                 if mn_txt:
-                    final_clauses.append(mn_txt)
+                    final_clauses.append(apply_voice_punctuations(mn_txt))
 
             elif req_lang in ("en", "en-us"):
-                fut_en = pool.submit(_recognize_single_lang, seg_wav, "en-US")
-                fut_mn = pool.submit(_recognize_single_lang, seg_wav, "mn-MN")
-                en_txt, en_conf, e_err = fut_en.result()
-                mn_txt, mn_conf, m_err = fut_mn.result()
-                if e_err or m_err: net_err_found = True
-                chosen = en_txt if (en_txt and en_conf >= mn_conf - 0.1) else (mn_txt or en_txt)
-                if chosen:
-                    final_clauses.append(chosen)
+                en_txt, en_conf, e_err = _recognize_single_lang(seg_wav, "en-US")
+                if e_err: net_err_found = True
+                if en_txt:
+                    final_clauses.append(apply_voice_punctuations(en_txt))
 
             elif req_lang in ("ja", "ja-jp"):
-                fut_ja = pool.submit(_recognize_single_lang, seg_wav, "ja-JP")
-                ja_txt, ja_conf, j_err = fut_ja.result()
+                ja_txt, ja_conf, j_err = _recognize_single_lang(seg_wav, "ja-JP")
                 if j_err: net_err_found = True
                 if ja_txt:
-                    final_clauses.append(ja_txt)
+                    final_clauses.append(apply_voice_punctuations(ja_txt))
 
             else:
-                # Explicit "auto" or "mixed" mode (code-switching)
+                # Intelligent Trilingual Auto-Classification for mixed MN, EN, JA!
                 fut_mn = pool.submit(_recognize_single_lang, seg_wav, "mn-MN")
                 fut_en = pool.submit(_recognize_single_lang, seg_wav, "en-US")
                 fut_ja = pool.submit(_recognize_single_lang, seg_wav, "ja-JP")
@@ -1728,11 +1779,25 @@ def transcribe_wav_bytes(raw_bytes: bytes, language: str = "mn") -> tuple[str, s
                 ja_txt, ja_conf, j_err = fut_ja.result()
                 if m_err or e_err or j_err: net_err_found = True
 
-                chosen = select_or_fuse_trilingual_clause(
-                    mn_txt, mn_conf, en_txt, en_conf, ja_txt, ja_conf
-                )
+                has_jp = bool(ja_txt and re.search(r"[぀-ヿ一-龯]", ja_txt))
+                has_en_words = bool(en_txt and re.search(r"(?i)(hello|my|name|is|thank|you|very|much|nice|to|meet|how|are|good|morning|night|day|what|where|when|why|who|please|help|welcome|google|chrome|chatgpt|voice|world|test)", en_txt))
+                has_mn_words = bool(mn_txt and re.search(r"(?i)[а-яөүё]", mn_txt))
+
+                # Priority scoring
+                chosen = ""
+                if has_jp and (ja_conf >= 0.70 or ja_conf >= mn_conf - 0.12 or not has_mn_words):
+                    chosen = ja_txt
+                elif has_en_words and (en_conf >= 0.72 or en_conf >= mn_conf - 0.08 or not has_mn_words):
+                    chosen = en_txt
+                elif has_mn_words:
+                    chosen = mn_txt
+                else:
+                    candidates = [(mn_txt, mn_conf), (en_txt, en_conf), (ja_txt, ja_conf)]
+                    candidates.sort(key=lambda x: x[1], reverse=True)
+                    chosen = candidates[0][0]
+
                 if chosen:
-                    final_clauses.append(chosen)
+                    final_clauses.append(apply_voice_punctuations(chosen))
 
     text = " ".join(c.strip() for c in final_clauses if c.strip()).strip()
     if text:
@@ -2430,7 +2495,7 @@ def _native_flowbar_ui_worker() -> None:
         root.attributes("-alpha", 0.96)
         root.configure(bg="#090d16")
 
-        bar_w, bar_h = 340, 46
+        bar_w, bar_h = 360, 52
         pos_x, pos_y = get_fallback_flowbar_pos(bar_w, bar_h)
         pos_file = os.path.join(BASE_DIR, "flowbar_pos.txt")
         if os.path.isfile(pos_file):
@@ -2507,11 +2572,11 @@ def _native_flowbar_ui_worker() -> None:
                         pass
                 return
 
-            if event.x >= 312:
+            if event.x >= 324:
                 FLOWBAR_STATE["visible"] = False
                 return
 
-            if 252 <= event.x < 312 and not _is_recording:
+            if 256 <= event.x < 324 and not _is_recording:
                 cur_l = FLOWBAR_STATE.get("language", "auto")
                 idx = lang_cycle.index(cur_l) if cur_l in lang_cycle else 0
                 FLOWBAR_STATE["language"] = lang_cycle[(idx + 1) % len(lang_cycle)]
@@ -2552,94 +2617,107 @@ def _native_flowbar_ui_worker() -> None:
             l_label = lang_labels.get(cur_lang, "🌐 AUTO")
             canvas.delete("all")
 
-            # Left grip handle
-            canvas.create_text(10, 23, text="⋮⋮", fill="#64748b", font=("Segoe UI", 10, "bold"))
+            # Draw outer pill glow card
+            canvas.create_rectangle(0, 0, bar_w, bar_h, fill="#0b0f19", outline="", width=0)
+
+            # Left subtle drag handle
+            canvas.create_text(11, 26, text="⋮⋮", fill="#475569", font=("Segoe UI", 11, "bold"))
+
+            cur_hk = SERVER_SETTINGS.get("hotkey", "f8")
+            hk_map = {
+                "f8": "F8",
+                "ctrl_alt": "Ctrl+Alt",
+                "ctrl_shift": "Ctrl+Shift",
+                "alt_shift": "Alt+Shift",
+                "ctrl_space": "Ctrl+Space",
+                "f9": "F9",
+                "f10": "F10",
+                "f2": "F2",
+                "f4": "F4",
+            }
+            hk_name = hk_map.get(cur_hk, "F8")
 
             if st == "idle":
-                canvas.configure(bg="#121626", highlightbackground="#6366f1")
-                canvas.create_oval(22, 13, 42, 33, fill="#4f46e5", outline="#818cf8", width=1)
-                canvas.create_text(32, 23, text="🎙", fill="#ffffff", font=("Segoe UI Emoji", 10))
+                canvas.configure(bg="#0b0f19", highlightbackground="#3b82f6", highlightthickness=1)
+                # Glowing blue/indigo mic capsule
+                canvas.create_oval(24, 11, 54, 41, fill="#1e1b4b", outline="#6366f1", width=1.5)
+                canvas.create_text(39, 26, text="🎙️", fill="#ffffff", font=("Segoe UI Emoji", 11))
                 canvas.create_text(
-                    146,
-                    16,
-                    text="VOICE FLOW • Дарж ярина уу",
-                    fill="#f8fafc",
-                    font=("Segoe UI", 9, "bold"),
+                    140,
+                    18,
+                    text="VOICE FLOW",
+                    fill="#ffffff",
+                    font=("Segoe UI", 10, "bold"),
                 )
-                cur_hk = SERVER_SETTINGS.get("hotkey", "f8")
-                hk_map = {
-                    "f8": "F8",
-                    "ctrl_alt": "Ctrl + Alt (эсвэл F8)",
-                    "ctrl_shift": "Ctrl + Shift (эсвэл F8)",
-                    "alt_shift": "Alt + Shift (эсвэл F8)",
-                    "ctrl_space": "Ctrl + Space (эсвэл F8)",
-                    "f9": "F9 (эсвэл F8)",
-                    "f10": "F10 (эсвэл F8)",
-                    "f2": "F2 (эсвэл F8)",
-                    "f4": "F4 (эсвэл F8)",
-                }
-                hk_name = hk_map.get(cur_hk, "F8")
                 canvas.create_text(
-                    146,
-                    32,
-                    text=f"Товчлуур: {hk_name}",
+                    140,
+                    34,
+                    text=f"Дарж ярих • {hk_name}",
                     fill="#94a3b8",
                     font=("Segoe UI", 8),
                 )
             elif st == "recording":
-                canvas.configure(bg="#b91c1c", highlightbackground="#fca5a5")
-                canvas.create_oval(22, 16, 34, 28, fill="#ffffff", outline="")
+                canvas.configure(bg="#450a0a", highlightbackground="#ef4444", highlightthickness=2)
+                # Pulsing red recording dot
+                canvas.create_oval(24, 11, 54, 41, fill="#991b1b", outline="#f87171", width=2)
+                canvas.create_oval(34, 21, 44, 31, fill="#ffffff", outline="")
                 secs = FLOWBAR_STATE.get("seconds", 0)
                 canvas.create_text(
-                    115,
-                    23,
-                    text=f"Ярьж байна... {secs}с (Зогсоох)",
+                    95,
+                    26,
+                    text=f"{secs}s",
                     fill="#ffffff",
-                    font=("Segoe UI", 9, "bold"),
+                    font=("Segoe UI", 11, "bold"),
                 )
-                lvls = FLOWBAR_STATE.get("levels", [6, 12, 16, 12, 6])
+                # Live animated soundwave equalizer bars in the center
+                lvls = FLOWBAR_STATE.get("levels", [6, 12, 18, 12, 6])
                 for i, l in enumerate(lvls):
-                    bx = 204 + i * 8
-                    bh = max(4, min(28, l))
-                    by0 = 23 - bh // 2
-                    by1 = 23 + bh // 2
-                    canvas.create_rectangle(bx, by0, bx + 4, by1, fill="#ffffff", outline="")
+                    bx = 126 + i * 9
+                    bh = max(6, min(32, int(l * 1.3)))
+                    by0 = 26 - bh // 2
+                    by1 = 26 + bh // 2
+                    canvas.create_rectangle(bx, by0, bx + 5, by1, fill="#38bdf8", outline="")
             elif st == "processing":
-                canvas.configure(bg="#4338ca", highlightbackground="#a5b4fc")
+                canvas.configure(bg="#1e1b4b", highlightbackground="#818cf8", highlightthickness=1.5)
+                canvas.create_oval(24, 11, 54, 41, fill="#312e81", outline="#a5b4fc", width=1)
+                canvas.create_text(39, 26, text="✨", fill="#ffffff", font=("Segoe UI Emoji", 11))
                 canvas.create_text(
-                    138,
-                    23,
-                    text="⏳ Текст болгож бичиж байна...",
-                    fill="#ffffff",
+                    145,
+                    26,
+                    text="Таньж байна...",
+                    fill="#e0e7ff",
                     font=("Segoe UI", 9, "bold"),
                 )
             elif st == "success":
-                canvas.configure(bg="#047857", highlightbackground="#6ee7b7")
-                preview = FLOWBAR_STATE.get("last_text", "")[:20]
+                canvas.configure(bg="#064e3b", highlightbackground="#10b981", highlightthickness=1.5)
+                canvas.create_oval(24, 11, 54, 41, fill="#065f46", outline="#34d399", width=1)
+                canvas.create_text(39, 26, text="✓", fill="#34d399", font=("Segoe UI", 12, "bold"))
+                preview = FLOWBAR_STATE.get("last_text", "")[:18]
                 canvas.create_text(
-                    138,
-                    23,
-                    text=f"✅ Бичигдлээ: {preview}",
+                    145,
+                    26,
+                    text=f"Бичигдлээ: {preview}",
                     fill="#ffffff",
                     font=("Segoe UI", 9, "bold"),
                 )
             else:
-                canvas.configure(bg="#7f1d1d", highlightbackground="#f87171")
-                err_txt = FLOWBAR_STATE.get("error", "Дахин ярина уу")[:22]
+                canvas.configure(bg="#450a0a", highlightbackground="#f59e0b", highlightthickness=1.5)
+                err_txt = FLOWBAR_STATE.get("error", "Дахин ярина уу")[:18]
                 canvas.create_text(
-                    138,
-                    23,
+                    135,
+                    26,
                     text=f"⚠️ {err_txt}",
-                    fill="#ffffff",
+                    fill="#fef08a",
                     font=("Segoe UI", 9, "bold"),
                 )
 
-            # Language badge
-            canvas.create_rectangle(254, 11, 308, 35, fill="#1e293b", outline="#475569", width=1)
-            canvas.create_text(281, 23, text=l_label, fill="#e2e8f0", font=("Segoe UI", 8, "bold"))
+            # Language badge (x=260..318, y=14..38)
+            canvas.create_rectangle(260, 14, 318, 38, fill="#1e293b", outline="#38bdf8" if cur_lang=="auto" else "#475569", width=1)
+            canvas.create_text(289, 26, text=l_label, fill="#f8fafc", font=("Segoe UI", 8, "bold"))
 
-            # Close button
-            canvas.create_text(324, 23, text="✕", fill="#94a3b8", font=("Segoe UI", 10, "bold"))
+            # Close button (x=330..352)
+            canvas.create_oval(328, 15, 350, 37, fill="#1e293b", outline="#334155", width=1)
+            canvas.create_text(339, 26, text="✕", fill="#94a3b8", font=("Segoe UI", 9, "bold"))
 
             root.after(80, refresh_ui)
 
@@ -2961,12 +3039,30 @@ async def tts(req: TTSRequest):
 
     synth_text = prepare_tts_text_for_voice(text, base_voice)
 
+    # Natural Breathing Pauses: insert SSML break tags on punctuation
+    # 220ms on commas/semicolons, 450ms on sentence stops
+    escaped_text = synth_text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    escaped_text = re.sub(r"([,;])\s*", r"\1 <break time='220ms'/> ", escaped_text)
+    escaped_text = re.sub(r"([.!?。！？])\s*", r"\1 <break time='450ms'/> ", escaped_text)
+    escaped_text = re.sub(r"\n+", " <break time='600ms'/> ", escaped_text)
+
+    # Dynamic prosody: if text ends with '?', raise pitch slightly for questioning inflection
+    actual_pitch = pitch_str
+    if synth_text.strip().endswith("?") and "+0Hz" in pitch_str:
+        actual_pitch = "+8Hz"
+
+    ssml_payload = f"""<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='mn-MN'>
+        <voice name='{base_voice}'>
+            <prosody rate='{rate_str}' pitch='{actual_pitch}'>
+                {escaped_text}
+            </prosody>
+        </voice>
+    </speak>"""
+
     try:
         communicate = edge_tts.Communicate(
-            text=synth_text,
+            text=ssml_payload,
             voice=base_voice,
-            rate=rate_str,
-            pitch=pitch_str,
         )
         raw_mp3 = bytearray()
         async for chunk in communicate.stream():
