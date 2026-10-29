@@ -1,8 +1,8 @@
 import type { Language, RecordingMode, ProcessingMode, Shortcut, Theme, SttEngine, Settings, ChimegeVoice } from "./types";
 
 export const languages: { value: Language; label: string; icon: string }[] = [
-  { value: "mn", label: "Монгол (+EN/JP холимог)", icon: "🇲🇳" },
-  { value: "auto", label: "Auto (МН • EN • JP)", icon: "🌐" },
+  { value: "mn", label: "Монгол хэл (Цэвэр монгол)", icon: "🇲🇳" },
+  { value: "auto", label: "Олон хэл (MN • EN • JP холимог)", icon: "🌐" },
   { value: "en", label: "English", icon: "🇬🇧" },
   { value: "ja", label: "日本語 (Япон)", icon: "🇯🇵" },
 ];
