@@ -27,6 +27,17 @@ try:
 except Exception:
     pass
 
+if sys.stdout is not None and hasattr(sys.stdout, "reconfigure"):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+if sys.stderr is not None and hasattr(sys.stderr, "reconfigure"):
+    try:
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 if sys.stdout is not None:
     _sh = logging.StreamHandler(sys.stdout)
     _sh.setFormatter(_log_format)
@@ -2722,7 +2733,8 @@ def _process_native_recording() -> None:
             FLOWBAR_STATE["status"] = "error"
             FLOWBAR_STATE["error"] = err[:28] if err else "Тод ярина уу"
             play_sound_cue("error")
-            print("[FlowBar] STT empty:", err)
+            safe_err = str(err).encode("ascii", "replace").decode("ascii") if err else ""
+            print("[FlowBar] STT empty:", safe_err)
             time.sleep(2.0)
     except Exception as e:
         import traceback
