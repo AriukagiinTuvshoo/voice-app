@@ -1,3 +1,18 @@
+import sys
+import os as _os
+
+# pythonw.exe (hidden launch) has no console: stdout/stderr are None and print() would crash.
+if sys.stdout is None or sys.stderr is None:
+    try:
+        _log_dir = _os.path.dirname(_os.path.abspath(__file__))
+        _log = open(_os.path.join(_log_dir, "voice-server.log"), "a", encoding="utf-8", buffering=1)
+    except Exception:
+        _log = open(_os.devnull, "w")
+    if sys.stdout is None:
+        sys.stdout = _log
+    if sys.stderr is None:
+        sys.stderr = _log
+
 import asyncio
 import ctypes
 import io
@@ -28,12 +43,31 @@ app = FastAPI(
     version="4.0.0",
 )
 
+SERVER_PORT = int(os.environ.get("VOICE_PORT", "8000"))
+_ALLOWED_HOSTS = {f"127.0.0.1:{SERVER_PORT}", f"localhost:{SERVER_PORT}"}
+_ALLOWED_ORIGINS = {f"http://127.0.0.1:{SERVER_PORT}", f"http://localhost:{SERVER_PORT}"}
+
+
+@app.middleware("http")
+async def local_only_guard(request: Request, call_next):
+    """Blocks DNS-rebinding and cross-site requests: only this app's own origin may call the API."""
+    host = (request.headers.get("host") or "").lower()
+    if host not in _ALLOWED_HOSTS:
+        return Response("Forbidden host", status_code=403)
+    origin = request.headers.get("origin")
+    if origin is not None and origin.lower() not in _ALLOWED_ORIGINS:
+        return Response("Forbidden origin", status_code=403)
+    if request.headers.get("sec-fetch-site", "same-origin") not in ("same-origin", "none"):
+        return Response("Forbidden cross-site request", status_code=403)
+    return await call_next(request)
+
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=sorted(_ALLOWED_ORIGINS),
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "DELETE"],
+    allow_headers=["Content-Type"],
 )
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -2908,4 +2942,4 @@ except Exception as e:
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="127.0.0.1", port=8000, reload=False)
+    uvicorn.run(app, host="127.0.0.1", port=SERVER_PORT, reload=False, log_level="warning")

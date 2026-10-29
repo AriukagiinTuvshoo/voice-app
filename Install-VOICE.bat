@@ -1,39 +1,74 @@
 @echo off
-chcp 65001 >nul
-title VOICE Desktop Installer
+setlocal
+title VOICE Installer
 cd /d "%~dp0"
 
-echo ========================================================
-echo   VOICE - Speak. Clean. Write. (v1.2.0 Суулгагч)
-echo ========================================================
+echo ============================================================
+echo   VOICE - Speak. Clean. Write.   (Installer v1.2.0)
+echo ============================================================
 echo.
 
-set "TARGET_DIR=%LOCALAPPDATA%\VOICE-App"
-echo [1/3] Файлуудыг хуулж байна: %TARGET_DIR%...
-if not exist "%TARGET_DIR%" mkdir "%TARGET_DIR%"
-xcopy /E /I /Y /Q "%~dp0*" "%TARGET_DIR%\" >nul 2>&1
+set "TARGET=%LOCALAPPDATA%\VOICE-App"
 
-:: Remove broken legacy VOICE.exe if present
-if exist "%TARGET_DIR%\VOICE.exe" del /f /q "%TARGET_DIR%\VOICE.exe" >nul 2>&1
+rem ---- 1. Find Python 3.10+ -------------------------------------------
+set "PY="
+py -3 -c "import sys; sys.exit(0 if sys.version_info>=(3,10) else 1)" >nul 2>&1
+if not errorlevel 1 set "PY=py -3"
+if defined PY goto have_python
+python -c "import sys; sys.exit(0 if sys.version_info>=(3,10) else 1)" >nul 2>&1
+if not errorlevel 1 set "PY=python"
+if defined PY goto have_python
 
-echo [2/3] Windows хамгаалалтыг зөвшөөрч (Unblock), Desktop товчлол үүсгэж байна...
-powershell -NoProfile -Command ^
-  "Get-ChildItem -Path '%TARGET_DIR%' -Recurse -ErrorAction SilentlyContinue | Unblock-File -ErrorAction SilentlyContinue; " ^
-  "$WshShell = New-Object -ComObject WScript.Shell; " ^
-  "$desktop = [Environment]::GetFolderPath('Desktop'); " ^
-  "$shortcut = $WshShell.CreateShortcut(\"$desktop\VOICE.lnk\"); " ^
-  "$shortcut.TargetPath = 'wscript.exe'; " ^
-  "$shortcut.Arguments = \"\"\"%TARGET_DIR%\VOICE-Silent.vbs\"\"\"; " ^
-  "$shortcut.WorkingDirectory = '%TARGET_DIR%'; " ^
-  "$ico = '%TARGET_DIR%\public\voice.ico'; " ^
-  "if (Test-Path $ico) { $shortcut.IconLocation = $ico; } " ^
-  "$shortcut.Description = 'VOICE — Speak. Clean. Write.'; " ^
-  "$shortcut.Save()"
+echo [!] Python 3.10 or newer was not found.
+echo     Install it from https://www.python.org/downloads/
+echo     (tick "Add python.exe to PATH" and keep "tcl/tk" selected),
+echo     or run:  winget install Python.Python.3.12
+echo     Then run Install-VOICE.bat again.
+echo.
+pause
+exit /b 1
 
-echo [3/3] VOICE программыг эхлүүлж байна...
-start "" wscript.exe "%TARGET_DIR%\VOICE-Silent.vbs"
+:have_python
+echo [1/4] Python found: %PY%
+
+rem ---- 2. Copy app files ------------------------------------------------
+echo [2/4] Copying files to %TARGET% ...
+if not exist "%TARGET%" mkdir "%TARGET%"
+xcopy /E /I /Y /Q "%~dp0out" "%TARGET%\out" >nul
+xcopy /E /I /Y /Q "%~dp0public" "%TARGET%\public" >nul
+for %%F in (tts_server.py requirements.txt Start-VOICE.bat VOICE-Silent.vbs make-shortcut.ps1 README.md LICENSE) do (
+    if exist "%~dp0%%F" copy /Y "%~dp0%%F" "%TARGET%\" >nul
+)
+
+rem ---- 3. Private virtual environment + dependencies ------------------------
+echo [3/4] Installing Python packages (first time only, needs internet) ...
+if not exist "%TARGET%\.venv\Scripts\pythonw.exe" (
+    %PY% -m venv "%TARGET%\.venv"
+    if errorlevel 1 goto fail
+)
+"%TARGET%\.venv\Scripts\python.exe" -m pip install --disable-pip-version-check --quiet --upgrade pip
+"%TARGET%\.venv\Scripts\python.exe" -m pip install --disable-pip-version-check -r "%TARGET%\requirements.txt"
+if errorlevel 1 goto fail
+
+rem tkinter is needed for the floating FlowBar
+"%TARGET%\.venv\Scripts\python.exe" -c "import tkinter" >nul 2>&1
+if errorlevel 1 (
+    echo [!] Python was installed without Tcl/Tk: the floating FlowBar will not appear.
+    echo     Re-run the Python installer and keep "tcl/tk and IDLE" selected.
+)
+
+rem ---- 4. Desktop shortcut + start ------------------------------------------
+echo [4/4] Creating Desktop shortcut ...
+powershell -NoProfile -ExecutionPolicy Bypass -File "%TARGET%\make-shortcut.ps1" -AppDir "%TARGET%"
 
 echo.
-echo Амжилттай суулгаж дууслаа! Таны Desktop дээр VOICE товчлол үүссэн.
-timeout /t 2 /nobreak >nul
+echo Done! Starting VOICE ...
+start "" wscript.exe "%TARGET%\VOICE-Silent.vbs"
+timeout /t 3 /nobreak >nul
 exit /b 0
+
+:fail
+echo.
+echo [!] Installation failed. Check your internet connection and try again.
+pause
+exit /b 1

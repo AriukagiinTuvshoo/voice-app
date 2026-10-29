@@ -1,69 +1,56 @@
 @echo off
-chcp 65001 >nul
-title VOICE Desktop Launcher
+setlocal
 cd /d "%~dp0"
 
-echo =======================================================
-echo   VOICE - Speak. Clean. Write. (v1.2.0)
-echo   Монгол, Англи, Япон яриа таних ба Windows шууд бичигч
-echo =======================================================
-echo.
+set "PYW=%~dp0.venv\Scripts\pythonw.exe"
+if not exist "%PYW%" goto not_installed
 
-:: 1. Unblock files for Windows Smart App Control
-powershell -NoProfile -Command "Get-ChildItem -Path '%~dp0' -Recurse -ErrorAction SilentlyContinue | Unblock-File -ErrorAction SilentlyContinue" >nul 2>&1
+rem ---- Is OUR server already running on port 8000? --------------------------------
+powershell -NoProfile -Command "try { if ((Invoke-RestMethod -Uri 'http://127.0.0.1:8000/health' -TimeoutSec 2).voice_cloning) { exit 0 } } catch { }; exit 1"
+if not errorlevel 1 goto open_window
 
-:: 2. Check if port 8000 is responding properly
-set "NEED_START=1"
-netstat -ano | findstr ":8000 " | findstr "LISTENING" >nul
-if %errorlevel% equ 0 (
-    powershell -NoProfile -Command "(Invoke-WebRequest -Uri 'http://127.0.0.1:8000/health' -TimeoutSec 2 -UseBasicParsing -ErrorAction SilentlyContinue).StatusCode" 2>nul | findstr "200" >nul
-    if %errorlevel% equ 0 (
-        set "NEED_START=0"
-        echo [1/2] VOICE Engine аль хэдийн бэлэн ажиллаж байна.
-    ) else (
-        echo [1/2] Порт 8000 гацсан байсан тул шинэчилж байна...
-        for /f "tokens=5" %%a in ('netstat -ano ^| findstr ":8000 " ^| findstr "LISTENING"') do (
-            taskkill /F /PID %%a >nul 2>&1
-        )
-        timeout /t 1 /nobreak >nul
-    )
-)
+rem ---- Port 8000 used by some other program? ---------------------------------------
+netstat -ano | findstr /R /C:":8000 .*LISTENING" >nul
+if not errorlevel 1 goto port_busy
 
-:: 3. Start Python tts_server.py (preferred for hardware mic, Ctrl+Alt & native FlowBar) or node server.cjs
-if "%NEED_START%"=="1" (
-    echo [1/2] VOICE Engine эхлүүлж байна (Port 8000)...
-    set "PYTHON_EXE="
-    if exist "%~dp0.venv\Scripts\pythonw.exe" set "PYTHON_EXE=%~dp0.venv\Scripts\pythonw.exe"
-    if not defined PYTHON_EXE if exist "%~dp0.venv\Scripts\python.exe" set "PYTHON_EXE=%~dp0.venv\Scripts\python.exe"
-    if not defined PYTHON_EXE if exist "C:\Users\enhtv\.gemini\antigravity\scratch\voice-main\.venv\Scripts\pythonw.exe" set "PYTHON_EXE=C:\Users\enhtv\.gemini\antigravity\scratch\voice-main\.venv\Scripts\pythonw.exe"
-    if not defined PYTHON_EXE if exist "C:\Users\enhtv\.gemini\antigravity\scratch\voice-main\.venv\Scripts\python.exe" set "PYTHON_EXE=C:\Users\enhtv\.gemini\antigravity\scratch\voice-main\.venv\Scripts\python.exe"
+rem ---- Start the engine (hidden). It also starts the floating FlowBar. -----------
+start "" "%PYW%" "%~dp0tts_server.py"
 
-    if defined PYTHON_EXE if exist "%~dp0tts_server.py" (
-        start "" "%PYTHON_EXE%" "%~dp0tts_server.py"
-    ) else (
-        start /b "" node "%~dp0server.cjs" 8000
-    )
-    timeout /t 2 /nobreak >nul
-)
+rem ---- Wait up to ~20 s until it answers ---------------------------------------------
+set /a TRIES=0
+:wait_loop
+powershell -NoProfile -Command "try { if ((Invoke-RestMethod -Uri 'http://127.0.0.1:8000/health' -TimeoutSec 2).voice_cloning) { exit 0 } } catch { }; exit 1"
+if not errorlevel 1 goto open_window
+set /a TRIES+=1
+if %TRIES% GEQ 20 goto start_failed
+timeout /t 1 /nobreak >nul
+goto wait_loop
 
-:: 4. Launch Main App Window in Microsoft Edge / Chrome App Mode (1-second instant start)
-echo [2/2] VOICE ажлын талбарыг нээж байна...
+:open_window
 set "APP_URL=http://127.0.0.1:8000/dashboard"
-
 if exist "%ProgramFiles(x86)%\Microsoft\Edge\Application\msedge.exe" (
     start "" "%ProgramFiles(x86)%\Microsoft\Edge\Application\msedge.exe" --app=%APP_URL% --window-size=1280,820
     exit /b 0
 )
-
 if exist "%ProgramFiles%\Microsoft\Edge\Application\msedge.exe" (
     start "" "%ProgramFiles%\Microsoft\Edge\Application\msedge.exe" --app=%APP_URL% --window-size=1280,820
     exit /b 0
 )
-
 if exist "%ProgramFiles%\Google\Chrome\Application\chrome.exe" (
     start "" "%ProgramFiles%\Google\Chrome\Application\chrome.exe" --app=%APP_URL% --window-size=1280,820
     exit /b 0
 )
-
 start "" "%APP_URL%"
 exit /b 0
+
+:not_installed
+powershell -NoProfile -Command "Add-Type -AssemblyName PresentationFramework; [void][System.Windows.MessageBox]::Show('VOICE is not installed yet. Run Install-VOICE.bat first.','VOICE')"
+exit /b 1
+
+:port_busy
+powershell -NoProfile -Command "Add-Type -AssemblyName PresentationFramework; [void][System.Windows.MessageBox]::Show('Port 8000 is used by another program. Close it and start VOICE again.','VOICE')"
+exit /b 1
+
+:start_failed
+powershell -NoProfile -Command "Add-Type -AssemblyName PresentationFramework; [void][System.Windows.MessageBox]::Show('VOICE engine did not start. See voice-server.log in the VOICE folder.','VOICE')"
+exit /b 1
