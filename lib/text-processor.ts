@@ -3,10 +3,6 @@ import type { ProcessingMode } from "./types";
 
 const CODESWITCH_REPLACEMENTS: Array<[RegExp, string]> = [
   // Mongolian proper name & phrase phonetic fixes
-  [/\bнамайг\s+түшин\s*тулга?\b/giu, "намайг Түвшинтулга"],
-  [/\bнамайг\s+түвшин\s*тулга?\b/giu, "намайг Түвшинтулга"],
-  [/\bтүшин\s*тулга?\b/giu, "Түвшинтулга"],
-  [/\bтүвшин\s+тул\b/giu, "Түвшинтулга"],
 
   // Conversational English phrases spoken mid-sentence
   [/\bмай\s+нэйм\s+из\b/giu, "my name is"],
