@@ -2024,9 +2024,19 @@ if os.name == "nt":
     user32.CloseClipboard.argtypes = []
     user32.CloseClipboard.restype = wintypes.BOOL
 
-def get_primary_work_area():
+def get_primary_work_area() -> tuple[int, int, int, int]:
+    global _tk_root
     if os.name != "nt":
         return 0, 0, 1280, 720
+    # Always prioritize Tkinter's logical coordinate space for root.geometry!
+    if _tk_root is not None:
+        try:
+            sw = _tk_root.winfo_screenwidth()
+            sh = _tk_root.winfo_screenheight()
+            if sw > 400 and sh > 300:
+                return 0, 0, sw, max(sh - 48, 200)
+        except Exception:
+            pass
     r = wintypes.RECT()
     if user32.SystemParametersInfoW(SPI_GETWORKAREA, 0, ctypes.byref(r), 0):
         return r.left, r.top, r.right, r.bottom
