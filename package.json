@@ -1,6 +1,6 @@
 {
   "name": "voice-app",
-  "version": "1.2.2",
+  "version": "1.2.3",
   "description": "VOICE Desktop - Mongolian/English/Japanese speech-to-text, VoiceStudio TTS and system-wide dictation for Windows",
   "private": true,
   "main": "electron/main.cjs",
