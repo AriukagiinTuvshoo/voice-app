@@ -17,17 +17,44 @@ interface IWindowWithElectron extends Window {
   };
 }
 
+const LANGUAGES = [
+  { code: "auto", label: "AUTO", icon: "🌐" },
+  { code: "mn", label: "MN", icon: "🇲🇳" },
+  { code: "en", label: "EN", icon: "🇬🇧" },
+  { code: "ja", label: "JA", icon: "🇯🇵" },
+];
+
 export default function FlowBarPage() {
-  const { settings } = useSettings();
+  const { settings, update } = useSettings();
   const [state, setState] = useState<"idle" | "recording" | "processing" | "success" | "error">("idle");
   const [errorMessage, setErrorMessage] = useState("");
   const [audioLevels, setAudioLevels] = useState<number[]>([4, 10, 16, 10, 4]);
   const [seconds, setSeconds] = useState(0);
+  const [langIndex, setLangIndex] = useState(0);
+
+  // Drag position
+  const [pos, setPos] = useState({ x: 0, y: 0 });
+  const isDraggingRef = useRef(false);
+  const dragStartRef = useRef({ x: 0, y: 0, posX: 0, posY: 0 });
 
   const recorderRef = useRef<AudioRecorder | null>(null);
   const browserRecognizerRef = useRef<BrowserSpeechRecognizer | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
+  // Restore saved position
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("voice_flowbar_pos");
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (typeof parsed.x === "number" && typeof parsed.y === "number") {
+          setPos(parsed);
+        }
+      }
+    } catch {}
+  }, []);
+
+  // Timer while recording
   useEffect(() => {
     if (state === "recording") {
       timerRef.current = setInterval(() => setSeconds((s) => s + 1), 1000);
@@ -38,6 +65,21 @@ export default function FlowBarPage() {
       if (timerRef.current) clearInterval(timerRef.current);
     };
   }, [state]);
+
+  const currentLang = LANGUAGES[langIndex];
+
+  const cycleLanguage = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    const nextIdx = (langIndex + 1) % LANGUAGES.length;
+    setLangIndex(nextIdx);
+    const nextCode = LANGUAGES[nextIdx].code;
+    update("language", nextCode as any);
+    fetch("/api/flowbar", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "set_language", language: nextCode }),
+    }).catch(() => {});
+  };
 
   const stopAndTranscribe = useCallback(async () => {
     setState("processing");
@@ -58,7 +100,7 @@ export default function FlowBarPage() {
 
         const formData = new FormData();
         formData.append("audio", wavBlob, "speech.wav");
-        formData.append("language", settings.language);
+        formData.append("language", currentLang.code);
 
         const res = await fetch("/api/chimege/transcribe", {
           method: "POST",
@@ -85,40 +127,43 @@ export default function FlowBarPage() {
         mode: settings.processingMode,
         autoPunctuation: settings.autoPunctuation,
         removeFillers: settings.removeFillers,
-        language: settings.language,
+        language: currentLang.code as any,
       });
 
       HistoryStore.add({
         text: processed,
         rawText: text,
         durationSeconds: seconds,
-        language: settings.language,
+        language: currentLang.code as any,
         engine: "Voice FlowBar",
         wordCount: processed.split(/\s+/).length,
         charCount: processed.length,
       });
 
-      // Type directly into active window via Python Win32 SendInput + Electron + Clipboard
+      // 1. Copy to clipboard
       navigator.clipboard?.writeText(processed).catch(() => {});
+
+      // 2. Direct injection into active cursor (Word, Chrome, Telegram, etc.)
       await fetch("/api/flowbar", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ insertText: processed }),
+        body: JSON.stringify({ insertText: processed, text: processed }),
       }).catch(() => {});
 
+      // 3. Electron IPC fallback
       const win = typeof window !== "undefined" ? (window as unknown as IWindowWithElectron) : null;
       if (win?.electron?.insertText) {
         win.electron.insertText(processed);
       }
 
       setState("success");
-      setTimeout(() => setState("idle"), 2200);
+      setTimeout(() => setState("idle"), 2400);
     } catch {
       setErrorMessage("Дахин оролдоно уу");
       setState("error");
       setTimeout(() => setState("idle"), 2500);
     }
-  }, [settings, seconds]);
+  }, [settings, seconds, currentLang.code]);
 
   const startRecording = useCallback(async () => {
     setSeconds(0);
@@ -126,7 +171,7 @@ export default function FlowBarPage() {
     try {
       if (isBrowserSpeechSupported() && settings.sttEngine !== "chimege") {
         const recognizer = new BrowserSpeechRecognizer({
-          language: settings.language,
+          language: currentLang.code === "auto" ? "mn" : (currentLang.code as any),
           onError: (err) => console.warn("FlowBar browser speech error:", err),
         });
         browserRecognizerRef.current = recognizer;
@@ -137,18 +182,25 @@ export default function FlowBarPage() {
         deviceId: settings.selectedAudioDevice,
         autoStop: settings.autoStop,
         onAudioLevel: (lvl) => {
-          setAudioLevels((prev) => [...prev.slice(1), Math.max(4, Math.round(lvl * 22))]);
+          setAudioLevels((prev) => [...prev.slice(1), Math.max(4, Math.round(lvl * 24))]);
         },
         onSilenceDetected: () => stopAndTranscribe(),
       });
       recorderRef.current = recorder;
       await recorder.start();
       setState("recording");
+
+      // Notify server
+      fetch("/api/flowbar", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "start", language: currentLang.code }),
+      }).catch(() => {});
     } catch {
       setErrorMessage("Микрофон шалгана уу");
       setState("error");
     }
-  }, [settings, stopAndTranscribe]);
+  }, [settings, currentLang.code, stopAndTranscribe]);
 
   const toggleRecording = () => {
     if (state === "idle" || state === "error" || state === "success") {
@@ -158,6 +210,19 @@ export default function FlowBarPage() {
     }
   };
 
+  // Keyboard shortcut listener inside window
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey && e.altKey) || e.key === "F8") {
+        e.preventDefault();
+        toggleRecording();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  });
+
+  // Global Electron IPC shortcuts
   useEffect(() => {
     const win = typeof window !== "undefined" ? (window as unknown as IWindowWithElectron) : null;
     if (win?.electron?.onRecordingStart && win?.electron?.onRecordingStop) {
@@ -165,6 +230,38 @@ export default function FlowBarPage() {
       win.electron.onRecordingStop(() => stopAndTranscribe());
     }
   }, [startRecording, stopAndTranscribe]);
+
+  // Drag Handlers
+  const onMouseDownGrip = (e: React.MouseEvent) => {
+    isDraggingRef.current = true;
+    dragStartRef.current = {
+      x: e.clientX,
+      y: e.clientY,
+      posX: pos.x,
+      posY: pos.y,
+    };
+
+    const onMouseMove = (ev: MouseEvent) => {
+      if (!isDraggingRef.current) return;
+      const dx = ev.clientX - dragStartRef.current.x;
+      const dy = ev.clientY - dragStartRef.current.y;
+      const newX = dragStartRef.current.posX + dx;
+      const newY = dragStartRef.current.posY + dy;
+      setPos({ x: newX, y: newY });
+    };
+
+    const onMouseUp = () => {
+      isDraggingRef.current = false;
+      window.removeEventListener("mousemove", onMouseMove);
+      window.removeEventListener("mouseup", onMouseUp);
+      try {
+        localStorage.setItem("voice_flowbar_pos", JSON.stringify(pos));
+      } catch {}
+    };
+
+    window.addEventListener("mousemove", onMouseMove);
+    window.addEventListener("mouseup", onMouseUp);
+  };
 
   return (
     <div
@@ -178,16 +275,15 @@ export default function FlowBarPage() {
       }}
     >
       <div
-        onClick={toggleRecording}
         style={{
-          cursor: "pointer",
+          transform: `translate(${pos.x}px, ${pos.y}px)`,
           borderRadius: "999px",
-          transition: "all 0.25s cubic-bezier(0.4, 0, 0.2, 1)",
+          transition: isDraggingRef.current ? "none" : "background 0.25s, box-shadow 0.25s",
           background:
             state === "idle"
-              ? "rgba(15, 19, 26, 0.92)"
+              ? "linear-gradient(135deg, rgba(20, 25, 43, 0.94) 0%, rgba(12, 15, 30, 0.96) 100%)"
               : state === "recording"
-              ? "linear-gradient(135deg, #ef4444 0%, #dc2626 100%)"
+              ? "linear-gradient(135deg, #ef4444 0%, #b91c1c 100%)"
               : state === "processing"
               ? "linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)"
               : state === "success"
@@ -196,71 +292,172 @@ export default function FlowBarPage() {
           color: "#ffffff",
           display: "flex",
           alignItems: "center",
-          justifyContent: "center",
-          gap: "8px",
-          padding: "8px 18px",
+          gap: "10px",
+          padding: "6px 14px",
           boxShadow:
             state === "recording"
-              ? "0 0 35px rgba(239, 68, 68, 0.6)"
+              ? "0 0 35px rgba(239, 68, 68, 0.7)"
               : state === "processing"
-              ? "0 0 30px rgba(99, 102, 241, 0.5)"
-              : "0 10px 30px rgba(0, 0, 0, 0.35)",
-          border: "1px solid rgba(255, 255, 255, 0.16)",
-          backdropFilter: "blur(20px)",
-          WebkitBackdropFilter: "blur(20px)",
-          minWidth: "160px",
-          height: "38px",
+              ? "0 0 30px rgba(99, 102, 241, 0.6)"
+              : state === "success"
+              ? "0 0 25px rgba(16, 185, 129, 0.5)"
+              : "0 10px 30px rgba(0, 0, 0, 0.5), 0 0 20px rgba(99, 102, 241, 0.2)",
+          border:
+            state === "recording"
+              ? "1px solid rgba(254, 202, 202, 0.6)"
+              : "1px solid rgba(165, 180, 252, 0.25)",
+          backdropFilter: "blur(24px)",
+          WebkitBackdropFilter: "blur(24px)",
+          height: "44px",
           userSelect: "none",
+          cursor: "default",
         }}
       >
-        {state === "idle" && (
-          <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-            <MicIcon width={14} height={14} style={{ color: "#818cf8" }} />
-            <span style={{ fontSize: "11px", fontWeight: 700, letterSpacing: "0.06em" }}>
-              VOICE FLOW (Ctrl+Alt)
-            </span>
-          </div>
-        )}
+        {/* Drag Grip Handle */}
+        <div
+          onMouseDown={onMouseDownGrip}
+          title="Чирч хүссэн байрлалдаа зөөх"
+          style={{
+            cursor: "grab",
+            display: "flex",
+            alignItems: "center",
+            padding: "4px 2px",
+            color: "rgba(255, 255, 255, 0.45)",
+            fontSize: "14px",
+            letterSpacing: "-1px",
+          }}
+        >
+          ⋮⋮
+        </div>
 
-        {state === "recording" && (
-          <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-            <span style={{ width: "7px", height: "7px", borderRadius: "50%", background: "#fff" }} />
-            <span style={{ fontSize: "12px", fontWeight: 700 }}>{seconds}с</span>
-            <div style={{ display: "flex", alignItems: "center", gap: "2px", height: "18px" }}>
-              {audioLevels.map((lvl, i) => (
-                <div
-                  key={i}
-                  style={{
-                    width: "3px",
-                    height: `${Math.max(4, lvl)}px`,
-                    background: "#ffffff",
-                    borderRadius: "999px",
-                    transition: "height 0.08s ease",
-                  }}
-                />
-              ))}
+        {/* Main Mic Button & Status */}
+        <div
+          onClick={toggleRecording}
+          title="Дарж ярих (Ctrl+Alt)"
+          style={{
+            cursor: "pointer",
+            display: "flex",
+            alignItems: "center",
+            gap: "8px",
+          }}
+        >
+          {state === "idle" && (
+            <>
+              <div
+                style={{
+                  width: "28px",
+                  height: "28px",
+                  borderRadius: "50%",
+                  background: "linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  boxShadow: "0 0 12px rgba(99, 102, 241, 0.5)",
+                }}
+              >
+                <MicIcon width={14} height={14} style={{ color: "#ffffff" }} />
+              </div>
+              <span style={{ fontSize: "12px", fontWeight: 700, letterSpacing: "0.04em", color: "#f8fafc" }}>
+                VOICE FLOW (Ctrl+Alt)
+              </span>
+            </>
+          )}
+
+          {state === "recording" && (
+            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+              <span
+                style={{
+                  width: "8px",
+                  height: "8px",
+                  borderRadius: "50%",
+                  background: "#ffffff",
+                  animation: "pulse 1s infinite",
+                }}
+              />
+              <span style={{ fontSize: "13px", fontWeight: 700 }}>{seconds}с</span>
+              <div style={{ display: "flex", alignItems: "center", gap: "3px", height: "20px" }}>
+                {audioLevels.map((lvl, i) => (
+                  <div
+                    key={i}
+                    style={{
+                      width: "3px",
+                      height: `${Math.max(4, lvl)}px`,
+                      background: "#ffffff",
+                      borderRadius: "999px",
+                      transition: "height 0.08s ease",
+                    }}
+                  />
+                ))}
+              </div>
             </div>
-          </div>
-        )}
+          )}
 
-        {state === "processing" && (
-          <span style={{ fontSize: "12px", fontWeight: 600 }}>
-            Текст болгож байна...
-          </span>
-        )}
+          {state === "processing" && (
+            <span style={{ fontSize: "12px", fontWeight: 600 }}>
+              Текст болгож байна...
+            </span>
+          )}
 
-        {state === "success" && (
-          <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-            <CheckIcon width={14} height={14} />
-            <span style={{ fontSize: "12px", fontWeight: 700 }}>Бичигдлээ!</span>
-          </div>
-        )}
+          {state === "success" && (
+            <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+              <CheckIcon width={14} height={14} />
+              <span style={{ fontSize: "12px", fontWeight: 700 }}>Бичигдлээ!</span>
+            </div>
+          )}
 
-        {state === "error" && (
-          <span style={{ fontSize: "11px", fontWeight: 500 }}>
-            {errorMessage}
-          </span>
-        )}
+          {state === "error" && (
+            <span style={{ fontSize: "12px", fontWeight: 600 }}>
+              {errorMessage}
+            </span>
+          )}
+        </div>
+
+        {/* Language Badge (Click to toggle AUTO / MN / EN / JA) */}
+        <div
+          onClick={cycleLanguage}
+          title={`Хэл солих: ${currentLang.label} (Дарж солино уу)`}
+          style={{
+            cursor: "pointer",
+            display: "flex",
+            alignItems: "center",
+            gap: "4px",
+            padding: "3px 8px",
+            borderRadius: "999px",
+            background: "rgba(255, 255, 255, 0.12)",
+            border: "1px solid rgba(255, 255, 255, 0.15)",
+            fontSize: "11px",
+            fontWeight: 700,
+            letterSpacing: "0.05em",
+          }}
+        >
+          <span>{currentLang.icon}</span>
+          <span>{currentLang.label}</span>
+        </div>
+
+        {/* Close Button */}
+        <div
+          onClick={(e) => {
+            e.stopPropagation();
+            fetch("/api/flowbar", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ action: "toggle_visibility" }),
+            }).catch(() => {});
+          }}
+          title="Хаах / Нуух"
+          style={{
+            cursor: "pointer",
+            padding: "2px 6px",
+            fontSize: "13px",
+            color: "rgba(255, 255, 255, 0.5)",
+            borderRadius: "50%",
+            transition: "color 0.15s",
+          }}
+          onMouseEnter={(e) => ((e.target as HTMLElement).style.color = "#ffffff")}
+          onMouseLeave={(e) => ((e.target as HTMLElement).style.color = "rgba(255, 255, 255, 0.5)")}
+        >
+          ✕
+        </div>
       </div>
     </div>
   );

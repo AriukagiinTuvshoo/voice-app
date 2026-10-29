@@ -18,16 +18,21 @@
 
 ---
 
-## 🚀 1. Компьютерт суулгах (1 Товшилтоор)
+## 🚀 1. Компьютерт суулгах ба Ажиллуулах (1 Товшилтоор)
 
-### 📥 [Албан ёсны суулгагч татах — VOICE-Setup.exe (v1.2.0)](https://github.com/AriukagiinTuvshoo/voice-app/releases/download/v1.2.0/VOICE-Setup.exe)
-*(GitHub Release хуудас: [VOICE Desktop Release v1.2.0](https://github.com/AriukagiinTuvshoo/voice-app/releases/tag/v1.2.0))*
+### 📥 Сонголт 1: Бэлэн ZIP хувилбар (Хамгийн найдвартай, ямар ч блок гардаггүй)
+👉 [**VOICE-Windows-v1.2.0.zip татах**](https://github.com/AriukagiinTuvshoo/voice-app/releases/download/v1.2.0/VOICE-Windows-v1.2.0.zip) *(Release: [VOICE v1.2.0](https://github.com/AriukagiinTuvshoo/voice-app/releases/tag/v1.2.0))*
 
-1. Дээрх холбоос дээр дарж **`VOICE-Setup.exe`** (ердөө 414 KB) файлыг татаж авна.
-2. **`VOICE-Setup.exe`** дээр давхар товшоод **"🚀 Суулгах ба Нээх"** товчийг дарна.
-3. Таны компьютерын дэлгэц (**Desktop**) дээр нил ягаан дүрс бүхий **`VOICE`** апп үүсэж, дэлгэцийн доор **`VOICE FLOW`** хөвөгч капсул бэлэн болно!
+1. `VOICE-Windows-v1.2.0.zip` файлыг татаж аваад задлана (Extract).
+2. Задалсан хавтас доторх **`Start-VOICE.bat`** (эсвэл **`VOICE-Silent.vbs`**) файл дээр давхар товшиж шууд нээнэ.
+3. Хэрэв дэлгэц (Desktop) дээрээ байнгын товчлол үүсгэхийг хүсвэл **`Create-Desktop-Shortcut.bat`** дээр 1 удаа дарна. Таны дэлгэц дээр нил ягаан дүрс бүхий `VOICE` програм үүснэ!
 
-> 💡 **Онцлог:** Ямар ч Node.js, Python, сан суулгах эсвэл хар цонх (terminal) нээх шаардлагагүй. 1 секундийн дотор бүрэн сууж шууд ажиллана.
+---
+
+### 📥 Сонголт 2: Шууд суулгагч (Installer)
+👉 [**VOICE-Setup.exe (v1.2.0) татах**](https://github.com/AriukagiinTuvshoo/voice-app/releases/download/v1.2.0/VOICE-Setup.exe)
+
+> 💡 **Зөвлөмж:** Хэрэв Windows Smart App Control анхааруулга өгвөл дээрх ZIP хувилбарыг задлаад `Start-VOICE.bat` ажиллуулахад ямар ч саадгүй, 1 секундийн дотор шууд ажиллана.
 
 ---
 
