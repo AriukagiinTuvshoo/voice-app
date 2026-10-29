@@ -9,7 +9,7 @@ import time
 from typing import Any, Optional, Tuple, Dict, Set
 
 # Version
-CORE_VERSION = "1.2.8"
+CORE_VERSION = "1.2.9"
 
 # Setting choices allowed by the engine
 SETTING_CHOICES: Dict[str, Set[str]] = {
@@ -41,6 +41,7 @@ BOOLEAN_SETTINGS: Set[str] = {
     "noise_gate",
     "auto_insert_text",
     "custom_snippets",
+    "tech_terms_normalization",
 }
 
 VOICE_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
@@ -532,4 +533,52 @@ def apply_voice_snippets(text: str, snippets: Optional[Dict[str, str]]) -> str:
             continue
         pattern = r"(?i)\b" + re.escape(trigger.strip()) + r"\b"
         s = re.sub(pattern, replacement.strip(), s)
+    return s
+
+
+TECH_TERMS_MAP: Dict[str, str] = {
+    "фэйсбүүк": "Facebook",
+    "фейсбүүк": "Facebook",
+    "фэйсбүк": "Facebook",
+    "юүтүб": "YouTube",
+    "юүтүби": "YouTube",
+    "ютуб": "YouTube",
+    "инстаграм": "Instagram",
+    "телеграм": "Telegram",
+    "гүгл": "Google",
+    "гугл": "Google",
+    "хром": "Chrome",
+    "виндовс": "Windows",
+    "виндоус": "Windows",
+    "эксел": "Excel",
+    "ворд": "Word",
+    "пауэрпойнт": "PowerPoint",
+    "зуум": "Zoom",
+    "зум": "Zoom",
+    "пидиэф": "PDF",
+    "пдф": "PDF",
+    "вайфай": "Wi-Fi",
+    "вай фай": "Wi-Fi",
+    "риэкт": "React",
+    "пайтон": "Python",
+    "гит": "Git",
+    "гитхаб": "GitHub",
+    "айфон": "iPhone",
+    "андроид": "Android",
+    "капкат": "CapCut",
+    "премьер": "Premiere",
+}
+
+
+def normalize_tech_terms(text: str) -> str:
+    """
+    Converts phonetically spelled Mongolian tech terms into clean standard brand names.
+    e.g. 'фэйсбүүк' -> 'Facebook', 'зуум' -> 'Zoom', 'пидиэф' -> 'PDF', 'гитхаб' -> 'GitHub'
+    """
+    if not text or not isinstance(text, str):
+        return text or ""
+    s = text
+    for cyr, lat in sorted(TECH_TERMS_MAP.items(), key=lambda x: len(x[0]), reverse=True):
+        pattern = r"(?i)\b" + re.escape(cyr) + r"\b"
+        s = re.sub(pattern, lat, s)
     return s

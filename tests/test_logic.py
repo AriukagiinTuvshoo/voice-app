@@ -206,6 +206,19 @@ class TestVoiceCoreLogic(unittest.TestCase):
         self.assertNotIn("invalid", cleaned["snippets"])
         self.assertNotIn("a" * 100, cleaned["snippets"])
 
+    def test_normalize_tech_terms(self):
+        sample = "би гитхаб руу пуш хийгээд зуум дээр уулзаж фэйсбүүк болон ютуб дээр видео хийнэ бас пидиэф файл явуулна"
+        res = voice_core.normalize_tech_terms(sample)
+        self.assertIn("GitHub", res)
+        self.assertIn("Zoom", res)
+        self.assertIn("Facebook", res)
+        self.assertIn("YouTube", res)
+        self.assertIn("PDF", res)
+        self.assertNotIn("гитхаб", res)
+        self.assertNotIn("зуум", res)
+        self.assertNotIn("фэйсбүүк", res)
+        self.assertNotIn("пидиэф", res)
+
 
 class TestFakeTkSmoke(unittest.TestCase):
     """Smoke test for the FlowBar UI command queue and event loop logic using Tk mocks."""

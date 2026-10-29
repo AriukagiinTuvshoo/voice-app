@@ -82,6 +82,7 @@ export const defaultSettings: Settings = {
   noiseGate: true,
   startWithWindows: true,
   customSnippets: true,
+  techTermsNormalization: true,
   snippets: {
     "миний имэйл": "user@example.invalid",
     "миний утас": "+97600000000",

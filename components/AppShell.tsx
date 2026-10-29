@@ -244,6 +244,7 @@ function Provider({ children }: { children: ReactNode }) {
         auto_insert_text: Boolean(settings.autoInsertText),
         start_with_windows: Boolean(settings.startWithWindows),
         custom_snippets: Boolean(settings.customSnippets),
+        tech_terms_normalization: Boolean(settings.techTermsNormalization),
         snippets: settings.snippets || {},
       }),
     }).catch(() => {});
@@ -261,6 +262,7 @@ function Provider({ children }: { children: ReactNode }) {
     settings.autoInsertText,
     settings.startWithWindows,
     settings.customSnippets,
+    settings.techTermsNormalization,
     settings.snippets,
   ]);
 
@@ -1128,10 +1130,72 @@ export function SettingsPanel() {
   const [audioDevices, setAudioDevices] = useState<MediaDeviceInfo[]>([]);
   const [newTrigger, setNewTrigger] = useState("");
   const [newReplacement, setNewReplacement] = useState("");
+  const [isTestingMic, setIsTestingMic] = useState(false);
+  const [micVolume, setMicVolume] = useState(0);
+  const micStreamRef = useRef<MediaStream | null>(null);
+  const audioCtxRef = useRef<AudioContext | null>(null);
+  const animFrameRef = useRef<number | null>(null);
 
   useEffect(() => {
     getAudioInputDevices().then(setAudioDevices);
   }, []);
+
+  const stopMicTest = useCallback(() => {
+    if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
+    if (micStreamRef.current) {
+      micStreamRef.current.getTracks().forEach((t) => t.stop());
+      micStreamRef.current = null;
+    }
+    if (audioCtxRef.current) {
+      audioCtxRef.current.close().catch(() => {});
+      audioCtxRef.current = null;
+    }
+    setIsTestingMic(false);
+    setMicVolume(0);
+  }, []);
+
+  const startMicTest = async () => {
+    if (isTestingMic) {
+      stopMicTest();
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: settings.selectedAudioDevice ? { deviceId: { exact: settings.selectedAudioDevice } } : true,
+      });
+      micStreamRef.current = stream;
+      const ctx = new (window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext)();
+      audioCtxRef.current = ctx;
+      const src = ctx.createMediaStreamSource(stream);
+      const analyser = ctx.createAnalyser();
+      analyser.fftSize = 256;
+      src.connect(analyser);
+      setIsTestingMic(true);
+
+      const dataArray = new Uint8Array(analyser.frequencyBinCount);
+      const checkVolume = () => {
+        analyser.getByteFrequencyData(dataArray);
+        let sum = 0;
+        for (let i = 0; i < dataArray.length; i++) {
+          sum += dataArray[i];
+        }
+        const avg = sum / dataArray.length;
+        const vol = Math.min(100, Math.round((avg / 60) * 100));
+        setMicVolume(vol);
+        animFrameRef.current = requestAnimationFrame(checkVolume);
+      };
+      checkVolume();
+    } catch {
+      alert("Микрофонд холбогдож чадсангүй. Төхөөрөмж зөв сонгогдсон эсэх эсвэл зөвшөөрлийг шалгана уу.");
+      stopMicTest();
+    }
+  };
+
+  useEffect(() => {
+    return () => {
+      stopMicTest();
+    };
+  }, [stopMicTest]);
 
   const handleAddSnippet = () => {
     const trig = newTrigger.trim().toLowerCase();
@@ -1304,6 +1368,11 @@ export function SettingsPanel() {
           label="Зөв бичгийн дүрэм (Spellcheck)"
           description="Бичвэр бэлэн болмогц зөв бичгийн алдааг шалгаж санал болгох."
         />
+        <Toggle
+          k="techTermsNormalization"
+          label="Технологийн нэрсийг латинаар үлдээх"
+          description="'фэйсбүүк' ➔ 'Facebook', 'зуум' ➔ 'Zoom', 'пидиэф' ➔ 'PDF', 'гитхаб' ➔ 'GitHub' гэх мэт түгээмэл нэрсийг зөв латинаар буулгах."
+        />
       </section>
 
       {/* Custom Voice Snippets */}
@@ -1436,6 +1505,36 @@ export function SettingsPanel() {
               </option>
             ))}
           </select>
+
+          {/* Live Mic Volume VU-Meter */}
+          <div style={{ marginTop: "10px", padding: "10px 12px", background: "var(--subtle)", borderRadius: "10px", border: "1px solid var(--border)" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
+              <span style={{ fontSize: "12px", fontWeight: 600 }}>Дууны түвшин (Live Mic Meter):</span>
+              <button
+                type="button"
+                onClick={startMicTest}
+                className={isTestingMic ? "btn-danger" : "btn-secondary"}
+                style={{ fontSize: "11px", padding: "4px 10px" }}
+              >
+                {isTestingMic ? "⏹️ Шалгалтыг зогсоох" : "🎤 Микрофон шалгах"}
+              </button>
+            </div>
+            <div style={{ width: "100%", height: "10px", background: "var(--card)", borderRadius: "5px", overflow: "hidden", border: "1px solid var(--border)" }}>
+              <div
+                style={{
+                  width: `${micVolume}%`,
+                  height: "100%",
+                  background: micVolume > 75 ? "#ef4444" : micVolume > 35 ? "#10b981" : "#3b82f6",
+                  transition: "width 60ms linear",
+                  borderRadius: "5px",
+                }}
+              />
+            </div>
+            <div style={{ display: "flex", justifyContent: "space-between", fontSize: "11px", color: "var(--muted)", marginTop: "4px" }}>
+              <span>{isTestingMic ? (micVolume > 8 ? "🟢 Дуу мэдрэгдэж байна" : "⚪ Чимээгүй...") : "Шалгах товч дээр дарна уу"}</span>
+              <span>{micVolume}%</span>
+            </div>
+          </div>
         </div>
 
         <div className="option-list">

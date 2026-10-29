@@ -99,6 +99,7 @@ from voice_core import (
     strip_filler_words,
     generate_srt,
     apply_voice_snippets,
+    normalize_tech_terms,
     LANG_CYCLE,
     LANG_LABELS,
     HOTKEY_NAMES,
@@ -154,6 +155,7 @@ DEFAULT_SERVER_SETTINGS = {
     "undo_button": True,
     "start_with_windows": True,
     "custom_snippets": True,
+    "tech_terms_normalization": True,
     "snippets": {
         "миний имэйл": "user@example.invalid",
         "миний утас": "+97600000000",
@@ -2668,6 +2670,8 @@ def _process_native_recording() -> None:
                 text = apply_voice_commands(text)
             if cfg.get("custom_snippets", True) and cfg.get("snippets"):
                 text = apply_voice_snippets(text, cfg.get("snippets", {}))
+            if cfg.get("tech_terms_normalization", True):
+                text = normalize_tech_terms(text)
             if cfg.get("number_normalization", True):
                 text = normalize_mongolian_numbers(text)
             if cfg.get("auto_punctuation", True):

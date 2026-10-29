@@ -47,6 +47,7 @@ export interface Settings {
   noiseGate?: boolean;
   startWithWindows?: boolean;
   customSnippets?: boolean;
+  techTermsNormalization?: boolean;
   snippets?: Record<string, string>;
 }
 

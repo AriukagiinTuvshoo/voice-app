@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.2.9
+Custom Voice Snippets, Live Mic VU-Meter & Tech Term Preserver:
+- **Live Microphone Volume Meter (VU-Meter)**: Added real-time visual audio test meter in Settings connected to Web Audio API, showing dynamic volume level %, speech detection indicator, and hardware connectivity without leaving the settings page.
+- **Tech & Brand Term Normalization**: Automatically converts phonetic Cyrillic tech words into standard Latin brand names ("фэйсбүүк" -> "Facebook", "зуум" -> "Zoom", "пидиэф" -> "PDF", "гитхаб" -> "GitHub", "ютуб" -> "YouTube", "риэкт" -> "React", "пайтон" -> "Python").
+- **Custom Voice Snippets (Hotstrings)**: User-customizable voice abbreviation dictionary in Settings ("миний имэйл" -> email, "миний данс" -> bank account) with full dictation engine support.
+- **27 Unit Tests Passing**: Fully validated with zero regressions across `tests/test_logic.py`.
+
 ## 1.2.8
 Five Major Upgrades, Re-designed Settings & VOICE Capsule:
 - **Renamed FlowBar to VOICE Capsule (VOICE Капсул)**: Modernized naming and UI styling across all workspace headers, settings, floating controls, and native Tkinter canvas window.
