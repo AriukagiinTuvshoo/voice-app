@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/AriukagiinTuvshoo/voice-app/releases/latest"><img src="https://img.shields.io/badge/Release-v1.2.6-6366f1?style=for-the-badge&logo=windows" alt="Version 1.2.6" /></a>
+  <a href="https://github.com/AriukagiinTuvshoo/voice-app/releases/latest"><img src="https://img.shields.io/badge/Release-v1.2.7-6366f1?style=for-the-badge&logo=windows" alt="Version 1.2.7" /></a>
   <img src="https://img.shields.io/badge/Platform-Windows%2010%20%7C%2011%20(64--bit)-blue?style=for-the-badge&logo=windows" alt="Platform Windows" />
   <img src="https://img.shields.io/badge/Python-3.10%2B-brightgreen?style=for-the-badge&logo=python" alt="Python 3.10+" />
   <img src="https://img.shields.io/badge/Node.js-Not%20Required-blueviolet?style=for-the-badge" alt="No Node Needed" />
@@ -24,10 +24,10 @@
 Нээлттэй эхийн багц: бүх код `tts_server.py` болон `.bat` файлуудад нээлттэй. Windows Smart App Control эсвэл антивирус анхааруулга өгч болох тул суулгахаасаа өмнө кодыг өөрөө шалгаж болно.
 
 ### Алхам 1: Багц татаж авах
-👉 [**VOICE-Windows-v1.2.6.zip татах (GitHub Releases)**](https://github.com/AriukagiinTuvshoo/voice-app/releases/latest)
+👉 [**VOICE-Windows-v1.2.7.zip татах (GitHub Releases)**](https://github.com/AriukagiinTuvshoo/voice-app/releases/latest)
 
 ### Алхам 2: Суулгах
-1. Татсан `VOICE-Windows-v1.2.6.zip` файлыг хулганы баруун товчоор дарж **Extract All... (Бүгдийг задлах)** сонгоно.
+1. Татсан `VOICE-Windows-v1.2.7.zip` файлыг хулганы баруун товчоор дарж **Extract All... (Бүгдийг задлах)** сонгоно.
 2. Задалсан хавтас доторх **`Install-VOICE.bat`** файл дээр давхар товшиж ажиллуулна.
    - Энэ нь шаардлагатай сангуудыг таны компьютерын `%LOCALAPPDATA%\VOICE-App\.venv` тусгаарлагдсан орчинд найдвартай бэлтгэнэ.
    - Дэлгэц (Desktop) дээр **`VOICE`** нэртэй нил ягаан өнгийн товчлолыг автоматаар үүсгэнэ.

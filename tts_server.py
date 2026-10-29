@@ -92,6 +92,9 @@ from voice_core import (
     get_fallback_flowbar_pos_math,
     clamp_rect_to_screen,
     compute_flowbar_status,
+    normalize_mongolian_numbers,
+    format_speech_text,
+    enhance_ssml_cadence,
     LANG_CYCLE,
     LANG_LABELS,
     HOTKEY_NAMES,
@@ -1981,6 +1984,8 @@ if os.name == "nt":
     VK_F8 = 0x77
     VK_F9 = 0x78
     VK_F10 = 0x79
+    VK_LWIN = 0x5B
+    VK_RWIN = 0x5C
     VK_V = 0x56
     CF_UNICODETEXT = 13
     GMEM_MOVEABLE = 0x0002
@@ -2213,6 +2218,36 @@ def _suppress_alt_menu_activation() -> None:
         pass
 
 
+
+def play_sound_cue(cue: str) -> None:
+    """Play subtle non-blocking audio cue on Windows for immediate user feedback."""
+    if os.name != "nt":
+        return
+    try:
+        cfg = load_server_settings()
+        if not cfg.get("sound_cues", True):
+            return
+    except Exception:
+        pass
+
+    def _beep():
+        try:
+            import winsound
+            if cue == "start":
+                # Subtle high chime (B5, 65ms)
+                winsound.Beep(988, 65)
+            elif cue == "finish":
+                # Pleasant success chime (E6, 75ms)
+                winsound.Beep(1318, 75)
+            elif cue == "error":
+                # Soft alert (A4, 110ms)
+                winsound.Beep(440, 110)
+        except Exception:
+            pass
+
+    threading.Thread(target=_beep, daemon=True).start()
+
+
 def copy_to_windows_clipboard(text: str) -> None:
     """
     Thread-safe native Win32 clipboard copy using CF_UNICODETEXT.
@@ -2418,17 +2453,36 @@ def insert_text_to_active_window(text: str, hwnd: int = 0) -> bool:
         user32.keybd_event(vk, sc, KEYEVENTF_KEYUP, 0)
     time.sleep(0.035)
 
-    # Send Ctrl+V paste using hardware scan codes and separate key events
-    ctrl_sc = user32.MapVirtualKeyW(VK_CONTROL, 0)
-    v_sc = user32.MapVirtualKeyW(VK_V, 0)
-
-    user32.keybd_event(VK_CONTROL, ctrl_sc, 0, 0)
-    time.sleep(0.02)
-    user32.keybd_event(VK_V, v_sc, 0, 0)
+    _suppress_alt_menu_activation()
+    # Physical release of any held modifier keys
+    for vk in (VK_CONTROL, VK_MENU, VK_SHIFT, VK_LWIN, VK_RWIN):
+        user32.keybd_event(vk, 0, KEYEVENTF_KEYUP, 0)
     time.sleep(0.025)
-    user32.keybd_event(VK_V, v_sc, KEYEVENTF_KEYUP, 0)
-    time.sleep(0.015)
-    user32.keybd_event(VK_CONTROL, ctrl_sc, KEYEVENTF_KEYUP, 0)
+    _suppress_alt_menu_activation()
+    time.sleep(0.01)
+
+    # Use SendInput for atomic, race-free Ctrl+V paste (works 100% in Chrome Omnibox & search inputs)
+    try:
+        ctrl_v = (INPUT * 4)()
+        ctrl_v[0].type = INPUT_KEYBOARD
+        ctrl_v[0].union.ki = KEYBDINPUT(VK_CONTROL, 0, 0, 0, 0)
+        ctrl_v[1].type = INPUT_KEYBOARD
+        ctrl_v[1].union.ki = KEYBDINPUT(ord('V'), 0, 0, 0, 0)
+        ctrl_v[2].type = INPUT_KEYBOARD
+        ctrl_v[2].union.ki = KEYBDINPUT(ord('V'), 0, KEYEVENTF_KEYUP, 0, 0)
+        ctrl_v[3].type = INPUT_KEYBOARD
+        ctrl_v[3].union.ki = KEYBDINPUT(VK_CONTROL, 0, KEYEVENTF_KEYUP, 0, 0)
+        user32.SendInput(4, ctypes.byref(ctrl_v), ctypes.sizeof(INPUT))
+    except Exception:
+        ctrl_sc = user32.MapVirtualKeyW(VK_CONTROL, 0)
+        v_sc = user32.MapVirtualKeyW(VK_V, 0)
+        user32.keybd_event(VK_CONTROL, ctrl_sc, 0, 0)
+        time.sleep(0.015)
+        user32.keybd_event(VK_V, v_sc, 0, 0)
+        time.sleep(0.02)
+        user32.keybd_event(VK_V, v_sc, KEYEVENTF_KEYUP, 0)
+        time.sleep(0.01)
+        user32.keybd_event(VK_CONTROL, ctrl_sc, KEYEVENTF_KEYUP, 0)
 
     cfg = load_server_settings()
     # Restore user's previous clipboard content only if restore_clipboard setting is true
@@ -2521,6 +2575,7 @@ def start_native_flowbar_recording(from_ui_button: bool = False) -> None:
     FLOWBAR_STATE["visible"] = True
     FLOWBAR_STATE["target_window"] = get_window_title(_target_hwnd) or _last_external_title
     print(f"[FlowBar] Recording started (Target HWND: 0x{_target_hwnd:X} '{FLOWBAR_STATE['target_window']}')")
+    play_sound_cue("start")
 
 
 def stop_native_flowbar_recording() -> None:
@@ -2555,14 +2610,21 @@ def _process_native_recording() -> None:
         text, err = transcribe_wav_bytes(wav_bytes, language=FLOWBAR_STATE.get("language", "mn"))
         _last_stop_time = time.time()
         if text:
+            cfg = load_server_settings()
+            if cfg.get("number_normalization", True):
+                text = normalize_mongolian_numbers(text)
+            if cfg.get("auto_punctuation", True):
+                text = format_speech_text(text)
             FLOWBAR_STATE["last_text"] = text
             FLOWBAR_STATE["last_timestamp"] = int(time.time() * 1000)
             FLOWBAR_STATE["status"] = "success"
             insert_text_to_active_window(text, _target_hwnd)
+            play_sound_cue("finish")
             time.sleep(1.8)
         else:
             FLOWBAR_STATE["status"] = "error"
             FLOWBAR_STATE["error"] = err[:28] if err else "Тод ярина уу"
+            play_sound_cue("error")
             print("[FlowBar] STT empty:", err)
             time.sleep(2.0)
     except Exception as e:
@@ -2679,24 +2741,28 @@ def _native_audio_hotkey_worker() -> None:
             f2_down = bool(user32.GetAsyncKeyState(0x71) & 0x8000)
             f4_down = bool(user32.GetAsyncKeyState(0x73) & 0x8000)
 
-            if hk_mode == "f8":
-                hotkey_down = f8_down
-            elif hk_mode == "f9":
-                hotkey_down = f9_down or f8_down
+            # Suppress Alt menu trap whenever Alt is released
+            if alt_down:
+                _suppress_alt_menu_activation()
+
+            # Universal hotkeys: Ctrl+Alt AND F8 ALWAYS work as universal shortcuts!
+            is_ctrl_alt = bool(ctrl_down and alt_down and not shift_down)
+            hotkey_down = is_ctrl_alt or f8_down
+
+            if hk_mode == "f9":
+                hotkey_down = hotkey_down or f9_down
             elif hk_mode == "f10":
-                hotkey_down = f10_down or f8_down
+                hotkey_down = hotkey_down or f10_down
             elif hk_mode == "f2":
-                hotkey_down = f2_down or f8_down
+                hotkey_down = hotkey_down or f2_down
             elif hk_mode == "f4":
-                hotkey_down = f4_down or f8_down
+                hotkey_down = hotkey_down or f4_down
             elif hk_mode == "ctrl_shift":
-                hotkey_down = (ctrl_down and shift_down and not alt_down) or f8_down
+                hotkey_down = hotkey_down or (ctrl_down and shift_down and not alt_down)
             elif hk_mode == "alt_shift":
-                hotkey_down = (alt_down and shift_down and not ctrl_down) or f8_down
+                hotkey_down = hotkey_down or (alt_down and shift_down and not ctrl_down)
             elif hk_mode == "ctrl_space":
-                hotkey_down = (ctrl_down and space_down and not alt_down) or f8_down
-            else:
-                hotkey_down = (ctrl_down and alt_down and not shift_down) or f8_down
+                hotkey_down = hotkey_down or (ctrl_down and space_down and not alt_down)
 
             now = time.time()
 
@@ -3757,6 +3823,35 @@ def serve_app_page(request: Request):
     if os.path.isfile(idx_file):
         return FileResponse(idx_file, media_type="text/html")
     raise HTTPException(status_code=404, detail="Page not found")
+
+@app.get("/api/check-update")
+def check_for_updates():
+    """Non-blocking release update checker from GitHub Releases."""
+    try:
+        import urllib.request
+        req = urllib.request.Request(
+            "https://api.github.com/repos/AriukagiinTuvshoo/voice-app/releases/latest",
+            headers={"User-Agent": "VOICE-Desktop-App"}
+        )
+        with urllib.request.urlopen(req, timeout=2.5) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            tag = data.get("tag_name", "").lstrip("v")
+            current = APP_VERSION.lstrip("v")
+            has_update = bool(tag and tag != current)
+            return {
+                "current_version": APP_VERSION,
+                "latest_version": tag or APP_VERSION,
+                "has_update": has_update,
+                "html_url": data.get("html_url", ""),
+                "name": data.get("name", ""),
+            }
+    except Exception as e:
+        return {
+            "current_version": APP_VERSION,
+            "latest_version": APP_VERSION,
+            "has_update": False,
+            "error": str(e),
+        }
 
 try:
     from fastapi.staticfiles import StaticFiles

@@ -123,6 +123,26 @@ class TestVoiceCoreLogic(unittest.TestCase):
         self.assertFalse(res_stale["ui_alive"])
         self.assertEqual(res_stale["ui_heartbeat_age_sec"], 7.5)
 
+    def test_normalize_mongolian_numbers(self):
+        text = "энэ бол хоёр мянга хорин зургаа оны төсөл бөгөөд ерэн таван хувь амжилттай"
+        normalized = voice_core.normalize_mongolian_numbers(text)
+        self.assertIn("2026", normalized)
+        self.assertIn("95%", normalized)
+
+    def test_format_speech_text(self):
+        # Regular statement ends with period
+        self.assertEqual(voice_core.format_speech_text("сайн байна"), "Сайн байна.")
+        # Question suffix adds question mark
+        self.assertEqual(voice_core.format_speech_text("та сайн байна уу"), "Та сайн байна уу?")
+        # Existing punctuation preserved
+        self.assertEqual(voice_core.format_speech_text("баярлалаа!"), "Баярлалаа!")
+
+    def test_enhance_ssml_cadence(self):
+        raw = "Сайн байна уу, өнөөдөр сайхан өдөр байна."
+        ssml = voice_core.enhance_ssml_cadence(raw)
+        self.assertIn('<break time="200ms"/>', ssml)
+        self.assertIn('<break time="450ms"/>', ssml)
+
 
 class TestFakeTkSmoke(unittest.TestCase):
     """Smoke test for the FlowBar UI command queue and event loop logic using Tk mocks."""
@@ -245,6 +265,14 @@ class TestFastAPIEngineLimits(unittest.TestCase):
         data = res.json()
         self.assertIn("supported", data)
         self.assertIn("enabled", data)
+
+    def test_check_update_endpoint(self):
+        res = self.client.get("/api/check-update")
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertIn("current_version", data)
+        self.assertIn("latest_version", data)
+        self.assertIn("has_update", data)
 
     def test_transcribe_upload_limit(self):
         # 100 bytes is too short
