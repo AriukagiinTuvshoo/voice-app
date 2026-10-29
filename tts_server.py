@@ -91,6 +91,7 @@ from voice_core import (
     safe_clone_wav_path,
     get_fallback_flowbar_pos_math,
     clamp_rect_to_screen,
+    snap_rect_to_screen_edges,
     compute_flowbar_status,
     normalize_mongolian_numbers,
     format_speech_text,
@@ -98,6 +99,10 @@ from voice_core import (
     apply_voice_commands,
     strip_filler_words,
     generate_srt,
+    generate_lrc,
+    generate_vtt,
+    extract_summary_and_actions,
+    rewrite_text_style,
     apply_voice_snippets,
     normalize_tech_terms,
     LANG_CYCLE,
@@ -159,6 +164,7 @@ DEFAULT_SERVER_SETTINGS = {
     "snippets": {
         "миний имэйл": "user@example.invalid",
         "миний утас": "+97600000000",
+        "данс": "2815108795",
     },
 }
 
@@ -1914,10 +1920,23 @@ def transcribe_wav_bytes(raw_bytes: bytes, language: str = "mn") -> tuple[str, s
             text += "."
         return text, ""
 
-    if net_err_found:
-        return "", "Интернет холболтоо шалгана уу (Google Speech API холбогдсонгүй)."
+    if net_err_found or not text:
+        # Offline Dictation Fallback: seamlessly fall back to local Whisper
+        try:
+            logger.info("[STT] Online STT unavailable (net_err=%s), fallback to local Whisper...", net_err_found)
+            m_name = SERVER_SETTINGS.get("whisper_model", "small")
+            w_text, w_err = transcribe_with_whisper(raw_bytes, language=req_lang, model_name=m_name)
+            if w_text:
+                FLOWBAR_STATE["offline_fallback"] = True
+                return w_text, ""
+        except Exception as fb_err:
+            logger.warning("[STT] Whisper offline fallback error: %s", str(fb_err).encode("ascii", "replace").decode("ascii"))
 
-    return "", "Яриа танигдсангүй. Микрофондоо ойрхон, тод ярина уу."
+        if net_err_found:
+            return "", "Интернет холболтоо шалгана уу (Google Speech API холбогдсонгүй)."
+        return "", "Яриа танигдсангүй. Микрофондоо ойрхон, тод ярина уу."
+
+    FLOWBAR_STATE["offline_fallback"] = False
 
 
 # ---------------------------------------------------------------------------
@@ -1949,6 +1968,7 @@ FLOWBAR_STATE = {
     "hotkey_error": "",
     "undo_available": False,
     "undo_until": 0.0,
+    "offline_fallback": False,
 }
 
 FLOWBAR_W, FLOWBAR_H = 360, 52
@@ -2002,6 +2022,7 @@ if os.name == "nt":
     VK_LSHIFT = 0xA0
     VK_RSHIFT = 0xA1
     VK_SPACE = 0x20
+    VK_TAB = 0x09
     VK_F8 = 0x77
     VK_F9 = 0x78
     VK_F10 = 0x79
@@ -2165,33 +2186,35 @@ def transcribe_with_whisper(wav_bytes: bytes, language: str = "auto", model_name
                 except Exception:
                     pass
     except Exception as e:
-        print("[Whisper error]:", e)
-        return "", f"Whisper алдаа: {e}" 
+        safe_msg = str(e).encode('ascii', 'replace').decode('ascii')
+        logger.warning("[Whisper error]: %s", safe_msg)
+        return "", f"Whisper алдаа: {e}"
 
-    class KEYBDINPUT(ctypes.Structure):
-        _fields_ = [
-            ("wVk", wintypes.WORD),
-            ("wScan", wintypes.WORD),
-            ("dwFlags", wintypes.DWORD),
-            ("time", wintypes.DWORD),
-            ("dwExtraInfo", ctypes.c_ulonglong),
-        ]
 
-    class MOUSEINPUT(ctypes.Structure):
-        _fields_ = [
-            ("dx", wintypes.LONG),
-            ("dy", wintypes.LONG),
-            ("mouseData", wintypes.DWORD),
-            ("dwFlags", wintypes.DWORD),
-            ("time", wintypes.DWORD),
-            ("dwExtraInfo", ctypes.c_ulonglong),
-        ]
+class KEYBDINPUT(ctypes.Structure):
+    _fields_ = [
+        ("wVk", wintypes.WORD),
+        ("wScan", wintypes.WORD),
+        ("dwFlags", wintypes.DWORD),
+        ("time", wintypes.DWORD),
+        ("dwExtraInfo", ctypes.c_ulonglong),
+    ]
 
-    class _INPUTunion(ctypes.Union):
-        _fields_ = [("mi", MOUSEINPUT), ("ki", KEYBDINPUT)]
+class MOUSEINPUT(ctypes.Structure):
+    _fields_ = [
+        ("dx", wintypes.LONG),
+        ("dy", wintypes.LONG),
+        ("mouseData", wintypes.DWORD),
+        ("dwFlags", wintypes.DWORD),
+        ("time", wintypes.DWORD),
+        ("dwExtraInfo", ctypes.c_ulonglong),
+    ]
 
-    class INPUT(ctypes.Structure):
-        _fields_ = [("type", wintypes.DWORD), ("union", _INPUTunion)]
+class _INPUTunion(ctypes.Union):
+    _fields_ = [("mi", MOUSEINPUT), ("ki", KEYBDINPUT)]
+
+class INPUT(ctypes.Structure):
+    _fields_ = [("type", wintypes.DWORD), ("union", _INPUTunion)]
 
 
 def is_own_process_window(hwnd: int) -> bool:
@@ -2337,7 +2360,8 @@ def restore_window_focus(target: int) -> bool:
         if target_tid and target_tid != curr_tid:
             attached = bool(user32.AttachThreadInput(curr_tid, target_tid, True))
         try:
-            user32.ShowWindow(target, 5) # SW_SHOW
+            if user32.IsIconic(target):
+                user32.ShowWindow(target, 9)  # SW_RESTORE if minimized
             user32.SetForegroundWindow(target)
             user32.BringWindowToTop(target)
             # Never call user32.SetFocus(target) on top-level window as it unfocuses child edit controls
@@ -2468,7 +2492,7 @@ def insert_text_to_active_window(text: str, hwnd: int = 0) -> bool:
         return False
 
     old_clip = get_windows_clipboard_text()
-    text_with_space = text if text.endswith(" ") else text + " "
+    text_with_space = text if text.endswith(("\n", "\r\n", " ")) else text + " "
     copy_to_windows_clipboard(text_with_space)
 
     curr_fg = user32.GetForegroundWindow()
@@ -2554,6 +2578,17 @@ def insert_text_to_active_window(text: str, hwnd: int = 0) -> bool:
 
     target_title = get_window_title(target)
     fg_now = user32.GetForegroundWindow()
+    # Voice Form Filling / Auto-Tab Mode: synthesize Tab keypress if text ends with tab
+    if text.endswith("\t"):
+        try:
+            time.sleep(0.03)
+            tab_sc = user32.MapVirtualKeyW(VK_TAB, 0)
+            user32.keybd_event(VK_TAB, tab_sc, 0, 0)
+            time.sleep(0.015)
+            user32.keybd_event(VK_TAB, tab_sc, KEYEVENTF_KEYUP, 0)
+        except Exception:
+            pass
+
     FLOWBAR_STATE["last_insert_debug"] = f"target=0x{target:X}('{target_title[:25]}') fg=0x{fg_now:X} pasted=True"
     print(f"[FlowBar] {FLOWBAR_STATE['last_insert_debug']}")
     return True
@@ -2809,24 +2844,27 @@ def _native_audio_hotkey_worker() -> None:
             if alt_down:
                 _suppress_alt_menu_activation()
 
-            # Universal hotkeys: Ctrl+Alt AND F8 ALWAYS work as universal shortcuts!
+            # Universal hotkey: Ctrl+Alt ALWAYS works; user-chosen hotkey is strictly respected to prevent conflicts
             is_ctrl_alt = bool(ctrl_down and alt_down and not shift_down)
-            hotkey_down = is_ctrl_alt or f8_down
 
             if hk_mode == "f9":
-                hotkey_down = hotkey_down or f9_down
+                hotkey_down = is_ctrl_alt or f9_down
             elif hk_mode == "f10":
-                hotkey_down = hotkey_down or f10_down
+                hotkey_down = is_ctrl_alt or f10_down
             elif hk_mode == "f2":
-                hotkey_down = hotkey_down or f2_down
+                hotkey_down = is_ctrl_alt or f2_down
             elif hk_mode == "f4":
-                hotkey_down = hotkey_down or f4_down
+                hotkey_down = is_ctrl_alt or f4_down
             elif hk_mode == "ctrl_shift":
-                hotkey_down = hotkey_down or (ctrl_down and shift_down and not alt_down)
+                hotkey_down = is_ctrl_alt or (ctrl_down and shift_down and not alt_down)
             elif hk_mode == "alt_shift":
-                hotkey_down = hotkey_down or (alt_down and shift_down and not ctrl_down)
+                hotkey_down = is_ctrl_alt or (alt_down and shift_down and not ctrl_down)
             elif hk_mode == "ctrl_space":
-                hotkey_down = hotkey_down or (ctrl_down and space_down and not alt_down)
+                hotkey_down = is_ctrl_alt or (ctrl_down and space_down and not alt_down)
+            elif hk_mode == "ctrl_alt":
+                hotkey_down = is_ctrl_alt
+            else:
+                hotkey_down = is_ctrl_alt or f8_down
 
             now = time.time()
 
@@ -2995,6 +3033,9 @@ def _native_flowbar_ui_worker() -> None:
                 restore_window_focus(_last_external_hwnd)
             if drag_data["moved"]:
                 cur_x, cur_y = root.winfo_x(), root.winfo_y()
+                work_area = get_primary_work_area()
+                cur_x, cur_y = snap_rect_to_screen_edges(cur_x, cur_y, bar_w, bar_h, work_area)
+                root.geometry(f"{bar_w}x{bar_h}+{cur_x}+{cur_y}")
                 if is_rect_on_any_screen(cur_x, cur_y, bar_w, bar_h):
                     try:
                         with open(pos_file, "w", encoding="utf-8") as pf:
@@ -3283,6 +3324,7 @@ def health():
         "has_miniaudio": HAS_MINIAUDIO,
         "voice_cloning": True,
         "flowbar_status": FLOWBAR_STATE["status"],
+        "offline_fallback": FLOWBAR_STATE.get("offline_fallback", False),
         "version": APP_VERSION,
         "flowbar_visible": FLOWBAR_STATE["visible"] and st_info["ui_alive"],
         "flowbar_ui_alive": st_info["ui_alive"],
@@ -3641,6 +3683,9 @@ async def transcribe(
 
     text, err = transcribe_wav_bytes(content, language=language)
     if text:
+        cfg = load_server_settings()
+        if cfg.get("custom_snippets", True) and cfg.get("snippets"):
+            text = apply_voice_snippets(text, cfg.get("snippets", {}))
         return {"text": text, "engine": f"Google Neural STT ({language})"}
     return {"text": "", "error": err or "Яриа танигдсангүй."}
 
@@ -3767,6 +3812,191 @@ def api_export_srt(req: dict):
     )
 
 
+@app.post("/api/export-lrc")
+def api_export_lrc(req: dict):
+    segments = req.get("segments", [])
+    title = req.get("title", "")
+    artist = req.get("artist", "")
+    lrc_content = generate_lrc(segments, title=title, artist=artist)
+    return Response(
+        content=lrc_content,
+        media_type="text/plain; charset=utf-8",
+        headers={"Content-Disposition": "attachment; filename=voice_lyrics.lrc"},
+    )
+
+
+@app.post("/api/export-vtt")
+def api_export_vtt(req: dict):
+    segments = req.get("segments", [])
+    vtt_content = generate_vtt(segments)
+    return Response(
+        content=vtt_content,
+        media_type="text/plain; charset=utf-8",
+        headers={"Content-Disposition": "attachment; filename=voice_subtitles.vtt"},
+    )
+
+
+@app.post("/api/summarize")
+def api_summarize(req: dict):
+    """
+    AI Smart Summarizer & Action Items extraction.
+    Extracts summary, key points, action items (to-dos), and decisions.
+    """
+    text = req.get("text", "")
+    if not text or not isinstance(text, str):
+        raise HTTPException(status_code=400, detail="\u0422\u044d\u043a\u0441\u0442 \u0445\u043e\u043e\u0441\u043e\u043d \u0431\u0430\u0439\u043d\u0430.")
+    return extract_summary_and_actions(text)
+
+
+@app.post("/api/rewrite-style")
+def api_rewrite_style(req: dict):
+    """
+    AI Smart Tone & Style Rewriter endpoint.
+    Accepts: { "text": "...", "style": "formal" | "email" | "social" | "proofread" }
+    """
+    text = req.get("text", "")
+    if not text or not isinstance(text, str):
+        raise HTTPException(status_code=400, detail="Текст хоосон байна.")
+    style = req.get("style", "formal")
+    return rewrite_text_style(text, style=style)
+
+
+@app.post("/api/format-numbers")
+def api_format_numbers(req: dict):
+    """
+    Smart Mongolian Number, Currency & Contact Formatter endpoint.
+    Accepts: { "text": "..." }
+    Returns: { "status": "ok", "formatted_text": "...", "original_text": "..." }
+    """
+    text = req.get("text", "")
+    if not text or not isinstance(text, str):
+        return {"status": "ok", "formatted_text": "", "original_text": ""}
+    formatted = normalize_mongolian_numbers(text)
+    return {"status": "ok", "formatted_text": formatted, "original_text": text}
+
+
+
+
+@app.post("/api/auto-lyrics")
+async def api_auto_lyrics(
+    audio: UploadFile = File(...),
+    language: str = Form("auto"),
+    model_name: str = Form("small"),
+    title: str = Form(""),
+    artist: str = Form(""),
+):
+    """
+    Auto-transcribe uploaded audio or video file (MP3, WAV, M4A, OGG, MP4) and generate:
+    - Segments with millisecond start/end timestamps and word-level timing
+    - Synchronized Lyrics (.lrc)
+    - Subtitles (.srt and .vtt)
+    """
+    content = await audio.read(MAX_UPLOAD_BYTES + 1)
+    if len(content) > MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail="Аудио/видео файл хэт том байна (дээд тал нь 25 MB).")
+    if len(content) < 500:
+        raise HTTPException(status_code=400, detail="Файл хэт богино эсвэл хоосон байна.")
+
+    filename = audio.filename or "input.wav"
+    ext = os.path.splitext(filename)[1].lower()
+    valid_exts = (".wav", ".mp3", ".m4a", ".ogg", ".flac", ".mp4", ".webm", ".aac")
+    if ext and ext not in valid_exts:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Дэмжигдээгүй файл формат ({ext}). MP3, WAV, M4A, OGG, MP4 файл оруулна уу.",
+        )
+    if not ext:
+        ext = ".wav"
+
+    with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as tf:
+        tf.write(content)
+        tf_path = tf.name
+
+    try:
+        segments_data = []
+        full_text = ""
+        detected_lang = language if language != "auto" else "mn"
+
+        try:
+            whisper_model = get_whisper_model(model_name)
+            lang_arg = None if language in ("auto", "") else language
+            segments, info = whisper_model.transcribe(
+                tf_path,
+                language=lang_arg,
+                beam_size=5,
+                word_timestamps=True,
+                vad_filter=True,
+            )
+            detected_lang = getattr(info, "language", detected_lang) or detected_lang
+            for idx, s in enumerate(segments, start=1):
+                clean_txt = format_speech_text(s.text.strip(), auto_punct=False)
+                if not clean_txt:
+                    continue
+                words_list = []
+                if hasattr(s, "words") and s.words:
+                    for w in s.words:
+                        words_list.append({
+                            "word": w.word.strip(),
+                            "start": round(float(w.start), 3),
+                            "end": round(float(w.end), 3),
+                            "probability": round(float(getattr(w, "probability", 1.0)), 2),
+                        })
+                segments_data.append({
+                    "id": idx,
+                    "start": round(float(s.start), 3),
+                    "end": round(float(s.end), 3),
+                    "text": clean_txt,
+                    "words": words_list,
+                })
+            full_text = " ".join([s["text"] for s in segments_data]).strip()
+        except Exception as whisper_err:
+            logger.warning("[AutoLyrics] Whisper fallback: %s", str(whisper_err).encode("ascii", "replace").decode("ascii"))
+            raw_text, err = transcribe_wav_bytes(content, language=detected_lang)
+            if not raw_text:
+                return {
+                    "status": "ok",
+                    "language": detected_lang,
+                    "text": "",
+                    "segments": [],
+                    "lrc": generate_lrc([], title=title, artist=artist),
+                    "srt": "",
+                    "vtt": "WEBVTT\r\n",
+                }
+            full_text = raw_text
+            sentences = [s.strip() for s in re.split(r"[.!?\n]+", raw_text) if s.strip()]
+            cur_t = 0.5
+            for idx, sent in enumerate(sentences, start=1):
+                dur = max(2.0, len(sent) * 0.08)
+                segments_data.append({
+                    "id": idx,
+                    "start": round(cur_t, 3),
+                    "end": round(cur_t + dur, 3),
+                    "text": sent,
+                    "words": [],
+                })
+                cur_t += dur + 0.5
+
+        lrc_text = generate_lrc(segments_data, title=title, artist=artist)
+        srt_text = generate_srt(segments_data)
+        vtt_text = generate_vtt(segments_data)
+
+        return {
+            "status": "ok",
+            "language": detected_lang,
+            "text": full_text,
+            "segments": segments_data,
+            "lrc": lrc_text,
+            "srt": srt_text,
+            "vtt": vtt_text,
+        }
+    finally:
+        if os.path.exists(tf_path):
+            try:
+                os.remove(tf_path)
+            except Exception:
+                pass
+
+
 @app.post("/api/quit")
 def api_quit_server():
     def _shutdown():
@@ -3891,6 +4121,7 @@ def serve_root():
 @app.get("/history")
 @app.get("/settings")
 @app.get("/flowbar")
+@app.get("/lyrics")
 def serve_app_page(request: Request):
     page = request.url.path.strip("/") or "dashboard"
     html_file = os.path.join(OUT_DIR, f"{page}.html")
@@ -3959,3 +4190,4 @@ if __name__ == "__main__":
 
     import uvicorn
     uvicorn.run(app, host="127.0.0.1", port=SERVER_PORT, reload=False, log_level="warning")
+

@@ -45,6 +45,8 @@ import {
   TrashIcon,
   FlowBarIcon,
   ShareIcon,
+  MusicIcon,
+  ZapIcon,
 } from "@/components/Icons";
 
 interface Ctx {
@@ -82,19 +84,69 @@ function Provider({ children }: { children: ReactNode }) {
     last_timestamp: 0,
   });
   const lastSeenTimestampRef = useRef<number>(0);
+  const isHydratedRef = useRef<boolean>(false);
+  const hasUserModifiedRef = useRef<boolean>(false);
 
+  // Safe initial hydration: fetch GET /api/settings first to prevent overwriting server state
   useEffect(() => {
-    try {
-      const x = localStorage.getItem("voice-settings");
-      if (x) setSettings({ ...defaultSettings, ...JSON.parse(x) });
-    } catch {}
+    let isMounted = true;
+    async function loadSettings() {
+      let merged: Settings = { ...defaultSettings };
+
+      // 1. Read local cache / migration
+      try {
+        const localRaw = localStorage.getItem("voice-settings");
+        if (localRaw) {
+          const parsed = JSON.parse(localRaw);
+          if (parsed && typeof parsed === "object") {
+            merged = { ...merged, ...parsed };
+          }
+        }
+      } catch {}
+
+      // 2. Fetch server settings from GET /api/settings
+      try {
+        const res = await fetch("/api/settings");
+        if (res.ok) {
+          const srv = await res.json();
+          if (srv && typeof srv === "object") {
+            if (srv.hotkey) merged.desktopHotkey = srv.hotkey;
+            if (srv.stt_engine) merged.sttEngine = srv.stt_engine === "google" ? "auto" : srv.stt_engine;
+            if (srv.whisper_model) merged.whisperModel = srv.whisper_model;
+            if (srv.chimege_token !== undefined) merged.chimegeToken = srv.chimege_token;
+            if (srv.language) merged.language = srv.language;
+            if (srv.sound_cues !== undefined) merged.soundCues = Boolean(srv.sound_cues);
+            if (srv.number_normalization !== undefined) merged.numberNormalization = Boolean(srv.number_normalization);
+            if (srv.voice_actions !== undefined) merged.voiceActions = Boolean(srv.voice_actions);
+            if (srv.filler_word_cleaner !== undefined) merged.fillerWordCleaner = Boolean(srv.filler_word_cleaner);
+            if (srv.noise_gate !== undefined) merged.noiseGate = Boolean(srv.noise_gate);
+            if (srv.auto_insert_text !== undefined) merged.autoInsertText = Boolean(srv.auto_insert_text);
+            if (srv.start_with_windows !== undefined) merged.startWithWindows = Boolean(srv.start_with_windows);
+            if (srv.custom_snippets !== undefined) merged.customSnippets = Boolean(srv.custom_snippets);
+            if (srv.tech_terms_normalization !== undefined) merged.techTermsNormalization = Boolean(srv.tech_terms_normalization);
+            if (srv.snippets && typeof srv.snippets === "object") {
+              merged.snippets = { ...(merged.snippets || {}), ...srv.snippets };
+            }
+          }
+        }
+      } catch {
+        // Backend offline or unreachable — keep cached settings without failing
+      }
+
+      if (isMounted) {
+        setSettings(merged);
+        try {
+          localStorage.setItem("voice-settings", JSON.stringify(merged));
+        } catch {}
+        if (isMounted) isHydratedRef.current = true;
+      }
+    }
+
+    loadSettings();
+    return () => {
+      isMounted = false;
+    };
   }, []);
-
-  useEffect(() => {
-    try {
-      localStorage.setItem("voice-settings", JSON.stringify(settings));
-    } catch {}
-  }, [settings]);
 
   // Sync language selection with Native Windows FlowBar
   useEffect(() => {
@@ -225,8 +277,14 @@ function Provider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  // Sync settings with Python server
+  // Sync settings with Python server (guarded by isHydratedRef & hasUserModifiedRef to prevent overwriting server state)
   useEffect(() => {
+    if (!isHydratedRef.current || !hasUserModifiedRef.current) return;
+
+    try {
+      localStorage.setItem("voice-settings", JSON.stringify(settings));
+    } catch {}
+
     fetch("/api/settings", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -248,29 +306,15 @@ function Provider({ children }: { children: ReactNode }) {
         snippets: settings.snippets || {},
       }),
     }).catch(() => {});
-  }, [
-    settings.desktopHotkey,
-    settings.sttEngine,
-    settings.whisperModel,
-    settings.chimegeToken,
-    settings.language,
-    settings.soundCues,
-    settings.numberNormalization,
-    settings.voiceActions,
-    settings.fillerWordCleaner,
-    settings.noiseGate,
-    settings.autoInsertText,
-    settings.startWithWindows,
-    settings.customSnippets,
-    settings.techTermsNormalization,
-    settings.snippets,
-  ]);
+  }, [settings]);
 
   const value = useMemo(
     () => ({
       settings,
-      update: <K extends keyof Settings>(k: K, v: Settings[K]) =>
-        setSettings((s) => ({ ...s, [k]: v })),
+      update: <K extends keyof Settings>(k: K, v: Settings[K]) => {
+        hasUserModifiedRef.current = true;
+        setSettings((s) => ({ ...s, [k]: v }));
+      },
       workspaceText,
       setWorkspaceText,
       flowbarStatus,
@@ -288,6 +332,7 @@ function Provider({ children }: { children: ReactNode }) {
 const navItems = [
   { href: "/dashboard", label: "Шинэ яриа", icon: PlusIcon },
   { href: "/tts", label: "VoiceStudio", icon: VolumeIcon },
+  { href: "/lyrics", label: "Auto Lyrics & Хадмал", icon: MusicIcon },
   { href: "/history", label: "Түүх", icon: HistoryIcon },
   { href: "/settings", label: "Тохиргоо", icon: SettingsIcon },
 ];
@@ -310,6 +355,23 @@ function Shell({ children }: { children: ReactNode }) {
   }
 
   const isFlowRecording = flowbarStatus.status === "recording";
+  const [isOnline, setIsOnline] = useState<boolean>(true);
+
+  useEffect(() => {
+    const handleOnline = () => setIsOnline(true);
+    const handleOffline = () => setIsOnline(false);
+    if (typeof window !== "undefined") {
+      setIsOnline(navigator.onLine);
+      window.addEventListener("online", handleOnline);
+      window.addEventListener("offline", handleOffline);
+    }
+    return () => {
+      if (typeof window !== "undefined") {
+        window.removeEventListener("online", handleOnline);
+        window.removeEventListener("offline", handleOffline);
+      }
+    };
+  }, []);
 
   return (
     <div className="shell">
@@ -404,6 +466,32 @@ function Shell({ children }: { children: ReactNode }) {
                 "Ctrl + Alt (буюу F8)"
               }
             </kbd>
+
+            <span
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "5px",
+                fontSize: "11px",
+                padding: "3px 9px",
+                borderRadius: "12px",
+                background: isOnline ? "rgba(16, 185, 129, 0.12)" : "rgba(245, 158, 11, 0.15)",
+                color: isOnline ? "#10b981" : "#f59e0b",
+                border: isOnline ? "1px solid rgba(16, 185, 129, 0.25)" : "1px solid rgba(245, 158, 11, 0.3)",
+                fontWeight: 500,
+              }}
+              title={isOnline ? "Google Cloud STT холбогдсон" : "Интернетгүй үед Whisper Local автоматаар ажиллана"}
+            >
+              <span
+                style={{
+                  width: "6px",
+                  height: "6px",
+                  borderRadius: "50%",
+                  background: isOnline ? "#10b981" : "#f59e0b",
+                }}
+              />
+              {isOnline ? "Онлайн STT" : "Офлайн (Whisper)"}
+            </span>
           </div>
 
           <div style={{ display: "flex", gap: "10px", alignItems: "center" }}>
@@ -432,6 +520,23 @@ function Shell({ children }: { children: ReactNode }) {
             >
               <span>📍 Капсул байрлал</span>
             </button>
+
+            <Link
+              href="/lyrics"
+              className="btn-secondary"
+              style={{
+                fontSize: "12px",
+                padding: "7px 12px",
+                textDecoration: "none",
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "6px",
+              }}
+              title="Дуу оруулаад синхрон lyrics, хадмал бичвэр (LRC / SRT) үүсгэх"
+            >
+              <MusicIcon width={15} height={15} style={{ color: "#a855f7" }} />
+              <span>Auto Lyrics</span>
+            </Link>
 
             <LanguageSelect
               value={settings.language}
@@ -497,6 +602,23 @@ export function Workspace() {
   const [errorMessage, setErrorMessage] = useState("");
   const [audioLevels, setAudioLevels] = useState<number[]>([12, 18, 26, 18, 12]);
   const [copied, setCopied] = useState(false);
+  const [showSnippetsBar, setShowSnippetsBar] = useState(false);
+  const [summarizing, setSummarizing] = useState(false);
+  const [summaryData, setSummaryData] = useState<{
+    summary: string;
+    key_points: string[];
+    action_items: string[];
+    decisions: string[];
+  } | null>(null);
+  const [showSummaryModal, setShowSummaryModal] = useState(false);
+  const [rewriting, setRewriting] = useState(false);
+  const [showStyleMenu, setShowStyleMenu] = useState(false);
+  const [formattingNumbers, setFormattingNumbers] = useState(false);
+  const [formattedSuccess, setFormattedSuccess] = useState(false);
+  const [rewrittenResult, setRewrittenResult] = useState<{
+    style: string;
+    rewritten: string;
+  } | null>(null);
 
   // Spellcheck state
   const [spellChecking, setSpellChecking] = useState(false);
@@ -591,6 +713,8 @@ export function Workspace() {
           autoPunctuation: settings.autoPunctuation,
           removeFillers: settings.removeFillers,
           language: settings.language,
+          customSnippets: settings.customSnippets,
+          snippets: settings.snippets,
         });
 
         setRawText(processed);
@@ -640,17 +764,22 @@ export function Workspace() {
 
     try {
       if (isBrowserSpeechSupported() && settings.sttEngine !== "chimege") {
-        const recognizer = new BrowserSpeechRecognizer({
-          language: settings.language,
-          onInterim: (previewText) => {
-            setLivePreview(previewText);
-          },
-          onError: (err) => {
-            console.warn("Browser Speech warning:", err);
-          },
-        });
-        browserRecognizerRef.current = recognizer;
-        recognizer.start();
+        try {
+          const recognizer = new BrowserSpeechRecognizer({
+            language: settings.language,
+            onInterim: (previewText) => {
+              setLivePreview(previewText);
+            },
+            onError: (err) => {
+              console.warn("Browser Speech warning:", err);
+            },
+          });
+          browserRecognizerRef.current = recognizer;
+          recognizer.start();
+        } catch (recErr) {
+          console.warn("Browser speech recognizer init error:", recErr);
+          browserRecognizerRef.current = null;
+        }
       }
 
       const recorder = new AudioRecorder({
@@ -671,6 +800,14 @@ export function Workspace() {
 
       setState("recording");
     } catch (err: unknown) {
+      if (browserRecognizerRef.current) {
+        browserRecognizerRef.current.abort();
+        browserRecognizerRef.current = null;
+      }
+      if (audioRecorderRef.current) {
+        audioRecorderRef.current.cancel();
+        audioRecorderRef.current = null;
+      }
       const msg =
         err instanceof Error
           ? err.message
@@ -842,6 +979,73 @@ export function Workspace() {
     setTimeout(() => setCopied(false), 2000);
   };
 
+  const handleFormatNumbers = async () => {
+    if (!rawText.trim() || formattingNumbers) return;
+    setFormattingNumbers(true);
+    try {
+      const res = await fetch("/api/format-numbers", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: rawText.trim() }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.formatted_text) {
+          setRawText(data.formatted_text);
+          setWorkspaceText(data.formatted_text);
+          setFormattedSuccess(true);
+          setTimeout(() => setFormattedSuccess(false), 2500);
+        }
+      }
+    } catch (e) {
+      console.warn("Format numbers error", e);
+    } finally {
+      setFormattingNumbers(false);
+    }
+  };
+
+  const handleRewriteStyle = async (chosenStyle: string) => {
+    if (!rawText.trim()) return;
+    setRewriting(true);
+    setShowStyleMenu(false);
+    try {
+      const res = await fetch("/api/rewrite-style", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: rawText.trim(), style: chosenStyle }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setRewrittenResult({ style: chosenStyle, rewritten: data.rewritten });
+      }
+    } catch (e) {
+      console.warn("Rewrite error", e);
+    } finally {
+      setRewriting(false);
+    }
+  };
+
+  const handleSummarize = async () => {
+    if (!rawText.trim()) return;
+    setSummarizing(true);
+    try {
+      const res = await fetch("/api/summarize", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: rawText.trim() }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setSummaryData(data);
+        setShowSummaryModal(true);
+      }
+    } catch (e) {
+      console.warn("Summarize error", e);
+    } finally {
+      setSummarizing(false);
+    }
+  };
+
   const label =
     state === "idle"
       ? "ЯРЬЖ ЭХЛЭХ"
@@ -925,10 +1129,64 @@ export function Workspace() {
             <SparklesIcon width={16} height={16} style={{ color: "var(--accent)" }} />
             <b>Таны текст</b>
           </div>
-          <span>
-            {stats.wordCount} үг • {stats.charCount} тэмдэгт
-          </span>
+          <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+            <button
+              type="button"
+              className="btn-secondary"
+              onClick={() => setShowSnippetsBar(!showSnippetsBar)}
+              style={{
+                fontSize: "11px",
+                padding: "3px 8px",
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "4px",
+                borderRadius: "6px",
+              }}
+              title="Бэлэн үгс / Voice Snippets шууд оруулах"
+            >
+              <ZapIcon width={12} height={12} />
+              <span>Бэлэн үгс ({Object.keys(settings.snippets || {}).length})</span>
+            </button>
+            <span>
+              {stats.wordCount} үг • {stats.charCount} тэмдэгт
+            </span>
+          </div>
         </header>
+
+        {showSnippetsBar && settings.snippets && Object.keys(settings.snippets).length > 0 && (
+          <div
+            style={{
+              display: "flex",
+              gap: "6px",
+              flexWrap: "wrap",
+              padding: "10px 14px",
+              background: "rgba(255, 255, 255, 0.03)",
+              borderBottom: "1px solid var(--border-color, rgba(255,255,255,0.08))",
+              alignItems: "center",
+            }}
+          >
+            <span style={{ fontSize: "11px", color: "var(--muted)", marginRight: "4px" }}>
+              Нэмэх:
+            </span>
+            {Object.entries(settings.snippets).map(([trigger, expansion]) => (
+              <button
+                key={trigger}
+                type="button"
+                className="btn-secondary"
+                onClick={() => {
+                  const sep = rawText && !rawText.endsWith(" ") && !rawText.endsWith("\n") ? " " : "";
+                  const updated = (rawText || "") + sep + expansion;
+                  setRawText(updated);
+                  setWorkspaceText(updated);
+                }}
+                style={{ fontSize: "11px", padding: "3px 8px", borderRadius: "6px" }}
+                title={`Текстэнд оруулах: "${expansion}"`}
+              >
+                <span style={{ color: "var(--accent)" }}>{trigger}</span>
+              </button>
+            ))}
+          </div>
+        )}
 
         <div className="transcript-body">
           {state === "processing" ? (
@@ -1029,6 +1287,68 @@ export function Workspace() {
           </div>
         )}
 
+        {rewrittenResult && (
+          <div
+            style={{
+              margin: "12px 18px",
+              padding: "14px 16px",
+              background: "rgba(16, 185, 129, 0.08)",
+              border: "1px solid rgba(16, 185, 129, 0.3)",
+              borderRadius: "10px",
+              fontSize: "0.92rem",
+            }}
+          >
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px", flexWrap: "wrap", gap: "8px" }}>
+              <div style={{ fontWeight: 600, color: "#10b981", display: "flex", alignItems: "center", gap: "6px" }}>
+                <SparklesIcon width={16} height={16} />
+                <span>
+                  {rewrittenResult.style === "formal" ? "💼 Албан бичиг найруулга" :
+                   rewrittenResult.style === "email" ? "✉️ Ажлын имэйл найруулга" :
+                   rewrittenResult.style === "social" ? "💬 Сошиал пост найруулга" : "🧹 Зассан найруулга"}
+                </span>
+              </div>
+              <div style={{ display: "flex", gap: "6px" }}>
+                <button
+                  type="button"
+                  className="btn-primary"
+                  onClick={() => {
+                    setRawText(rewrittenResult.rewritten);
+                    setWorkspaceText(rewrittenResult.rewritten);
+                    setRewrittenResult(null);
+                  }}
+                  style={{ fontSize: "11px", padding: "4px 10px" }}
+                  title="Одоогийн текстийг энэ хувилбараар солих"
+                >
+                  Зөвшөөрч солих
+                </button>
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  onClick={() => {
+                    navigator.clipboard?.writeText(rewrittenResult.rewritten);
+                    setCopied(true);
+                    setTimeout(() => setCopied(false), 2000);
+                  }}
+                  style={{ fontSize: "11px", padding: "4px 8px" }}
+                >
+                  Хуулах
+                </button>
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  onClick={() => setRewrittenResult(null)}
+                  style={{ fontSize: "11px", padding: "4px 8px" }}
+                >
+                  Хаах
+                </button>
+              </div>
+            </div>
+            <div style={{ whiteSpace: "pre-wrap", lineHeight: 1.5, color: "var(--text)" }}>
+              {rewrittenResult.rewritten}
+            </div>
+          </div>
+        )}
+
         <footer>
           <button
             className="btn-primary"
@@ -1053,6 +1373,93 @@ export function Workspace() {
           >
             <VolumeIcon width={15} height={15} />
             <span>{ttsLoading ? "Уншиж байна..." : "Сонсох (VoiceStudio)"}</span>
+          </button>
+          <div style={{ position: "relative", display: "inline-block" }}>
+            <button
+              type="button"
+              className="btn-secondary"
+              onClick={() => setShowStyleMenu(!showStyleMenu)}
+              disabled={!rawText || rewriting}
+              title="Яриаг албан бичиг, ажлын имэйл, сошиал пост болгон найруулах"
+              style={{ display: "inline-flex", alignItems: "center", gap: "6px" }}
+            >
+              <SparklesIcon width={15} height={15} />
+              <span>{rewriting ? "Найруулж байна..." : "🎨 Найруулга"}</span>
+            </button>
+
+            {showStyleMenu && (
+              <div
+                style={{
+                  position: "absolute",
+                  bottom: "100%",
+                  left: 0,
+                  marginBottom: "8px",
+                  background: "var(--bg-card, #1e1e24)",
+                  border: "1px solid var(--border-color, rgba(255,255,255,0.15))",
+                  borderRadius: "10px",
+                  boxShadow: "0 8px 24px rgba(0,0,0,0.4)",
+                  padding: "6px",
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: "4px",
+                  zIndex: 50,
+                  minWidth: "190px",
+                }}
+              >
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  onClick={() => handleRewriteStyle("formal")}
+                  style={{ textAlign: "left", fontSize: "12px", padding: "8px 12px", border: "none", width: "100%", justifyContent: "flex-start" }}
+                >
+                  💼 Албан бичиг / Тайлан
+                </button>
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  onClick={() => handleRewriteStyle("email")}
+                  style={{ textAlign: "left", fontSize: "12px", padding: "8px 12px", border: "none", width: "100%", justifyContent: "flex-start" }}
+                >
+                  ✉️ Ажлын имэйл хэлбэр
+                </button>
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  onClick={() => handleRewriteStyle("social")}
+                  style={{ textAlign: "left", fontSize: "12px", padding: "8px 12px", border: "none", width: "100%", justifyContent: "flex-start" }}
+                >
+                  💬 Сошиал / Товч
+                </button>
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  onClick={() => handleRewriteStyle("proofread")}
+                  style={{ textAlign: "left", fontSize: "12px", padding: "8px 12px", border: "none", width: "100%", justifyContent: "flex-start" }}
+                >
+                  🧹 Алдаа ба давталт засах
+                </button>
+              </div>
+            )}
+          </div>
+
+          <button
+            className="btn-secondary"
+            onClick={handleFormatNumbers}
+            disabled={!rawText || formattingNumbers}
+            title="Тоо, мөнгөн дүн (₮, $), утасны дугаарыг ухаалгаар форматлах"
+            style={{ display: "inline-flex", alignItems: "center", gap: "6px" }}
+          >
+            <span style={{ fontSize: "13px" }}>🔢</span>
+            <span>{formattingNumbers ? "Цэгцэлж байна..." : formattedSuccess ? "Цэгцэллээ! ✓" : "Тоо & Валют"}</span>
+          </button>
+          <button
+            className="btn-secondary"
+            onClick={handleSummarize}
+            disabled={!rawText || summarizing}
+            title="Гол санаа, шийдвэр, хийх ажлуудыг ялгаж харах"
+          >
+            <SparklesIcon width={15} height={15} />
+            <span>{summarizing ? "Товчилж байна..." : "AI Товчлол"}</span>
           </button>
           <button
             className="btn-secondary"
@@ -1106,6 +1513,78 @@ export function Workspace() {
           </button>
         </footer>
       </section>
+{showSummaryModal && summaryData && (
+          <div
+            style={{
+              margin: "16px 20px 20px 20px",
+              padding: "16px 18px",
+              background: "rgba(99, 102, 241, 0.08)",
+              border: "1px solid rgba(99, 102, 241, 0.3)",
+              borderRadius: "12px",
+              display: "flex",
+              flexDirection: "column",
+              gap: "12px",
+              fontSize: "0.9rem",
+            }}
+          >
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: "8px", fontWeight: 600, color: "var(--primary, #6366f1)" }}>
+                <SparklesIcon width={18} height={18} />
+                <span>AI Smart Товчлол ба Хийх ажлууд</span>
+              </div>
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={() => setShowSummaryModal(false)}
+                style={{ fontSize: "11px", padding: "4px 8px" }}
+              >
+                Хаах
+              </button>
+            </div>
+
+            {summaryData.summary && (
+              <div>
+                <strong>Товч тойм:</strong> {summaryData.summary}
+              </div>
+            )}
+
+            {summaryData.key_points && summaryData.key_points.length > 0 && (
+              <div>
+                <strong>📌 Гол санаанууд:</strong>
+                <ul style={{ margin: "4px 0 0 18px", padding: 0 }}>
+                  {summaryData.key_points.map((pt, idx) => (
+                    <li key={idx} style={{ marginTop: "2px" }}>{pt}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            {summaryData.decisions && summaryData.decisions.length > 0 && (
+              <div>
+                <strong>🎯 Гарсан шийдвэрүүд:</strong>
+                <ul style={{ margin: "4px 0 0 18px", padding: 0 }}>
+                  {summaryData.decisions.map((dec, idx) => (
+                    <li key={idx} style={{ marginTop: "2px", color: "#10b981" }}>{dec}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            {summaryData.action_items && summaryData.action_items.length > 0 && (
+              <div>
+                <strong>✅ Хийх ажлууд (Action Items):</strong>
+                <ul style={{ listStyleType: "none", margin: "4px 0 0 0", padding: 0 }}>
+                  {summaryData.action_items.map((act, idx) => (
+                    <li key={idx} style={{ display: "flex", alignItems: "center", gap: "6px", marginTop: "4px" }}>
+                      <input type="checkbox" defaultChecked={false} style={{ cursor: "pointer" }} />
+                      <span>{act}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
+        )}
 
       <div className="meta">
         <span>
@@ -1418,17 +1897,50 @@ export function SettingsPanel() {
                     <span style={{ margin: "0 8px", color: "var(--muted)" }}>➔</span>
                     <span style={{ fontFamily: "monospace", color: "var(--foreground)" }}>{replacement}</span>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => handleRemoveSnippet(trigger)}
-                    className="btn-danger"
-                    style={{ padding: "4px 8px", fontSize: "11px", flexShrink: 0 }}
-                    title="Устгах"
-                  >
-                    <TrashIcon width={12} height={12} />
-                  </button>
+                  <div style={{ display: "flex", gap: "6px", flexShrink: 0 }}>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setNewTrigger(trigger);
+                        setNewReplacement(replacement);
+                      }}
+                      className="btn-secondary"
+                      style={{ padding: "4px 8px", fontSize: "11px" }}
+                      title="Засах"
+                    >
+                      <EditIcon width={12} height={12} />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleRemoveSnippet(trigger)}
+                      className="btn-danger"
+                      style={{ padding: "4px 8px", fontSize: "11px" }}
+                      title="Устгах"
+                    >
+                      <TrashIcon width={12} height={12} />
+                    </button>
+                  </div>
                 </div>
               ))}
+            </div>
+          )}
+
+          {Object.keys(settings.snippets || {}).length === 0 && (
+            <div style={{ marginTop: "8px" }}>
+              <button
+                type="button"
+                onClick={() => {
+                  update("snippets", {
+                    "миний имэйл": "tuvshoo@gmail.com",
+                    "миний утас": "+976 99112233",
+                    "данс": "2815108795",
+                  });
+                }}
+                className="btn-secondary"
+                style={{ fontSize: "11px", padding: "4px 10px" }}
+              >
+                Үндсэн 3 товчлолыг сэргээх (Имэйл, Утас, Данс)
+              </button>
             </div>
           )}
 
@@ -1612,6 +2124,61 @@ export function SettingsPanel() {
         </Link>
       </section>
 
+      {/* Auto Lyrics & Subtitle Studio */}
+      <section className="settings">
+        <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "6px" }}>
+          <div
+            style={{
+              width: "32px",
+              height: "32px",
+              borderRadius: "8px",
+              background: "linear-gradient(135deg, #a855f7 0%, #ec4899 100%)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              boxShadow: "0 0 14px rgba(168, 85, 247, 0.4)",
+            }}
+          >
+            <MusicIcon width={18} height={18} style={{ color: "#ffffff" }} />
+          </div>
+          <div>
+            <h2 style={{ margin: 0 }}>Auto Lyrics & Хадмал Студи (LRC / SRT)</h2>
+            <small style={{ color: "var(--muted)" }}>
+              MP3 / WAV / M4A дуу, бичлэгнээс хугацаатай хадмал, дууны үг гаргах
+            </small>
+          </div>
+        </div>
+        <p style={{ marginTop: "10px" }}>
+          Дууны файл эсвэл ярианы бичлэг оруулаад Whisper хиймэл оюунаар секундчилсэн цагийн тэмдэглэгээтэй (Timestamp) дууны үг, видеоны хадмал бичвэр автоматаар бэлтгэнэ.
+        </p>
+
+        <div style={{ display: "flex", alignItems: "center", gap: "10px", margin: "14px 0 16px", flexWrap: "wrap" }}>
+          <span style={{ display: "inline-flex", alignItems: "center", gap: "6px", fontSize: "12px", background: "var(--subtle)", padding: "4px 10px", borderRadius: "6px", border: "1px solid var(--border)" }}>
+            🎵 MP3, WAV, M4A дэмжинэ
+          </span>
+          <span style={{ display: "inline-flex", alignItems: "center", gap: "6px", fontSize: "12px", background: "var(--subtle)", padding: "4px 10px", borderRadius: "6px", border: "1px solid var(--border)" }}>
+            ⏱ LRC & SRT шууд татах
+          </span>
+          <span style={{ display: "inline-flex", alignItems: "center", gap: "6px", fontSize: "12px", background: "var(--subtle)", padding: "4px 10px", borderRadius: "6px", border: "1px solid var(--border)" }}>
+            ✨ Аудиотой синхрон тодролт
+          </span>
+        </div>
+
+        <Link
+          href="/lyrics"
+          className="btn-primary"
+          style={{
+            fontSize: "13px",
+            textDecoration: "none",
+            background: "linear-gradient(135deg, #9333ea 0%, #c026d3 100%)",
+            borderColor: "rgba(168, 85, 247, 0.4)",
+          }}
+        >
+          <MusicIcon width={15} height={15} />
+          <span>Auto Lyrics Студи нээх (Дуу оруулах) →</span>
+        </Link>
+      </section>
+
       {/* Appearance & System */}
       <section className="settings">
         <h2>Харагдац & Систем</h2>
@@ -1657,6 +2224,8 @@ export function SettingsPanel() {
             <span>🛑 VOICE-оос бүрэн гарах</span>
           </button>
         </div>
+
+
       </section>
     </div>
   );

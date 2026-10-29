@@ -61,6 +61,7 @@ export interface TranscriptionRecord {
   engine: string;
   wordCount: number;
   charCount: number;
+  starred?: boolean;
 }
 
 export interface SpellCheckResult {

@@ -16,17 +16,33 @@ export class HistoryStore {
   }
 
   static add(item: Omit<TranscriptionRecord, "id" | "timestamp"> & { id?: string; timestamp?: number }): TranscriptionRecord {
+    const rawText = (item.text || "").trim();
+    if (!rawText) {
+      throw new Error("Cannot add empty transcription to history");
+    }
+
     const records = this.getAll();
+    const now = item.timestamp || Date.now();
+
+    // Guard against rapid duplicate insertion (within 1.5s with identical text)
+    if (records.length > 0) {
+      const top = records[0];
+      if (top.text.trim() === rawText && Math.abs(top.timestamp - now) < 1500) {
+        return top;
+      }
+    }
+
     const newRecord: TranscriptionRecord = {
       id: item.id || (typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : "rec_" + Date.now()),
       text: item.text,
       rawText: item.rawText,
-      timestamp: item.timestamp || Date.now(),
+      timestamp: now,
       durationSeconds: item.durationSeconds || 0,
       language: item.language,
       engine: item.engine || "voice",
-      wordCount: item.wordCount || (item.text.trim() ? item.text.trim().split(/\s+/).length : 0),
+      wordCount: item.wordCount || (rawText ? rawText.split(/\s+/).length : 0),
       charCount: item.charCount || item.text.length,
+      starred: Boolean(item.starred),
     };
 
     records.unshift(newRecord);
@@ -35,6 +51,21 @@ export class HistoryStore {
     this.saveAll(trimmed);
     this.notify();
     return newRecord;
+  }
+
+  static toggleStar(id: string): boolean {
+    const records = this.getAll();
+    let newStarred = false;
+    const updated = records.map((r) => {
+      if (r.id === id) {
+        newStarred = !r.starred;
+        return { ...r, starred: newStarred };
+      }
+      return r;
+    });
+    this.saveAll(updated);
+    this.notify();
+    return newStarred;
   }
 
   static remove(id: string): void {
@@ -51,20 +82,25 @@ export class HistoryStore {
     this.notify();
   }
 
-  static search(query: string): TranscriptionRecord[] {
+  static search(query: string, onlyStarred: boolean = false): TranscriptionRecord[] {
     const q = query.toLowerCase().trim();
-    if (!q) return this.getAll();
-    return this.getAll().filter((r) => r.text.toLowerCase().includes(q));
+    let list = this.getAll();
+    if (onlyStarred) {
+      list = list.filter((r) => Boolean(r.starred));
+    }
+    if (!q) return list;
+    return list.filter((r) => r.text.toLowerCase().includes(q));
   }
 
-  static exportAsJSON(): void {
-    const data = JSON.stringify(this.getAll(), null, 2);
+  static exportAsJSON(items?: TranscriptionRecord[]): void {
+    const list = items !== undefined ? items : this.getAll();
+    const data = JSON.stringify(list, null, 2);
     downloadFile(data, `voice-history-${new Date().toISOString().slice(0, 10)}.json`, "application/json");
   }
 
-  static exportAsText(): void {
-    const items = this.getAll();
-    const txt = items
+  static exportAsText(items?: TranscriptionRecord[]): void {
+    const list = items !== undefined ? items : this.getAll();
+    const txt = list
       .map((item) => {
         const date = new Date(item.timestamp).toLocaleString();
         return `[${date}] (${item.language.toUpperCase()}, ${item.durationSeconds}s)\n${item.text}\n`;
@@ -73,12 +109,12 @@ export class HistoryStore {
     downloadFile(txt, `voice-history-${new Date().toISOString().slice(0, 10)}.txt`, "text/plain");
   }
 
-  static exportAsSRT(): void {
-    const items = this.getAll();
+  static exportAsSRT(items?: TranscriptionRecord[]): void {
+    const list = items !== undefined ? items : this.getAll();
     let currentOffset = 1.0;
     const srtLines: string[] = [];
 
-    items.forEach((item, index) => {
+    list.forEach((item, index) => {
       const dur = item.durationSeconds > 0 ? item.durationSeconds : Math.max(2.5, item.text.length * 0.08);
       const startT = currentOffset;
       const endT = currentOffset + dur;

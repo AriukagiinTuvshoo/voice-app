@@ -86,6 +86,7 @@ export const defaultSettings: Settings = {
   snippets: {
     "миний имэйл": "user@example.invalid",
     "миний утас": "+97600000000",
+    "данс": "2815108795",
   },
 };
 

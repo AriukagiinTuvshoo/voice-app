@@ -31,8 +31,15 @@ export class AudioRecorder {
     this.silenceTimer = 0;
 
     if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia) {
+      const isSecure = typeof window !== "undefined" && window.isSecureContext;
+      const host = typeof window !== "undefined" ? window.location.hostname : "";
+      if (!isSecure && host && host !== "localhost" && host !== "127.0.0.1") {
+        throw new Error(
+          `Хөтөч аюулгүй биш орчинд (HTTP://${host}) ажиллаж байна. Chrome дээр микрофон ашиглахын тулд http://localhost:8000 эсвэл http://127.0.0.1:8000 хаягаар нээнэ үү.`
+        );
+      }
       throw new Error(
-        "Микрофон ашиглах боломжгүй байна. HTTPS холболт эсвэл орчин үеийн хөтөч (Chrome/Safari) ашиглана уу."
+        "Микрофон ашиглах боломжгүй байна. Chrome/Edge хөтөч эсвэл HTTPS холболт ашиглана уу."
       );
     }
 
@@ -59,10 +66,40 @@ export class AudioRecorder {
             "Микрофон ашиглах зөвшөөрөл хаалттай байна. Хөтчийнхөө хаягийн мөрний 🔒 тэмдэг дээр дарж Микрофоныг 'Зөвшөөрөх / Allow' болгоно уу."
           );
         }
-        // Fallback to simple { audio: true } for mobile Safari / Android compatibility
-        this.mediaStream = await navigator.mediaDevices.getUserMedia({
-          audio: true,
-        });
+        if (errName === "NotFoundError" || errName === "DevicesNotFoundError") {
+          throw new Error(
+            "Микрофон төхөөрөмж олдсонгүй. Микрофон тань компьютерт холбогдсон эсэхийг шалгана уу."
+          );
+        }
+        if (errName === "NotReadableError" || errName === "TrackStartError") {
+          throw new Error(
+            "Микрофоныг өөр програм ашиглаж байна (эсвэл үйлдлийн систем дээр хаалттай). Бусад програмуудаа шалгаад дахин оролдоно уу."
+          );
+        }
+        // Fallback to simple { audio: true } if custom deviceId failed
+        try {
+          this.mediaStream = await navigator.mediaDevices.getUserMedia({
+            audio: true,
+          });
+        } catch (secondErr: unknown) {
+          const sErrName = secondErr instanceof Error ? secondErr.name : "";
+          if (sErrName === "NotAllowedError" || sErrName === "PermissionDeniedError") {
+            throw new Error(
+              "Микрофон ашиглах зөвшөөрөл хаалттай байна. Хөтчийнхөө хаягийн мөрний 🔒 тэмдэг дээр дарж Микрофоныг 'Зөвшөөрөх / Allow' болгоно уу."
+            );
+          }
+          if (sErrName === "NotFoundError" || sErrName === "DevicesNotFoundError") {
+            throw new Error(
+              "Микрофон төхөөрөмж олдсонгүй. Микрофон тань компьютерт холбогдсон эсэхийг шалгана уу."
+            );
+          }
+          if (sErrName === "NotReadableError" || sErrName === "TrackStartError") {
+            throw new Error(
+              "Микрофоныг өөр програм ашиглаж байна. Бусад дуут програмуудаа хаагаад дахин оролдоно уу."
+            );
+          }
+          throw secondErr;
+        }
       }
 
       const AudioCtx =

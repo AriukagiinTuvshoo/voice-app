@@ -234,6 +234,40 @@ export function restoreCodeSwitchingTerms(text: string): string {
   return deduped.join(" ").trim();
 }
 
+export function escapeRegex(str: string): string {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * Replace custom voice trigger phrases with their configured text expansions.
+ * Uses Unicode-aware letter/digit boundary assertions so Cyrillic, Latin, and numbers
+ * match reliably without requiring ASCII-only word boundaries.
+ */
+export function applyVoiceSnippets(
+  text: string,
+  snippets?: Record<string, string> | null
+): string {
+  if (!text || !snippets || typeof snippets !== "object") return text || "";
+  let out = text;
+  const sortedTriggers = Object.keys(snippets).sort((a, b) => b.length - a.length);
+
+  for (const trigger of sortedTriggers) {
+    const rawVal = snippets[trigger];
+    if (!trigger || !rawVal || typeof rawVal !== "string") continue;
+    const cleanTrigger = trigger.trim();
+    if (!cleanTrigger) continue;
+
+    // Use Unicode-aware letter/digit boundaries so Cyrillic/Latin words match cleanly
+    // even when followed by punctuation (.,!?) or spacing
+    const pattern = new RegExp(
+      `(?<![\\p{L}\\p{N}])${escapeRegex(cleanTrigger)}(?![\\p{L}\\p{N}])`,
+      "giu"
+    );
+    out = out.replace(pattern, rawVal.trim());
+  }
+  return out;
+}
+
 /**
  * Clean up and process text according to processingMode and settings.
  */
@@ -244,10 +278,17 @@ export function processTranscriptText(
     autoPunctuation?: boolean;
     removeFillers?: boolean;
     language?: string;
+    customSnippets?: boolean;
+    snippets?: Record<string, string>;
   }
 ): string {
   if (!text) return "";
   let result = restoreCodeSwitchingTerms(text.trim());
+
+  // Apply custom voice snippets (e.g. "миний имэйл" -> email) before final formatting
+  if (options.customSnippets !== false && options.snippets) {
+    result = applyVoiceSnippets(result, options.snippets);
+  }
 
   if (options.mode === "raw") {
     return result;

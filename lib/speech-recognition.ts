@@ -120,6 +120,13 @@ export class BrowserSpeechRecognizer {
       };
 
       this.recognition.onerror = (e: SpeechRecognitionErrorEvent) => {
+        if (
+          e.error === "not-allowed" ||
+          e.error === "service-not-allowed" ||
+          e.error === "audio-capture"
+        ) {
+          this.shouldContinue = false;
+        }
         if (e.error !== "no-speech" && e.error !== "aborted") {
           this.options.onError?.(`Speech алдаа: ${e.error}`);
         }
@@ -131,7 +138,7 @@ export class BrowserSpeechRecognizer {
             this.recognition.start();
             return;
           } catch {
-            // Ignore restart error if already stopping
+            this.shouldContinue = false;
           }
         }
         this.isListening = false;
