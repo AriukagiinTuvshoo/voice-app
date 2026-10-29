@@ -81,6 +81,11 @@ export const defaultSettings: Settings = {
   fillerWordCleaner: true,
   noiseGate: true,
   startWithWindows: true,
+  customSnippets: true,
+  snippets: {
+    "миний имэйл": "user@example.invalid",
+    "миний утас": "+97600000000",
+  },
 };
 
 export const CHIMEGE_API_URL = "https://api.chimege.com/v1.2";

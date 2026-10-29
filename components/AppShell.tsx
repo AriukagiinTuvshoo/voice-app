@@ -243,6 +243,8 @@ function Provider({ children }: { children: ReactNode }) {
         noise_gate: Boolean(settings.noiseGate),
         auto_insert_text: Boolean(settings.autoInsertText),
         start_with_windows: Boolean(settings.startWithWindows),
+        custom_snippets: Boolean(settings.customSnippets),
+        snippets: settings.snippets || {},
       }),
     }).catch(() => {});
   }, [
@@ -258,6 +260,8 @@ function Provider({ children }: { children: ReactNode }) {
     settings.noiseGate,
     settings.autoInsertText,
     settings.startWithWindows,
+    settings.customSnippets,
+    settings.snippets,
   ]);
 
   const value = useMemo(
@@ -1122,10 +1126,29 @@ export function Workspace() {
 export function SettingsPanel() {
   const { settings, update, flowbarStatus, toggleFlowBar, triggerFlowBarRecording, resetFlowBarPosition, quitVoiceApp } = useSettings();
   const [audioDevices, setAudioDevices] = useState<MediaDeviceInfo[]>([]);
+  const [newTrigger, setNewTrigger] = useState("");
+  const [newReplacement, setNewReplacement] = useState("");
 
   useEffect(() => {
     getAudioInputDevices().then(setAudioDevices);
   }, []);
+
+  const handleAddSnippet = () => {
+    const trig = newTrigger.trim().toLowerCase();
+    const rep = newReplacement.trim();
+    if (!trig || !rep) return;
+    const current = { ...(settings.snippets || {}) };
+    current[trig] = rep;
+    update("snippets", current);
+    setNewTrigger("");
+    setNewReplacement("");
+  };
+
+  const handleRemoveSnippet = (trigger: string) => {
+    const current = { ...(settings.snippets || {}) };
+    delete current[trigger];
+    update("snippets", current);
+  };
 
   const Toggle = ({
     k,
@@ -1281,6 +1304,115 @@ export function SettingsPanel() {
           label="Зөв бичгийн дүрэм (Spellcheck)"
           description="Бичвэр бэлэн болмогц зөв бичгийн алдааг шалгаж санал болгох."
         />
+      </section>
+
+      {/* Custom Voice Snippets */}
+      <section className="settings">
+        <h2>Дуут Товчлолууд & Хурдан Текст (Voice Snippets)</h2>
+        <p>
+          Түлхүүр үг хэлэхэд автоматаар таны тохируулсан урт бичвэр, имэйл, дансны дугаар болгон хувиргах ухаалаг товчлол.
+        </p>
+
+        <Toggle
+          k="customSnippets"
+          label="Дуут товчлолууд ашиглах"
+          description="Яриа дунд тохируулсан үг сонсогдвол шууд бүтэн бичвэрээр нь орлуулна."
+        />
+
+        <div style={{ marginTop: "14px" }}>
+          <label style={{ display: "block", fontSize: "12px", fontWeight: 600, marginBottom: "8px" }}>
+            Бүртгэлтэй дуут товчлолууд ({Object.keys(settings.snippets || {}).length}):
+          </label>
+
+          {Object.keys(settings.snippets || {}).length === 0 ? (
+            <div style={{ fontSize: "12px", color: "var(--muted)", padding: "10px", background: "var(--subtle)", borderRadius: "8px", border: "1px dashed var(--border)" }}>
+              Одоогоор бүртгэлтэй товчлол алга байна. Доорх талбараар шинээр нэмнэ үү.
+            </div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+              {Object.entries(settings.snippets || {}).map(([trigger, replacement]) => (
+                <div
+                  key={trigger}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    background: "var(--subtle)",
+                    padding: "8px 12px",
+                    borderRadius: "8px",
+                    border: "1px solid var(--border)",
+                    fontSize: "12px",
+                  }}
+                >
+                  <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", marginRight: "10px" }}>
+                    <span style={{ color: "var(--accent)", fontWeight: 600 }}>&ldquo;{trigger}&rdquo;</span>
+                    <span style={{ margin: "0 8px", color: "var(--muted)" }}>➔</span>
+                    <span style={{ fontFamily: "monospace", color: "var(--foreground)" }}>{replacement}</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => handleRemoveSnippet(trigger)}
+                    className="btn-danger"
+                    style={{ padding: "4px 8px", fontSize: "11px", flexShrink: 0 }}
+                    title="Устгах"
+                  >
+                    <TrashIcon width={12} height={12} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div style={{ display: "flex", gap: "8px", marginTop: "12px", flexWrap: "wrap" }}>
+            <input
+              type="text"
+              placeholder="Дуудах үг (жнь: миний данс)"
+              value={newTrigger}
+              onChange={(e) => setNewTrigger(e.target.value)}
+              style={{
+                flex: "1 1 140px",
+                padding: "8px 10px",
+                borderRadius: "8px",
+                border: "1px solid var(--border)",
+                background: "var(--card)",
+                fontSize: "12px",
+                color: "var(--foreground)",
+              }}
+            />
+            <input
+              type="text"
+              placeholder="Орлох бичвэр (жнь: Хаан банк: 5000xxxxxx)"
+              value={newReplacement}
+              onChange={(e) => setNewReplacement(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  handleAddSnippet();
+                }
+              }}
+              style={{
+                flex: "2 1 200px",
+                padding: "8px 10px",
+                borderRadius: "8px",
+                border: "1px solid var(--border)",
+                background: "var(--card)",
+                fontSize: "12px",
+                color: "var(--foreground)",
+              }}
+            />
+            <button
+              type="button"
+              onClick={handleAddSnippet}
+              className="btn-primary"
+              style={{ fontSize: "12px", padding: "8px 16px" }}
+            >
+              + Нэмэх
+            </button>
+          </div>
+          <small style={{ display: "block", color: "var(--muted)", fontSize: "11px", marginTop: "6px" }}>
+            Жишээ: &ldquo;миний имэйл&rdquo; гэж хэлэхэд автоматаар таны и-мэйл хаяг бичигдэнэ.
+          </small>
+        </div>
       </section>
 
       {/* STT Engine & Microphone */}

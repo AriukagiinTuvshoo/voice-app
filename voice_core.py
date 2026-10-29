@@ -40,6 +40,7 @@ BOOLEAN_SETTINGS: Set[str] = {
     "filler_word_cleaner",
     "noise_gate",
     "auto_insert_text",
+    "custom_snippets",
 }
 
 VOICE_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
@@ -110,6 +111,17 @@ def sanitize_settings(data: Any) -> Dict[str, Any]:
     tok = data.get("chimege_token")
     if isinstance(tok, str) and len(tok) <= 512:
         clean["chimege_token"] = tok.strip()
+
+    snips = data.get("snippets")
+    if isinstance(snips, dict):
+        clean_snips = {}
+        for k, v in snips.items():
+            if isinstance(k, str) and isinstance(v, str):
+                k_str = k.strip().lower()
+                v_str = v.strip()
+                if k_str and len(k_str) <= 64 and len(v_str) <= 1000:
+                    clean_snips[k_str] = v_str
+        clean["snippets"] = clean_snips
 
     return clean
 
@@ -503,3 +515,21 @@ def generate_srt(segments: list) -> str:
         lines.append(text)
         lines.append("")
     return "\r\n".join(lines).strip() + "\r\n"
+
+
+def apply_voice_snippets(text: str, snippets: Optional[Dict[str, str]]) -> str:
+    """
+    Replace custom user voice trigger phrases with their configured text expansions.
+    e.g. 'миний имэйл' -> 'user@gmail.com', 'миний данс' -> 'Хаан банк: 5000xxxxxx'
+    """
+    if not text or not snippets or not isinstance(snippets, dict):
+        return text or ""
+    s = text
+    sorted_triggers = sorted(snippets.keys(), key=len, reverse=True)
+    for trigger in sorted_triggers:
+        replacement = snippets[trigger]
+        if not trigger or not isinstance(trigger, str) or not replacement or not isinstance(replacement, str):
+            continue
+        pattern = r"(?i)\b" + re.escape(trigger.strip()) + r"\b"
+        s = re.sub(pattern, replacement.strip(), s)
+    return s

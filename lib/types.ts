@@ -46,6 +46,8 @@ export interface Settings {
   fillerWordCleaner?: boolean;
   noiseGate?: boolean;
   startWithWindows?: boolean;
+  customSnippets?: boolean;
+  snippets?: Record<string, string>;
 }
 
 export interface TranscriptionRecord {

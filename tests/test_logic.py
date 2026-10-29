@@ -179,6 +179,33 @@ class TestVoiceCoreLogic(unittest.TestCase):
         self.assertIn("1\r\n00:00:01,000 --> 00:00:03,500\r\nСайн байна уу", srt)
         self.assertIn("2\r\n00:00:04,000 --> 00:00:07,000\r\nVOICE системд тавтай морил", srt)
 
+    def test_apply_voice_snippets(self):
+        snippets = {
+            "миний имэйл": "user@example.invalid",
+            "миний данс": "Хаан банк 5000123456",
+        }
+        sample = "Сайн байна уу миний имэйл хаягаар холбогдож миний данс руу шилжүүлнэ үү"
+        res = voice_core.apply_voice_snippets(sample, snippets)
+        self.assertIn("user@example.invalid хаягаар", res)
+        self.assertIn("Хаан банк 5000123456 руу", res)
+        self.assertNotIn("миний имэйл", res)
+        self.assertNotIn("миний данс", res)
+
+    def test_sanitize_settings_snippets(self):
+        data = {
+            "custom_snippets": True,
+            "snippets": {
+                "МИНИЙ ИМЭЙЛ": "user@example.invalid",
+                "invalid": 1234,
+                "a" * 100: "too long key",
+            },
+        }
+        cleaned = voice_core.sanitize_settings(data)
+        self.assertTrue(cleaned["custom_snippets"])
+        self.assertEqual(cleaned["snippets"]["миний имэйл"], "user@example.invalid")
+        self.assertNotIn("invalid", cleaned["snippets"])
+        self.assertNotIn("a" * 100, cleaned["snippets"])
+
 
 class TestFakeTkSmoke(unittest.TestCase):
     """Smoke test for the FlowBar UI command queue and event loop logic using Tk mocks."""
