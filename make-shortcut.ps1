@@ -3,8 +3,16 @@ param([string]$AppDir = $PSScriptRoot)
 $ws = New-Object -ComObject WScript.Shell
 $desktop = [Environment]::GetFolderPath('Desktop')
 $lnk = $ws.CreateShortcut((Join-Path $desktop 'VOICE.lnk'))
-$lnk.TargetPath = 'wscript.exe'
-$lnk.Arguments = '"' + (Join-Path $AppDir 'VOICE-Silent.vbs') + '"'
+
+$pyw = Join-Path $AppDir '.venv\Scripts\pythonw.exe'
+if (Test-Path $pyw) {
+    $lnk.TargetPath = $pyw
+    $lnk.Arguments = 'tts_server.py'
+} else {
+    $lnk.TargetPath = Join-Path $AppDir 'Start-VOICE.bat'
+    $lnk.WindowStyle = 7
+}
+
 $lnk.WorkingDirectory = $AppDir
 $ico = Join-Path $AppDir 'public\voice.ico'
 if (Test-Path $ico) { $lnk.IconLocation = $ico }

@@ -36,9 +36,12 @@ echo [2/4] Copying files to %TARGET% ...
 if not exist "%TARGET%" mkdir "%TARGET%"
 xcopy /E /I /Y /Q "%~dp0out" "%TARGET%\out" >nul
 xcopy /E /I /Y /Q "%~dp0public" "%TARGET%\public" >nul
-for %%F in (tts_server.py requirements.txt Start-VOICE.bat VOICE-Silent.vbs make-shortcut.ps1 README.md LICENSE) do (
+for %%F in (tts_server.py requirements.txt Start-VOICE.bat make-shortcut.ps1 README.md LICENSE) do (
     if exist "%~dp0%%F" copy /Y "%~dp0%%F" "%TARGET%\" >nul
 )
+rem Clean up blocked legacy files if present
+if exist "%TARGET%\VOICE-Silent.vbs" del /f /q "%TARGET%\VOICE-Silent.vbs" >nul 2>&1
+if exist "%TARGET%\VOICE.exe" del /f /q "%TARGET%\VOICE.exe" >nul 2>&1
 
 rem ---- 3. Private virtual environment + dependencies ------------------------
 echo [3/4] Installing Python packages (first time only, needs internet) ...
@@ -63,8 +66,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "%TARGET%\make-shortcut.ps1"
 
 echo.
 echo Done! Starting VOICE ...
-start "" wscript.exe "%TARGET%\VOICE-Silent.vbs"
-timeout /t 3 /nobreak >nul
+start "" "%TARGET%\.venv\Scripts\pythonw.exe" "%TARGET%\tts_server.py"
 exit /b 0
 
 :fail

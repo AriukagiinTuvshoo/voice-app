@@ -96,7 +96,6 @@ VOICE-ийн гол давуу тал нь **курсор байгаа газа�
 voice-app/
 ├── Install-VOICE.bat      # 🚀 1-Товшилтоор орчин бэлтгэх ба Desktop товчлол үүсгэгч
 ├── Start-VOICE.bat        # ⚡ VOICE системийг серверийн хамт далд эхлүүлэгч
-├── VOICE-Silent.vbs       # 🪟 Консол цонх харуулахгүй далд ажиллуулах скрипт
 ├── make-shortcut.ps1      # 📌 Desktop дээр товчлол автоматаар үүсгэгч
 ├── tts_server.py          # 🧠 Python хөдөлгүүр (STT, TTS, Voice Clone, Hotkey & Tkinter FlowBar)
 ├── out/                   # 🎨 Бэлэн веб интерфэйсийн статик файлууд (HTML/CSS/JS)
