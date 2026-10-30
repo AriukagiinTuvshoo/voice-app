@@ -397,7 +397,7 @@ except ImportError:
 try:
     import sounddevice as sd
     HAS_SOUNDDEVICE = True
-except ImportError:
+except Exception:
     HAS_SOUNDDEVICE = False
 
 try:
