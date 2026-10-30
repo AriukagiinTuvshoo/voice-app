@@ -15,7 +15,6 @@ FFMPEG_BACKUP_URL = "https://github.com/BtbN/FFmpeg-Builds/releases/download/lat
 
 def download_file(url, dest_path):
     print(f"[*] Downloading {url} -> {dest_path}...", flush=True)
-    # Prefer curl.exe if available for robust handling of HTTP 302/303 redirects and TLS
     curl_bin = shutil.which("curl.exe") or shutil.which("curl")
     if curl_bin:
         cmd = [curl_bin, "-L", "--fail", "--retry", "3", "--retry-delay", "2", "-o", dest_path, url]
@@ -43,20 +42,37 @@ def verify_sha256(file_path, expected_hash):
     print(f"[+] Checksum verified: {actual}", flush=True)
 
 def prepare_whisper(base_dir):
-    whisper_dir = os.path.join(base_dir, "tools", "whisper.cpp", "Release")
-    whisper_bin = os.path.join(whisper_dir, "whisper-cli.exe")
+    whisper_cpp_dir = os.path.join(base_dir, "tools", "whisper.cpp")
+    whisper_release_dir = os.path.join(whisper_cpp_dir, "Release")
+    whisper_bin = os.path.join(whisper_release_dir, "whisper-cli.exe")
+    
     if os.path.isfile(whisper_bin):
         print(f"[+] whisper-cli.exe already present at {whisper_bin}", flush=True)
     else:
-        os.makedirs(whisper_dir, exist_ok=True)
+        os.makedirs(whisper_cpp_dir, exist_ok=True)
         tmp_zip = os.path.join(base_dir, "whisper-temp.zip")
         download_file(WHISPER_URL, tmp_zip)
         verify_sha256(tmp_zip, WHISPER_SHA256)
-        print(f"[*] Extracting {tmp_zip} to {whisper_dir}...", flush=True)
+        print(f"[*] Extracting {tmp_zip} to {whisper_cpp_dir}...", flush=True)
         with zipfile.ZipFile(tmp_zip, "r") as z:
-            z.extractall(whisper_dir)
+            z.extractall(whisper_cpp_dir)
         if os.path.exists(tmp_zip):
             os.remove(tmp_zip)
+        
+        # In case the zip extracts flat or nested, locate whisper-cli.exe
+        if not os.path.isfile(whisper_bin):
+            found_dir = None
+            for root, dirs, files in os.walk(whisper_cpp_dir):
+                if "whisper-cli.exe" in files:
+                    found_dir = root
+                    break
+            if found_dir and found_dir != whisper_release_dir:
+                os.makedirs(whisper_release_dir, exist_ok=True)
+                for item in os.listdir(found_dir):
+                    src_item = os.path.join(found_dir, item)
+                    dst_item = os.path.join(whisper_release_dir, item)
+                    if not os.path.exists(dst_item):
+                        shutil.move(src_item, dst_item)
     
     # Test execution
     res = subprocess.run([whisper_bin, "--help"], capture_output=True, text=True, timeout=10)
