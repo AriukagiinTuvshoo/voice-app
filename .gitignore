@@ -35,6 +35,7 @@ VOICE-Windows-*.zip
 *.bin
 models/
 tools/
+runtime/
 
 voice-diagnose.txt
 clones/

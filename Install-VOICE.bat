@@ -8,7 +8,7 @@ rem ---- 0. Unblock downloaded files (Windows Smart App Control MOTW) ---
 powershell -NoProfile -Command "Get-ChildItem -Path '%~dp0*' -Recurse | Unblock-File -ErrorAction SilentlyContinue" >nul 2>&1
 
 echo ============================================================
-set "APP_VER=1.4.2"
+set "APP_VER=1.4.3"
 if exist "%~dp0VERSION" set /p APP_VER=<"%~dp0VERSION"
 echo   VOICE - Speak. Clean. Write.   (Installer v%APP_VER%)
 echo ============================================================
