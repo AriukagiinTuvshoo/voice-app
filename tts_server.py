@@ -151,6 +151,7 @@ from audio_separator import (
     cleanup_stems,
     STEMS_DIR,
 )
+import voice_cloning
 from voice_cloning import (
     create_voice_profile,
     delete_voice_profile,
@@ -349,7 +350,7 @@ app.add_middleware(
     allow_headers=["Content-Type"],
 )
 
-CLONES_DIR = os.path.join(USER_DATA_DIR, "clones")
+CLONES_DIR = voice_cloning.CLONES_DIR
 CLONES_JSON = os.path.join(CLONES_DIR, "voices.json")
 BASE_ENVELOPES_CACHE: dict[str, np.ndarray] = {}
 
