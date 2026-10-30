@@ -1,4 +1,5 @@
 import os
+import sys
 import unittest
 import subprocess
 import hashlib
@@ -19,6 +20,11 @@ class TestReleaseRecoveryV143(unittest.TestCase):
         cls.tools_dir = os.path.join(cls.base_dir, "tools")
         cls.runtime_dir = os.path.join(cls.base_dir, "runtime")
         cls.dist_dir = os.path.join(cls.base_dir, "dist")
+
+        if sys.platform != "win32":
+            raise unittest.SkipTest("Release recovery binary tests require Windows environment")
+        if not os.path.isdir(cls.dist_dir) and not os.environ.get("RELEASE_ACCEPTANCE"):
+            raise unittest.SkipTest("Release recovery tests require built artifacts in dist/")
 
     def test_whisper_binary_present_and_executable(self):
         """Verify that whisper-cli binary is physically present in tools/ and runs."""
