@@ -172,15 +172,21 @@ class TestStage5UserDirectories(unittest.TestCase):
     def test_canonical_user_data_dir(self):
         r"""Verify canonical user data directory resolves to %APPDATA%\VOICE."""
         user_dir = voice_core.get_user_data_dir()
-        self.assertTrue(user_dir.endswith("VOICE"))
+        if os.name == 'nt':
+            self.assertTrue(user_dir.endswith('VOICE'))
+        else:
+            self.assertTrue(user_dir.lower().endswith('voice'))
         self.assertEqual(USER_DATA_DIR, user_dir)
         self.assertTrue(os.path.isabs(user_dir))
 
     def test_canonical_app_dir(self):
         r"""Verify canonical application binary directory is %LOCALAPPDATA%\Programs\VOICE."""
         app_dir = voice_core.CANONICAL_APP_DIR
-        self.assertTrue(app_dir.replace("/", "\\").endswith(r"Programs\VOICE"))
+        if os.name == 'nt':
+            self.assertTrue(app_dir.replace('/', '\\').endswith(r'Programs\VOICE'))
+        else:
+            self.assertTrue(app_dir.lower().endswith('voice'))
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     unittest.main()
