@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/AriukagiinTuvshoo/voice-app/releases/latest"><img src="https://img.shields.io/badge/Release-v1.4.1-6366f1?style=for-the-badge&logo=windows" alt="Version 1.4.1" /></a>
+  <a href="https://github.com/AriukagiinTuvshoo/voice-app/releases/latest"><img src="https://img.shields.io/badge/Release-v1.4.2-6366f1?style=for-the-badge&logo=windows" alt="Version 1.4.2" /></a>
   <img src="https://img.shields.io/badge/Platform-Windows%2010%20%7C%2011%20(64--bit)-blue?style=for-the-badge&logo=windows" alt="Platform Windows" />
   <img src="https://img.shields.io/badge/Python-3.10%2B-brightgreen?style=for-the-badge&logo=python" alt="Python 3.10+" />
   <img src="https://img.shields.io/badge/Node.js-Not%20Required-blueviolet?style=for-the-badge" alt="No Node Needed" />
@@ -22,14 +22,14 @@
 ## 📥 1. Татах ба Суулгах заавар (Quick Start)
 
 ### 🌟 Сонголт 1: Бие даасан Windows Installer (Санал болгож буй)
-👉 [**VOICE-Setup-v1.4.1.exe татах (GitHub Releases)**](https://github.com/AriukagiinTuvshoo/voice-app/releases/latest)
+👉 [**VOICE-Setup-v1.4.2.exe татах (GitHub Releases)**](https://github.com/AriukagiinTuvshoo/voice-app/releases/latest)
 - Администраторын UAC эрх шаардахгүй (`%LOCALAPPDATA%\Programs\VOICE`).
 - Desktop болон Start Menu товчлолыг автоматаар үүсгэнэ.
 - Хэрэглэгчийн тохиргоо, дуу хоолойн профайл нь тусдаа `%APPDATA%\VOICE` хавтсанд найдвартай хадгалагдах бөгөөд шинэчлэлт хийх эсвэл устгах үед хамгаалагдана.
 - Шаардлагатай бүх хиймэл оюуны бинар файлууд (FFmpeg libass, whisper.cpp), Next.js статик интерфейс багтсан.
 
 ### 📦 Сонголт 2: Portable Zip хувилбар
-👉 [**VOICE-Windows-v1.4.1.zip татах (GitHub Releases)**](https://github.com/AriukagiinTuvshoo/voice-app/releases/latest)
+👉 [**VOICE-Windows-v1.4.2.zip татах (GitHub Releases)**](https://github.com/AriukagiinTuvshoo/voice-app/releases/latest)
 1. Zip файлыг татаж аваад **Extract All... (Бүгдийг задлах)** сонгоно.
 2. Хавтас доторх **`Install-VOICE.bat`** файл дээр давхар товшиж ажиллуулна.
 3. Desktop дээр үүссэн **`VOICE`** товчлолоор эхлүүлнэ.
@@ -83,7 +83,7 @@ VOICE-ийн гол давуу тал нь **курсор байгаа газа�
 ```text
 voice-app/
 ├── installer/
-│   └── voice-setup.iss        # 📦 Inno Setup standalone installer скрипт (v1.4.1)
+│   └── voice-setup.iss        # 📦 Inno Setup standalone installer скрипт (v1.4.2)
 ├── tools/
 │   ├── ffmpeg/ffmpeg.exe      # 🎬 Native FFmpeg build with libass
 │   └── whisper.cpp/Release/   # 🤖 Native CPU/CUDA whisper-cli бинар
@@ -101,7 +101,7 @@ voice-app/
 ├── public/                    # 🖼️ Нил ягаан дүрс тэмдэг (voice.ico, icon.svg)
 ├── requirements.txt           # 📦 Үндсэн Python сангууд
 ├── requirements-tray.txt      # 📦 Системийн Tray дүрс тэмдэг (pystray, Pillow)
-├── VERSION                    # 🏷️ Хувилбарын дугаар (1.4.1)
+├── VERSION                    # 🏷️ Хувилбарын дугаар (1.4.2)
 ├── README.md                  # 📖 Дэлгэрэнгүй заавар
 └── LICENSE                    # 📄 MIT лиценз
 ```

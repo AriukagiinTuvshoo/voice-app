@@ -6,6 +6,8 @@ cd /d "%~dp0"
 set "PYW="
 if exist "%~dp0runtime\pythonw.exe" (
     set "PYW=%~dp0runtime\pythonw.exe"
+) else if exist "%~dp0runtime\Scripts\pythonw.exe" (
+    set "PYW=%~dp0runtime\Scripts\pythonw.exe"
 ) else if exist "%~dp0.venv\Scripts\pythonw.exe" (
     set "PYW=%~dp0.venv\Scripts\pythonw.exe"
 ) else if exist "%LOCALAPPDATA%\Programs\VOICE\runtime\pythonw.exe" (
@@ -18,7 +20,7 @@ if "%PYW%"=="" goto not_installed
 rem ---- Check if background daemon requested (autostart) ---
 if "%~1"=="--background" (
     rem If server is already running, we do nothing and exit
-    powershell -NoProfile -Command "try { $h = Invoke-RestMethod -Uri 'http://127.0.0.1:8000/health' -TimeoutSec 2; if ($h.status -eq 'ok') { exit 0 } } catch { }; exit 1" >nul 2>&1
+powershell -NoProfile -Command "$exp = if (Test-Path '%~dp0VERSION') { (Get-Content '%~dp0VERSION').Trim() } else { '' }; try { $h = Invoke-RestMethod -Uri 'http://127.0.0.1:8000/health' -TimeoutSec 2; if ($h.status -eq 'ok') { if ($exp -and $h.version -and ($h.version -ne $exp)) { try { Invoke-RestMethod -Uri 'http://127.0.0.1:8000/api/quit' -Method Post -TimeoutSec 2 } catch { }; exit 1 }; try { $d = Invoke-WebRequest -Uri 'http://127.0.0.1:8000/dashboard' -UseBasicParsing -TimeoutSec 2; if ($d.StatusCode -eq 200) { exit 0 } else { try { Invoke-RestMethod -Uri 'http://127.0.0.1:8000/api/quit' -Method Post -TimeoutSec 2 } catch { }; exit 1 } } catch { try { Invoke-RestMethod -Uri 'http://127.0.0.1:8000/api/quit' -Method Post -TimeoutSec 2 } catch { }; exit 1 } } } catch { }; exit 1"
     if not errorlevel 1 exit /b 0
 
     rem Start server with --background flag so it doesn't open browser
@@ -28,7 +30,7 @@ if "%~1"=="--background" (
 )
 
 rem ---- Is OUR server already running on port 8000? --------------------------------
-powershell -NoProfile -Command "try { $h = Invoke-RestMethod -Uri 'http://127.0.0.1:8000/health' -TimeoutSec 2; if ($h.status -eq 'ok') { if ($h.desktop -like '*exebox*') { try { Invoke-RestMethod -Uri 'http://127.0.0.1:8000/api/quit' -Method Post -TimeoutSec 2 } catch { }; exit 1 } else { exit 0 } } } catch { }; exit 1"
+powershell -NoProfile -Command "$exp = if (Test-Path '%~dp0VERSION') { (Get-Content '%~dp0VERSION').Trim() } else { '' }; try { $h = Invoke-RestMethod -Uri 'http://127.0.0.1:8000/health' -TimeoutSec 2; if ($h.status -eq 'ok') { if ($exp -and $h.version -and ($h.version -ne $exp)) { try { Invoke-RestMethod -Uri 'http://127.0.0.1:8000/api/quit' -Method Post -TimeoutSec 2 } catch { }; exit 1 }; try { $d = Invoke-WebRequest -Uri 'http://127.0.0.1:8000/dashboard' -UseBasicParsing -TimeoutSec 2; if ($d.StatusCode -eq 200) { exit 0 } else { try { Invoke-RestMethod -Uri 'http://127.0.0.1:8000/api/quit' -Method Post -TimeoutSec 2 } catch { }; exit 1 } } catch { try { Invoke-RestMethod -Uri 'http://127.0.0.1:8000/api/quit' -Method Post -TimeoutSec 2 } catch { }; exit 1 } } } catch { }; exit 1"
 if not errorlevel 1 (
     powershell -NoProfile -Command "try { Invoke-RestMethod -Uri 'http://127.0.0.1:8000/flowbar/action' -Method Post -ContentType 'application/json' -Body '{\"action\":\"show\"}' -TimeoutSec 1 } catch { }" >nul 2>&1
     goto open_window
@@ -45,7 +47,7 @@ start "" "%PYW%" "%~dp0tts_server.py"
 rem ---- Wait up to ~20 s until it answers ---------------------------------------------
 set /a TRIES=0
 :wait_loop
-powershell -NoProfile -Command "try { $h = Invoke-RestMethod -Uri 'http://127.0.0.1:8000/health' -TimeoutSec 2; if ($h.status -eq 'ok') { if ($h.desktop -like '*exebox*') { try { Invoke-RestMethod -Uri 'http://127.0.0.1:8000/api/quit' -Method Post -TimeoutSec 2 } catch { }; exit 1 } else { exit 0 } } } catch { }; exit 1"
+powershell -NoProfile -Command "$exp = if (Test-Path '%~dp0VERSION') { (Get-Content '%~dp0VERSION').Trim() } else { '' }; try { $h = Invoke-RestMethod -Uri 'http://127.0.0.1:8000/health' -TimeoutSec 2; if ($h.status -eq 'ok') { if ($exp -and $h.version -and ($h.version -ne $exp)) { try { Invoke-RestMethod -Uri 'http://127.0.0.1:8000/api/quit' -Method Post -TimeoutSec 2 } catch { }; exit 1 }; try { $d = Invoke-WebRequest -Uri 'http://127.0.0.1:8000/dashboard' -UseBasicParsing -TimeoutSec 2; if ($d.StatusCode -eq 200) { exit 0 } else { try { Invoke-RestMethod -Uri 'http://127.0.0.1:8000/api/quit' -Method Post -TimeoutSec 2 } catch { }; exit 1 } } catch { try { Invoke-RestMethod -Uri 'http://127.0.0.1:8000/api/quit' -Method Post -TimeoutSec 2 } catch { }; exit 1 } } } catch { }; exit 1"
 if not errorlevel 1 goto open_window
 set /a TRIES+=1
 if %TRIES% GEQ 20 goto start_failed

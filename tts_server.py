@@ -86,6 +86,20 @@ from typing import Optional
 
 if os.name == "nt":
     from ctypes import wintypes
+else:
+    class _WinTypesCompat:
+        BOOL = ctypes.c_int
+        WORD = ctypes.c_ushort
+        DWORD = ctypes.c_ulong
+        LONG = ctypes.c_long
+        LPCWSTR = ctypes.c_wchar_p
+        HWND = ctypes.c_void_p
+        HANDLE = ctypes.c_void_p
+        HMONITOR = ctypes.c_void_p
+        UINT = ctypes.c_uint
+        class RECT(ctypes.Structure):
+            _fields_ = [("left", ctypes.c_long), ("top", ctypes.c_long), ("right", ctypes.c_long), ("bottom", ctypes.c_long)]
+    wintypes = _WinTypesCompat()
 
 from fastapi import FastAPI, HTTPException, Request, Response, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
@@ -4838,6 +4852,7 @@ def serve_root():
 @app.get("/settings")
 @app.get("/flowbar")
 @app.get("/lyrics")
+@app.get("/studio")
 def serve_app_page(request: Request):
     page = request.url.path.strip("/") or "dashboard"
     html_file = os.path.join(OUT_DIR, f"{page}.html")

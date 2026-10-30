@@ -8,7 +8,7 @@ rem ---- 0. Unblock downloaded files (Windows Smart App Control MOTW) ---
 powershell -NoProfile -Command "Get-ChildItem -Path '%~dp0*' -Recurse | Unblock-File -ErrorAction SilentlyContinue" >nul 2>&1
 
 echo ============================================================
-set "APP_VER=1.4.1"
+set "APP_VER=1.4.2"
 if exist "%~dp0VERSION" set /p APP_VER=<"%~dp0VERSION"
 echo   VOICE - Speak. Clean. Write.   (Installer v%APP_VER%)
 echo ============================================================
@@ -44,6 +44,10 @@ if "%~1"=="repair" (
 
 rem ---- Check if standalone bundled Python runtime exists in installer ---
 if exist "%~dp0runtime\pythonw.exe" (
+    echo [1/4] Found bundled standalone Python runtime.
+    goto have_runtime
+)
+if exist "%~dp0runtime\Scripts\pythonw.exe" (
     echo [1/4] Found bundled standalone Python runtime.
     goto have_runtime
 )
@@ -90,6 +94,14 @@ echo [*] Attempting automatic install via Windows Package Manager (winget)...
 winget --version >nul 2>&1
 if not errorlevel 1 (
     winget install Python.Python.3.12 --silent --accept-package-agreements --accept-source-agreements
+    if exist "%LOCALAPPDATA%\Programs\Python\Python312\python.exe" (
+        set "PY=%LOCALAPPDATA%\Programs\Python\Python312\python.exe"
+        goto have_python
+    )
+    if exist "%ProgramFiles%\Python312\python.exe" (
+        set "PY=%ProgramFiles%\Python312\python.exe"
+        goto have_python
+    )
     py -3 -c "import sys; sys.exit(0 if sys.version_info>=(3,10) else 1)" >nul 2>&1
     if not errorlevel 1 (
         set "PY=py -3"

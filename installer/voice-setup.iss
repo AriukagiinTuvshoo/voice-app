@@ -2,7 +2,7 @@
 ; Stage 5 Production Installer
 
 #define MyAppName "VOICE"
-#define MyAppVersion "1.4.1"
+#define MyAppVersion "1.4.2"
 #define MyAppPublisher "AriukagiinTuvshoo"
 #define MyAppURL "https://github.com/AriukagiinTuvshoo/voice-app"
 #define MyAppExeName "Start-VOICE.bat"

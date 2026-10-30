@@ -482,6 +482,10 @@ class TestVoiceCoreLogic(unittest.TestCase):
 
     def test_transcribe_with_whisper_cpp_cli_smoke(self):
         import wave, struct, math, tempfile
+        bin_path = voice_core.find_whisper_cpp_binary()
+        model_path = voice_core.find_local_ggml_model("tiny")
+        if not bin_path or not model_path:
+            self.skipTest("whisper-cli binary or tiny model not present on this machine")
         with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tf:
             wav_path = tf.name
         try:

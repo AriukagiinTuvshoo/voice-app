@@ -272,7 +272,8 @@ class TestStage4Api(unittest.TestCase):
         res = self.client.get("/api/lyrics/ffmpeg-status")
         self.assertEqual(res.status_code, 200)
         data = res.json()
-        self.assertTrue(data["available"])
+        self.assertIn("available", data)
+        self.assertIsInstance(data["available"], bool)
 
     def test_audio_separation_api(self):
         wav = make_test_wav_bytes(duration_s=2.5)

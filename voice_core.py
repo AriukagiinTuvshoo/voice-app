@@ -13,7 +13,7 @@ import subprocess
 from typing import Any, Optional, Tuple, Dict, Set
 
 # Version
-CORE_VERSION = "1.4.1"
+CORE_VERSION = "1.4.2"
 
 # Canonical Windows Paths
 CANONICAL_APP_DIR = os.path.expandvars(r"%LOCALAPPDATA%\Programs\VOICE") if os.name == "nt" else os.path.expanduser("~/.local/share/voice")
