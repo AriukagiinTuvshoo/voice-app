@@ -13,7 +13,21 @@ import subprocess
 from typing import Any, Optional, Tuple, Dict, Set
 
 # Version
-CORE_VERSION = "1.4.0"
+CORE_VERSION = "1.4.1"
+
+# Canonical Windows Paths
+CANONICAL_APP_DIR = os.path.expandvars(r"%LOCALAPPDATA%\Programs\VOICE") if os.name == "nt" else os.path.expanduser("~/.local/share/voice")
+CANONICAL_USER_DATA_DIR = os.path.expandvars(r"%APPDATA%\VOICE") if os.name == "nt" else os.path.expanduser("~/.voice")
+
+
+def get_user_data_dir() -> str:
+    """Get canonical user data directory (%APPDATA%\\VOICE on Windows). Auto-creates if missing."""
+    d = CANONICAL_USER_DATA_DIR
+    try:
+        os.makedirs(d, exist_ok=True)
+    except Exception:
+        pass
+    return d
 
 # Setting choices allowed by the engine
 SETTING_CHOICES: Dict[str, Set[str]] = {

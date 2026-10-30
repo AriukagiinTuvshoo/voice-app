@@ -126,7 +126,14 @@ from voice_core import (
     transcribe_with_whisper_cpp_cli,
     detect_gpu_hardware,
     list_available_local_models,
+    get_user_data_dir,
+    CANONICAL_APP_DIR,
+    CANONICAL_USER_DATA_DIR,
 )
+
+# Standard Windows Clipboard Format ID (defined at module level for cross-platform imports)
+CF_UNICODETEXT = 13
+
 from mongolian_grammar import (
     apply_mongolian_grammar,
     process_voice_commands,
@@ -184,7 +191,30 @@ _ALLOWED_ORIGINS = {
 }
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-SETTINGS_FILE = os.path.join(BASE_DIR, "voice_settings.json")
+USER_DATA_DIR = get_user_data_dir()
+SETTINGS_FILE = os.path.join(USER_DATA_DIR, "voice_settings.json")
+
+
+def _migrate_legacy_user_data() -> None:
+    """Migrate settings and data from BASE_DIR / legacy paths to USER_DATA_DIR."""
+    try:
+        if not os.path.isfile(SETTINGS_FILE):
+            cands = [
+                os.path.join(BASE_DIR, "voice_settings.json"),
+                os.path.expandvars(r"%LOCALAPPDATA%\VOICE-App\voice_settings.json"),
+                os.path.expandvars(r"%LOCALAPPDATA%\Programs\VOICE\voice_settings.json"),
+            ]
+            for c in cands:
+                if os.path.isfile(c):
+                    import shutil
+                    shutil.copy2(c, SETTINGS_FILE)
+                    logger.info("[Migration] Migrated settings to %s", SETTINGS_FILE)
+                    break
+    except Exception as e:
+        logger.warning("[Migration] Notice during settings migration: %s", e)
+
+
+_migrate_legacy_user_data()
 DEFAULT_SERVER_SETTINGS = {
     "hotkey": "f8",         # "f8" | "ctrl_alt" | "ctrl_shift" | "f9" | "f10"
     "stt_engine": "whisper",  # local-first default ("whisper" | "whisper_cpp" | "google" | "chimege") # "google" | "whisper" | "chimege"
@@ -319,12 +349,36 @@ app.add_middleware(
     allow_headers=["Content-Type"],
 )
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-CLONES_DIR = os.path.join(BASE_DIR, "clones")
+CLONES_DIR = os.path.join(USER_DATA_DIR, "clones")
 CLONES_JSON = os.path.join(CLONES_DIR, "voices.json")
 BASE_ENVELOPES_CACHE: dict[str, np.ndarray] = {}
 
 os.makedirs(CLONES_DIR, exist_ok=True)
+
+
+def _migrate_legacy_clones() -> None:
+    try:
+        cands = [
+            os.path.join(BASE_DIR, "clones"),
+            os.path.expandvars(r"%LOCALAPPDATA%\VOICE-App\clones"),
+            os.path.expandvars(r"%LOCALAPPDATA%\Programs\VOICE\clones"),
+        ]
+        for cdir in cands:
+            if os.path.isdir(cdir) and os.path.abspath(cdir) != os.path.abspath(CLONES_DIR):
+                for item in os.listdir(cdir):
+                    src = os.path.join(cdir, item)
+                    dst = os.path.join(CLONES_DIR, item)
+                    if not os.path.exists(dst):
+                        import shutil
+                        if os.path.isdir(src):
+                            shutil.copytree(src, dst)
+                        else:
+                            shutil.copy2(src, dst)
+    except Exception as e:
+        logger.warning("[Migration] Notice during clones migration: %s", e)
+
+
+_migrate_legacy_clones()
 
 # Optional libraries check
 try:
@@ -2162,7 +2216,7 @@ def reset_flowbar_position():
     """Move FlowBar to the bottom-right corner. Tk is touched only from its own thread."""
     fx, fy = get_fallback_flowbar_pos(FLOWBAR_W, FLOWBAR_H)
     try:
-        with open(os.path.join(BASE_DIR, "flowbar_pos.txt"), "w", encoding="utf-8") as pf:
+        with open(os.path.join(USER_DATA_DIR, "flowbar_pos.txt"), "w", encoding="utf-8") as pf:
             pf.write(f"{fx},{fy}")
     except Exception:
         pass
@@ -2515,10 +2569,10 @@ def set_autostart_enabled(enabled: bool) -> bool:
         key_path = r"Software\Microsoft\Windows\CurrentVersion\Run"
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path, 0, winreg.KEY_SET_VALUE) as key:
             if enabled:
+                canonical_bat = os.path.join(CANONICAL_APP_DIR, "Start-VOICE.bat")
                 start_bat = os.path.join(BASE_DIR, "Start-VOICE.bat")
-                if not os.path.exists(start_bat):
-                    start_bat = os.path.expandvars(r"%LOCALAPPDATA%\VOICE-App\Start-VOICE.bat")
-                cmd = f'"{start_bat}" --background'
+                target_bat = canonical_bat if os.path.exists(canonical_bat) else start_bat
+                cmd = f'"{target_bat}" --background'
                 winreg.SetValueEx(key, "VOICE", 0, winreg.REG_SZ, cmd)
                 logger.info("[Autostart] Enabled in HKCU Run: %s", cmd)
             else:
@@ -2562,7 +2616,7 @@ def _start_tray_icon() -> None:
             draw.ellipse((4, 4, 60, 60), fill=(99, 102, 241), outline=(129, 140, 248), width=3)
 
         def on_open_dashboard(icon, item):
-            _open_browser_window()
+            _open_browser_window(force=True)
 
         def on_toggle_flowbar(icon, item):
             cur = bool(FLOWBAR_STATE.get("visible", True))
@@ -3198,7 +3252,9 @@ def _native_flowbar_ui_worker() -> None:
         bar_w, bar_h = FLOWBAR_W, FLOWBAR_H
         pos_x, pos_y = get_fallback_flowbar_pos(bar_w, bar_h)
         work_area = get_primary_work_area()
-        pos_file = os.path.join(BASE_DIR, "flowbar_pos.txt")
+        pos_file = os.path.join(USER_DATA_DIR, "flowbar_pos.txt")
+        if not os.path.isfile(pos_file) and os.path.isfile(os.path.join(BASE_DIR, "flowbar_pos.txt")):
+            pos_file = os.path.join(BASE_DIR, "flowbar_pos.txt")
         if os.path.isfile(pos_file):
             try:
                 with open(pos_file, "r", encoding="utf-8") as pf:
@@ -3464,12 +3520,13 @@ def _native_flowbar_ui_worker() -> None:
 _bg_started = False
 
 
-def _open_browser_window() -> None:
+def _open_browser_window(force: bool = False) -> None:
     """Auto-launch the desktop dashboard in Edge/Chrome app mode once the server is listening."""
-    if os.environ.get("VOICE_NO_BROWSER") or "--background" in sys.argv or "-b" in sys.argv:
-        logger.info("[Browser] Skipping browser auto-launch due to background mode.")
-        return
-    time.sleep(1.0)
+    if not force:
+        if os.environ.get("VOICE_NO_BROWSER") or "--background" in sys.argv or "-b" in sys.argv:
+            logger.info("[Browser] Skipping browser auto-launch due to background mode.")
+            return
+    time.sleep(0.3 if force else 1.0)
     url = f"http://127.0.0.1:{SERVER_PORT}/dashboard"
     candidates = [
         os.path.expandvars(r"%ProgramFiles(x86)%\Microsoft\Edge\Application\msedge.exe"),
@@ -4808,35 +4865,46 @@ def check_for_updates():
 
 class UpdateDownloadRequest(BaseModel):
     download_url: str
-    expected_sha256: Optional[str] = None
+    expected_sha256: str
+    version: Optional[str] = ""
 
 
 @app.post("/api/update/download")
 def api_update_download(req: UpdateDownloadRequest):
-    """Download verified installer to temporary directory."""
+    """Download verified installer to temporary directory and register verified update session."""
     import auto_updater
     try:
         path = auto_updater.download_and_verify_installer(
             req.download_url,
             expected_sha256=req.expected_sha256,
         )
-        return {"status": "ok", "installer_path": path}
+        token = auto_updater.create_update_session(path, req.version or "latest")
+        return {"status": "ok", "session_token": token}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
 
 class UpdateInstallRequest(BaseModel):
-    installer_path: str
+    session_token: str
 
 
 @app.post("/api/update/install")
 def api_update_install(req: UpdateInstallRequest):
-    """Launch verified installer and shut down current instance."""
+    """Launch verified installer from active updater session and shut down current instance."""
     import auto_updater
-    if not os.path.isfile(req.installer_path):
-        raise HTTPException(status_code=404, detail="Installer file not found")
+    installer_path = auto_updater.get_verified_session_installer(req.session_token)
+    if not installer_path:
+        raise HTTPException(status_code=403, detail="Хүчингүй эсвэл баталгаажаагүй шинэчлэлийн session token.")
+
+    try:
+        _flowbar_cmds.put(("quit",))
+        if _tray_icon:
+            _tray_icon.stop()
+    except Exception:
+        pass
+
     threading.Thread(
-        target=lambda: auto_updater.launch_installer_and_exit(req.installer_path),
+        target=lambda: auto_updater.launch_installer_and_exit(installer_path),
         daemon=True,
     ).start()
     return {"status": "ok", "message": "Launching installer and exiting..."}

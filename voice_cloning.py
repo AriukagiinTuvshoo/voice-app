@@ -29,10 +29,12 @@ from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 import soundfile as sf
 
+import voice_core
 
 logger = logging.getLogger("voice.cloning")
 
-CLONES_DIR = os.path.join(os.path.dirname(__file__), "clones")
+USER_DATA_DIR = voice_core.get_user_data_dir()
+CLONES_DIR = os.path.join(USER_DATA_DIR, "clones")
 VOICES_DB_PATH = os.path.join(CLONES_DIR, "voices.json")
 os.makedirs(CLONES_DIR, exist_ok=True)
 
