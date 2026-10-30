@@ -1,0 +1,2 @@
+06d410c2e6d7e5201a4cbcc990b70cebcf9e9cd85001d4052c8dd4dd1702ff41  VOICE-Setup-v1.4.1.exe
+74d71a50e631ce8749c702ed4e1efd7df8aeba29dbbbd28ec18c4a4bbcfb939b  VOICE-Windows-v1.4.1.zip

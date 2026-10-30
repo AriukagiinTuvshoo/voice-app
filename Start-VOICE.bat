@@ -3,8 +3,17 @@ setlocal
 chcp 65001 >nul
 cd /d "%~dp0"
 
-set "PYW=%~dp0.venv\Scripts\pythonw.exe"
-if not exist "%PYW%" goto not_installed
+set "PYW="
+if exist "%~dp0runtime\pythonw.exe" (
+    set "PYW=%~dp0runtime\pythonw.exe"
+) else if exist "%~dp0.venv\Scripts\pythonw.exe" (
+    set "PYW=%~dp0.venv\Scripts\pythonw.exe"
+) else if exist "%LOCALAPPDATA%\Programs\VOICE\runtime\pythonw.exe" (
+    set "PYW=%LOCALAPPDATA%\Programs\VOICE\runtime\pythonw.exe"
+) else if exist "%LOCALAPPDATA%\Programs\VOICE\.venv\Scripts\pythonw.exe" (
+    set "PYW=%LOCALAPPDATA%\Programs\VOICE\.venv\Scripts\pythonw.exe"
+)
+if "%PYW%"=="" goto not_installed
 
 rem ---- Check if background daemon requested (autostart) ---
 if "%~1"=="--background" (

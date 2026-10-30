@@ -2,7 +2,7 @@
 ; Stage 5 Production Installer
 
 #define MyAppName "VOICE"
-#define MyAppVersion "1.4.0"
+#define MyAppVersion "1.4.1"
 #define MyAppPublisher "AriukagiinTuvshoo"
 #define MyAppURL "https://github.com/AriukagiinTuvshoo/voice-app"
 #define MyAppExeName "Start-VOICE.bat"
@@ -41,7 +41,9 @@ Source: "..\out\*"; DestDir: "{app}\out"; Flags: ignoreversion recursesubdirs cr
 ; Static assets
 Source: "..\public\*"; DestDir: "{app}\public"; Flags: ignoreversion recursesubdirs createallsubdirs
 ; Native AI audio binaries (FFmpeg with libass, whisper.cpp)
-Source: "..\tools\*"; DestDir: "{app}\tools"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "..\tools\*"; DestDir: "{app}\tools"; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
+; Standalone embedded Python runtime (optional)
+Source: "..\runtime\*"; DestDir: "{app}\runtime"; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
 ; Application Core & Modules
 Source: "..\tts_server.py"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\voice_core.py"; DestDir: "{app}"; Flags: ignoreversion
@@ -75,3 +77,22 @@ Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: 
 Filename: "{app}\Install-VOICE.bat"; StatusMsg: "Configuring VOICE private Python environment and AI modules..."; Flags: runhidden
 ; Launch application after setup
 Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"; Flags: nowait postinstall skipifsilent
+
+[Code]
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+var
+  UserDataDir: String;
+begin
+  if CurUninstallStep = usPostUninstall then
+  begin
+    UserDataDir := ExpandConstant('{userappdata}\VOICE');
+    // User data in %APPDATA%\VOICE is preserved by default to protect custom clones, history & settings.
+    if DirExists(UserDataDir) then
+    begin
+      if MsgBox('Do you want to delete your custom voice clones, settings, and audio history located in ' + UserDataDir + '?' + #13#10 + '(Selecting No will preserve your data for future installs)', mbConfirmation, MB_YESNO or MB_DEFBUTTON2) = IDYES then
+      begin
+        DelTree(UserDataDir, True, True, True);
+      end;
+    end;
+  end;
+end;

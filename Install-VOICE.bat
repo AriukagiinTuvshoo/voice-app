@@ -8,13 +8,30 @@ rem ---- 0. Unblock downloaded files (Windows Smart App Control MOTW) ---
 powershell -NoProfile -Command "Get-ChildItem -Path '%~dp0*' -Recurse | Unblock-File -ErrorAction SilentlyContinue" >nul 2>&1
 
 echo ============================================================
-set "APP_VER=1.4.0"
+set "APP_VER=1.4.1"
 if exist "%~dp0VERSION" set /p APP_VER=<"%~dp0VERSION"
 echo   VOICE - Speak. Clean. Write.   (Installer v%APP_VER%)
 echo ============================================================
 echo.
 
-set "TARGET=%LOCALAPPDATA%\VOICE-App"
+rem Canonical per-user application installation directory
+set "TARGET=%LOCALAPPDATA%\Programs\VOICE"
+set "LEGACY_TARGET=%LOCALAPPDATA%\VOICE-App"
+set "USER_DATA=%APPDATA%\VOICE"
+
+if not exist "%USER_DATA%" mkdir "%USER_DATA%" >nul 2>&1
+
+rem Migrate legacy user settings from VOICE-App if present
+if exist "%LEGACY_TARGET%\voice_settings.json" (
+    if not exist "%USER_DATA%\voice_settings.json" (
+        copy /Y "%LEGACY_TARGET%\voice_settings.json" "%USER_DATA%\" >nul 2>&1
+    )
+)
+if exist "%LEGACY_TARGET%\clones" (
+    if not exist "%USER_DATA%\clones" (
+        xcopy /E /I /Y /Q "%LEGACY_TARGET%\clones" "%USER_DATA%\clones" >nul 2>&1
+    )
+)
 
 if "%~1"=="--repair" (
     echo [*] Running in REPAIR mode: rebuilding virtual environment...
@@ -25,7 +42,17 @@ if "%~1"=="repair" (
     if exist "%TARGET%\.venv" rd /s /q "%TARGET%\.venv" >nul 2>&1
 )
 
-rem ---- 1. Find Python 3.10+ -------------------------------------------
+rem ---- Check if standalone bundled Python runtime exists in installer ---
+if exist "%~dp0runtime\pythonw.exe" (
+    echo [1/4] Found bundled standalone Python runtime.
+    goto have_runtime
+)
+if exist "%TARGET%\runtime\pythonw.exe" (
+    echo [1/4] Existing standalone Python runtime detected.
+    goto have_runtime
+)
+
+rem ---- 1. Find Python 3.10+ on host if no bundled runtime --------------
 set "PY="
 
 rem Check py -3 launcher
@@ -63,7 +90,6 @@ echo [*] Attempting automatic install via Windows Package Manager (winget)...
 winget --version >nul 2>&1
 if not errorlevel 1 (
     winget install Python.Python.3.12 --silent --accept-package-agreements --accept-source-agreements
-    rem Re-check after winget install
     py -3 -c "import sys; sys.exit(0 if sys.version_info>=(3,10) else 1)" >nul 2>&1
     if not errorlevel 1 (
         set "PY=py -3"
@@ -93,10 +119,11 @@ exit /b 1
 :have_python
 echo [1/4] Python found: %PY%
 
-rem ---- 1b. Stop an older VOICE engine so the NEW code is the one that runs ------
-echo [*] Stopping any running VOICE engine ...
+:have_runtime
+rem ---- 1b. Stop any running VOICE engine so new code takes effect ------
+echo [*] Stopping running VOICE engines ...
 powershell -NoProfile -Command "try { Invoke-RestMethod -Uri 'http://127.0.0.1:8000/api/quit' -Method Post -TimeoutSec 2 } catch { }" >nul 2>&1
-powershell -NoProfile -Command "Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object { $_.CommandLine -like '*VOICE-App*tts_server.py*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }" >nul 2>&1
+powershell -NoProfile -Command "Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object { $_.CommandLine -like '*VOICE*tts_server.py*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }" >nul 2>&1
 ping 127.0.0.1 -n 3 >nul
 
 rem ---- 2. Copy app files ------------------------------------------------
@@ -105,6 +132,8 @@ if not exist "%TARGET%" mkdir "%TARGET%"
 if exist "%~dp0out" xcopy /E /I /Y /Q "%~dp0out" "%TARGET%\out" >nul
 if exist "%~dp0public" xcopy /E /I /Y /Q "%~dp0public" "%TARGET%\public" >nul
 if exist "%~dp0tools" xcopy /E /I /Y /Q "%~dp0tools" "%TARGET%\tools" >nul
+if exist "%~dp0runtime" xcopy /E /I /Y /Q "%~dp0runtime" "%TARGET%\runtime" >nul
+
 for %%F in (tts_server.py voice_core.py mongolian_grammar.py voice_cloning.py audio_separator.py karaoke_ass.py auto_updater.py requirements.txt requirements-tray.txt requirements-offline.txt VERSION Start-VOICE.bat Uninstall-VOICE.bat make-shortcut.ps1 README.md LICENSE Diagnose-VOICE.bat diagnose_flowbar.py) do (
     if exist "%~dp0%%F" copy /Y "%~dp0%%F" "%TARGET%\" >nul
 )
@@ -113,6 +142,12 @@ rem Clean up any blocked legacy files if present
 if exist "%TARGET%\VOICE-Silent.vbs" del /f /q "%TARGET%\VOICE-Silent.vbs" >nul 2>&1
 if exist "%TARGET%\VOICE.exe" del /f /q "%TARGET%\VOICE.exe" >nul 2>&1
 powershell -NoProfile -Command "Get-ChildItem -Path '%TARGET%\*' -Recurse | Unblock-File -ErrorAction SilentlyContinue" >nul 2>&1
+
+rem If bundled runtime exists, skip venv creation entirely!
+if exist "%TARGET%\runtime\pythonw.exe" (
+    echo [3/4] Standalone Python runtime configured.
+    goto make_shortcut
+)
 
 rem ---- 3. Private virtual environment + dependencies ------------------------
 echo [3/4] Setting up private Python environment (first time only) ...
@@ -138,6 +173,7 @@ if errorlevel 1 (
     echo.
 )
 
+:make_shortcut
 rem ---- 4. Desktop shortcut + start ------------------------------------------
 echo [4/4] Creating Desktop shortcut ...
 powershell -NoProfile -ExecutionPolicy Bypass -File "%TARGET%\make-shortcut.ps1" -AppDir "%TARGET%"

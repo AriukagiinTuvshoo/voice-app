@@ -33,6 +33,7 @@ jobs:
       - name: Build Standalone Installer (Inno Setup)
         shell: powershell
         run: |
+          New-Item -ItemType Directory -Path "tools" -Force | Out-Null
           $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
           if (-not (Test-Path $iscc)) {
               $iscc = (Get-Command iscc.exe -ErrorAction SilentlyContinue).Source
