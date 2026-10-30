@@ -47,16 +47,12 @@ jobs:
       run: |
         python -m unittest discover -s tests -p "test_*.py" -v 2>&1 | tee test_results.log
 
-    - name: Publish Test Summary
+    - name: Upload Test Results
       if: always()
-      shell: bash
-      run: |
-        if [ -f test_results.log ]; then
-          echo "### Test Results (${{ matrix.os }} - ${{ matrix.python-version }})" >> $GITHUB_STEP_SUMMARY
-          echo '```text' >> $GITHUB_STEP_SUMMARY
-          tail -n 60 test_results.log >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
-        fi
+      uses: actions/upload-artifact@v4
+      with:
+        name: test-results-${{ matrix.os }}-${{ matrix.python-version }}
+        path: test_results.log
 
   frontend:
     runs-on: ubuntu-latest
