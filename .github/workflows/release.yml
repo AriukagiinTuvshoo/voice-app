@@ -29,7 +29,7 @@ jobs:
 
       - name: Python Compile Check
         run: |
-          python -m py_compile voice_core.py tts_server.py diagnose_flowbar.py build_standalone_runtime.py
+          python -m py_compile voice_core.py tts_server.py diagnose_flowbar.py build_standalone_runtime.py prepare_tools.py
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -47,45 +47,8 @@ jobs:
         run: npm run build
 
       - name: Download & Prepare Native AI Tools (FFmpeg & whisper.cpp)
-        shell: powershell
         run: |
-          New-Item -ItemType Directory -Path "tools\ffmpeg" -Force | Out-Null
-          New-Item -ItemType Directory -Path "tools\whisper.cpp\Release" -Force | Out-Null
-
-          # 1. Download official Gyan.dev FFmpeg essentials if missing
-          if (-not (Test-Path "tools\ffmpeg\ffmpeg.exe")) {
-              Write-Host "Downloading FFmpeg essentials with libass..."
-              $ffmpegZip = "$env:TEMP\ffmpeg.zip"
-              Invoke-WebRequest -Uri "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip" -OutFile $ffmpegZip
-              Expand-Archive -Path $ffmpegZip -DestinationPath "$env:TEMP\ffmpeg_extracted" -Force
-              $ffmpegBin = Get-ChildItem -Path "$env:TEMP\ffmpeg_extracted" -Filter "ffmpeg.exe" -Recurse | Select-Object -First 1
-              Copy-Item -Path $ffmpegBin.FullName -Destination "tools\ffmpeg\ffmpeg.exe"
-              Write-Host "FFmpeg installed successfully."
-          }
-
-          # 2. Download official whisper.cpp release binaries (pinned ggml-org v1.9.2)
-          if (-not (Test-Path "tools\whisper.cpp\Release\whisper-cli.exe")) {
-              Write-Host "Downloading whisper.cpp x64 binaries..."
-              $whisperZip = "$env:TEMP\whisper.zip"
-              Invoke-WebRequest -Uri "https://github.com/ggml-org/whisper.cpp/releases/download/v1.9.2/whisper-bin-x64.zip" -OutFile $whisperZip
-              
-              # Verify SHA-256 checksum
-              $actualHash = (Get-FileHash -Path $whisperZip -Algorithm SHA256).Hash.ToLower()
-              $expectedHash = "49dcc16de826f20bd53d44f947a1ae49dfa81f86cad67a64d80820cb192d674a"
-              if ($actualHash -ne $expectedHash) {
-                  Write-Error "whisper.cpp checksum mismatch: expected $expectedHash, got $actualHash"
-                  exit 1
-              }
-              Write-Host "whisper.cpp SHA256 verified successfully: $actualHash"
-              
-              Expand-Archive -Path $whisperZip -DestinationPath "tools\whisper.cpp\Release" -Force
-              Write-Host "whisper.cpp installed successfully."
-          }
-
-          # Test native binaries
-          & "tools\ffmpeg\ffmpeg.exe" -version
-          & "tools\whisper.cpp\Release\whisper-cli.exe" --help
-          Get-ChildItem -Path "tools" -Recurse | Measure-Object -Property Length -Sum
+          python prepare_tools.py
 
       - name: Build Standalone Python Runtime (Option A)
         shell: powershell
