@@ -32,6 +32,9 @@ voice_settings.json
 *.exe
 *.zip
 VOICE-Windows-*.zip
+*.bin
+models/
+tools/
 
 voice-diagnose.txt
 clones/

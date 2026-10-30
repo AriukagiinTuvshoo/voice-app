@@ -132,17 +132,19 @@ export class AudioRecorder {
 
       this.isRecording = true;
 
-      const dataArray = new Uint8Array(this.analyser.frequencyBinCount);
+      // Time-domain buffer for computing true RMS waveform amplitude
+      const timeData = new Uint8Array(this.analyser.fftSize);
       this.levelInterval = setInterval(() => {
         if (!this.analyser || !this.isRecording) return;
-        this.analyser.getByteFrequencyData(dataArray);
+        this.analyser.getByteTimeDomainData(timeData);
 
-        let sum = 0;
-        for (let i = 0; i < dataArray.length; i++) {
-          sum += dataArray[i];
+        let sumSquares = 0;
+        for (let i = 0; i < timeData.length; i++) {
+          const sample = (timeData[i] - 128) / 128;
+          sumSquares += sample * sample;
         }
-        const avg = sum / dataArray.length;
-        const normalized = Math.min(1, avg / 128);
+        const rms = Math.sqrt(sumSquares / timeData.length);
+        const normalized = Math.min(1, Math.max(0, rms * 3.5));
 
         this.options.onAudioLevel?.(normalized);
 
@@ -191,6 +193,32 @@ export class AudioRecorder {
     }
 
     const resampled = resampleFloat32Array(fullBuffer, sampleRate, 16000);
+    return encodeWAV(resampled, 16000);
+  }
+
+  getInterimWavBlob(maxSeconds: number = 3.0): Blob | null {
+    if (!this.isRecording || this.recordedChunks.length === 0) return null;
+    const sampleRate = this.audioContext ? this.audioContext.sampleRate : 44100;
+    const maxSamples = Math.floor(sampleRate * maxSeconds);
+
+    let collectedSamples = 0;
+    const recentChunks: Float32Array[] = [];
+    for (let i = this.recordedChunks.length - 1; i >= 0; i--) {
+      recentChunks.unshift(this.recordedChunks[i]);
+      collectedSamples += this.recordedChunks[i].length;
+      if (collectedSamples >= maxSamples) break;
+    }
+
+    if (collectedSamples < sampleRate * 0.4) return null;
+
+    const slice = new Float32Array(collectedSamples);
+    let offset = 0;
+    for (const ch of recentChunks) {
+      slice.set(ch, offset);
+      offset += ch.length;
+    }
+
+    const resampled = resampleFloat32Array(slice, sampleRate, 16000);
     return encodeWAV(resampled, 16000);
   }
 

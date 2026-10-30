@@ -2,7 +2,6 @@
 
 import { useState, useEffect, useRef, useCallback } from "react";
 import { AudioRecorder } from "@/lib/audio-recorder";
-import { BrowserSpeechRecognizer, isBrowserSpeechSupported } from "@/lib/speech-recognition";
 import { useSettings } from "@/components/AppShell";
 import { processTranscriptText } from "@/lib/text-processor";
 import { HistoryStore } from "@/lib/history-store";
@@ -32,6 +31,7 @@ export default function FlowBarPage() {
   const [audioLevels, setAudioLevels] = useState<number[]>([4, 10, 16, 10, 4]);
   const [seconds, setSeconds] = useState(0);
   const [langIndex, setLangIndex] = useState(0);
+  const [interimPreview, setInterimPreview] = useState("");
 
   // Drag position
   const [pos, setPos] = useState({ x: 0, y: 0 });
@@ -39,8 +39,10 @@ export default function FlowBarPage() {
   const dragStartRef = useRef({ x: 0, y: 0, posX: 0, posY: 0 });
 
   const recorderRef = useRef<AudioRecorder | null>(null);
-  const browserRecognizerRef = useRef<BrowserSpeechRecognizer | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const previewIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const previewAbortControllerRef = useRef<AbortController | null>(null);
+  const isPreviewPendingRef = useRef(false);
 
   // Restore saved position
   useEffect(() => {
@@ -83,17 +85,21 @@ export default function FlowBarPage() {
   };
 
   const stopAndTranscribe = useCallback(async () => {
+    if (previewAbortControllerRef.current) {
+      previewAbortControllerRef.current.abort();
+      previewAbortControllerRef.current = null;
+    }
+    if (previewIntervalRef.current) {
+      clearInterval(previewIntervalRef.current);
+      previewIntervalRef.current = null;
+    }
+    isPreviewPendingRef.current = false;
+    setInterimPreview("");
     setState("processing");
     setErrorMessage("");
 
     try {
-      let browserText = "";
       let serverText = "";
-
-      if (browserRecognizerRef.current) {
-        browserText = await browserRecognizerRef.current.stop();
-        browserRecognizerRef.current = null;
-      }
 
       if (recorderRef.current) {
         const wavBlob = await recorderRef.current.stop();
@@ -103,19 +109,22 @@ export default function FlowBarPage() {
         formData.append("audio", wavBlob, "speech.wav");
         formData.append("language", currentLang.code);
 
-        const res = await fetch("/api/chimege/transcribe", {
+        const res = await fetch("/api/flowbar/transcribe", {
           method: "POST",
           body: formData,
         });
 
         const data = await res.json().catch(() => ({}));
+        if (data.action === "undo") {
+          setErrorMessage("Буцаах (Undo) хийгдлээ");
+          setState("success");
+          setTimeout(() => setState("idle"), 2200);
+          return;
+        }
         serverText = (data.text || "").trim();
       }
 
-      const text =
-        serverText.length >= browserText.length
-          ? serverText || browserText
-          : browserText || serverText;
+      const text = serverText;
 
       if (!text || !text.trim()) {
         setErrorMessage("Сонсогдсонгүй");
@@ -171,21 +180,12 @@ export default function FlowBarPage() {
   const startRecording = useCallback(async () => {
     setSeconds(0);
     setErrorMessage("");
+    setInterimPreview("");
+    if (previewIntervalRef.current) {
+      clearInterval(previewIntervalRef.current);
+      previewIntervalRef.current = null;
+    }
     try {
-      if (isBrowserSpeechSupported() && settings.sttEngine !== "chimege") {
-        try {
-          const recognizer = new BrowserSpeechRecognizer({
-            language: currentLang.code === "auto" ? "mn" : (currentLang.code as any),
-            onError: (err) => console.warn("FlowBar browser speech error:", err),
-          });
-          browserRecognizerRef.current = recognizer;
-          recognizer.start();
-        } catch (recErr) {
-          console.warn("FlowBar browser speech init error:", recErr);
-          browserRecognizerRef.current = null;
-        }
-      }
-
       const recorder = new AudioRecorder({
         deviceId: settings.selectedAudioDevice,
         autoStop: settings.autoStop,
@@ -197,11 +197,54 @@ export default function FlowBarPage() {
       recorderRef.current = recorder;
       await recorder.start();
       setState("recording");
+
+      // Phase 1: Real-time Live Dictation rolling interim preview loop (~1.8s interval)
+      previewIntervalRef.current = setInterval(async () => {
+        if (!recorderRef.current || isPreviewPendingRef.current) return;
+        try {
+          const sliceBlob = recorderRef.current.getInterimWavBlob(2.5);
+          if (!sliceBlob || sliceBlob.size < 1000) return;
+          isPreviewPendingRef.current = true;
+
+          const controller = new AbortController();
+          previewAbortControllerRef.current = controller;
+
+          const formData = new FormData();
+          formData.append("audio", sliceBlob, "slice.wav");
+          formData.append("language", currentLang.code === "auto" ? "mn" : currentLang.code);
+          const res = await fetch("/api/flowbar/stream-preview", {
+            method: "POST",
+            body: formData,
+            signal: controller.signal,
+          });
+          if (res.ok && !controller.signal.aborted && recorderRef.current) {
+            const data = await res.json().catch(() => ({}));
+            if (!controller.signal.aborted && recorderRef.current) {
+              if (data.last_words) {
+                setInterimPreview(data.last_words);
+              } else if (data.interim_text) {
+                const words = data.interim_text.trim().split(/\s+/);
+                setInterimPreview(words.slice(-4).join(" "));
+              }
+            }
+          }
+        } catch {
+          // Gracefully ignore intermittent network lag or aborted requests
+        } finally {
+          isPreviewPendingRef.current = false;
+        }
+      }, 1800);
     } catch (err: unknown) {
-      if (browserRecognizerRef.current) {
-        browserRecognizerRef.current.abort();
-        browserRecognizerRef.current = null;
+      if (previewAbortControllerRef.current) {
+        previewAbortControllerRef.current.abort();
+        previewAbortControllerRef.current = null;
       }
+      if (previewIntervalRef.current) {
+        clearInterval(previewIntervalRef.current);
+        previewIntervalRef.current = null;
+      }
+      isPreviewPendingRef.current = false;
+      setInterimPreview("");
       if (recorderRef.current) {
         recorderRef.current.cancel();
         recorderRef.current = null;
@@ -243,6 +286,18 @@ export default function FlowBarPage() {
       win.electron.onRecordingStop(() => stopAndTranscribe());
     }
   }, [startRecording, stopAndTranscribe]);
+
+  // Clean up timers on unmount
+  useEffect(() => {
+    return () => {
+      if (previewAbortControllerRef.current) {
+        previewAbortControllerRef.current.abort();
+      }
+      if (previewIntervalRef.current) {
+        clearInterval(previewIntervalRef.current);
+      }
+    };
+  }, []);
 
   // Drag Handlers
   const onMouseDownGrip = (e: React.MouseEvent) => {
@@ -346,6 +401,7 @@ export default function FlowBarPage() {
       ) : (
         <div
           style={{
+            position: "relative",
             transform: `translate(${pos.x}px, ${pos.y}px)`,
             borderRadius: "999px",
             transition: isDraggingRef.current ? "none" : "background 0.25s, box-shadow 0.25s",
@@ -383,6 +439,52 @@ export default function FlowBarPage() {
             cursor: "default",
           }}
         >
+          {/* Live Interim Preview Bubble (Phase 1: visual only, strictly no external window injection) */}
+          {state === "recording" && interimPreview ? (
+            <div
+              style={{
+                position: "absolute",
+                bottom: "calc(100% + 10px)",
+                left: "50%",
+                transform: "translateX(-50%)",
+                background: "linear-gradient(135deg, rgba(15, 23, 42, 0.96) 0%, rgba(30, 41, 59, 0.94) 100%)",
+                color: "#e2e8f0",
+                border: "1px solid rgba(239, 68, 68, 0.5)",
+                boxShadow: "0 10px 25px rgba(0, 0, 0, 0.5), 0 0 12px rgba(239, 68, 68, 0.3)",
+                borderRadius: "999px",
+                padding: "4px 12px",
+                fontSize: "12px",
+                fontWeight: 600,
+                display: "flex",
+                alignItems: "center",
+                gap: "6px",
+                whiteSpace: "nowrap",
+                maxWidth: "320px",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                backdropFilter: "blur(20px)",
+                WebkitBackdropFilter: "blur(20px)",
+                pointerEvents: "none",
+                zIndex: 1000,
+              }}
+            >
+              <span
+                style={{
+                  width: "6px",
+                  height: "6px",
+                  borderRadius: "50%",
+                  background: "#ef4444",
+                  boxShadow: "0 0 6px #ef4444",
+                  display: "inline-block",
+                }}
+              />
+              <span style={{ fontSize: "10px", textTransform: "uppercase", letterSpacing: "0.08em", color: "#f87171", fontWeight: 800 }}>
+                Шууд
+              </span>
+              <span style={{ color: "#f1f5f9" }}>{interimPreview}</span>
+            </div>
+          ) : null}
+
           {/* Drag Grip Handle */}
           <div
             onMouseDown={onMouseDownGrip}
@@ -477,6 +579,22 @@ export default function FlowBarPage() {
                     />
                   ))}
                 </div>
+                {interimPreview ? (
+                  <span
+                    style={{
+                      fontSize: "11px",
+                      color: "rgba(255, 255, 255, 0.9)",
+                      maxWidth: "110px",
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                      fontWeight: 600,
+                    }}
+                    title={interimPreview}
+                  >
+                    {interimPreview}
+                  </span>
+                ) : null}
               </div>
             )}
 

@@ -6,10 +6,14 @@ and text formatting. Importable in headless CI environments (Windows, Linux, mac
 import os
 import re
 import time
+import json
+import uuid
+import tempfile
+import subprocess
 from typing import Any, Optional, Tuple, Dict, Set
 
 # Version
-CORE_VERSION = "1.2.9"
+CORE_VERSION = "1.3.0"
 
 # Setting choices allowed by the engine
 SETTING_CHOICES: Dict[str, Set[str]] = {
@@ -24,8 +28,8 @@ SETTING_CHOICES: Dict[str, Set[str]] = {
         "f2",
         "f4",
     },
-    "stt_engine": {"google", "whisper", "chimege"},
-    "whisper_model": {"tiny", "base", "small", "medium", "large-v3"},
+    "stt_engine": {"google", "whisper", "chimege", "whisper_cpp"},
+    "whisper_model": {"tiny", "base", "small", "small-q5_0", "small-q5_1", "medium", "large-v3", "large-v3-turbo"},
     "language": {"auto", "mn", "en", "ja"},
 }
 
@@ -42,6 +46,8 @@ BOOLEAN_SETTINGS: Set[str] = {
     "auto_insert_text",
     "custom_snippets",
     "tech_terms_normalization",
+    "use_gpu",
+    "mongolian_grammar",
 }
 
 VOICE_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
@@ -118,6 +124,15 @@ def sanitize_settings(data: Any) -> Dict[str, Any]:
     if isinstance(tok, str) and len(tok) <= 512:
         clean["chimege_token"] = tok.strip()
 
+    threads = data.get("cpu_threads")
+    if isinstance(threads, (int, str)):
+        try:
+            t_int = int(threads)
+            if 1 <= t_int <= 32:
+                clean["cpu_threads"] = t_int
+        except Exception:
+            pass
+
     snips = data.get("snippets")
     if isinstance(snips, dict):
         clean_snips = {}
@@ -128,6 +143,19 @@ def sanitize_settings(data: Any) -> Dict[str, Any]:
                 if k_str and len(k_str) <= 64 and len(v_str) <= 1000:
                     clean_snips[k_str] = v_str
         clean["snippets"] = clean_snips
+
+    vocab = data.get("custom_vocabulary")
+    if isinstance(vocab, list):
+        clean_vocab = []
+        seen = set()
+        for item in vocab:
+            if isinstance(item, str):
+                word = item.strip()
+                word_lower = word.lower()
+                if word and 2 <= len(word) <= 64 and word_lower not in seen:
+                    seen.add(word_lower)
+                    clean_vocab.append(word)
+        clean["custom_vocabulary"] = clean_vocab[:200]
 
     return clean
 
@@ -1122,3 +1150,510 @@ def rewrite_text_style(text: str, style: str = "formal") -> dict:
         "changes_count": changes_count,
     }
 
+
+
+# ===========================================================================
+# Local-First Whisper / whisper.cpp Metadata & Utilities
+# ===========================================================================
+
+WHISPER_MODELS_INFO: Dict[str, Dict[str, Any]] = {
+    "tiny": {
+        "params": "39M",
+        "size_mb": 75,
+        "license": "MIT",
+        "hf_repo": "openai/whisper-tiny",
+        "ggml_filename": "ggml-tiny.bin",
+        "mn_evidence": "OpenAI Multilingual vocab (mn id=50284), lowest RAM overhead (<120MB)",
+    },
+    "base": {
+        "params": "74M",
+        "size_mb": 142,
+        "license": "MIT",
+        "hf_repo": "openai/whisper-base",
+        "ggml_filename": "ggml-base.bin",
+        "mn_evidence": "OpenAI Multilingual token, fast real-time factor on CPU (<250MB RAM)",
+    },
+    "small": {
+        "params": "244M",
+        "size_mb": 466,
+        "license": "MIT",
+        "hf_repo": "openai/whisper-small",
+        "ggml_filename": "ggml-small.bin",
+        "mn_evidence": "Mozilla Common Voice 11.0 Mongolian benchmarked baseline (<600MB RAM)",
+    },
+    "small-q5_0": {
+        "params": "244M",
+        "size_mb": 175,
+        "license": "MIT",
+        "hf_repo": "ggerganov/whisper.cpp",
+        "ggml_filename": "ggml-small-q5_1.bin",
+        "mn_evidence": "Quantized 5-bit (q5_1) baseline (~182MB), 25-35% lower WER than tiny, ideal for 4GB VRAM RTX 3050 Ti",
+    },
+    "small-q5_1": {
+        "params": "244M",
+        "size_mb": 182,
+        "license": "MIT",
+        "hf_repo": "ggerganov/whisper.cpp",
+        "ggml_filename": "ggml-small-q5_1.bin",
+        "mn_evidence": "Official ggerganov 5-bit quantized small model (~182MB)",
+    },
+    "medium": {
+        "params": "769M",
+        "size_mb": 1500,
+        "license": "MIT",
+        "hf_repo": "openai/whisper-medium",
+        "ggml_filename": "ggml-medium.bin",
+        "mn_evidence": "Deep multilingual representations, recommended when >=4GB free RAM",
+    },
+    "large-v3-turbo": {
+        "params": "809M",
+        "size_mb": 1617,
+        "license": "MIT",
+        "hf_repo": "openai/whisper-large-v3-turbo",
+        "ggml_filename": "ggml-large-v3-turbo.bin",
+        "mn_evidence": "Turbo single-head cross-attention decoder with full Mongolian coverage",
+    },
+}
+
+
+def format_lrc_timestamp(seconds: float) -> str:
+    """Format seconds into standard LRC time tag [mm:ss.xx]."""
+    total_centis = max(0, int(round(seconds * 100)))
+    mins = total_centis // 6000
+    secs = (total_centis % 6000) // 100
+    centis = total_centis % 100
+    return f"[{mins:02d}:{secs:02d}.{centis:02d}]"
+
+
+def format_srt_timestamp(seconds: float) -> str:
+    """Format seconds into standard SRT time tag hh:mm:ss,ms."""
+    total_ms = max(0, int(round(seconds * 1000)))
+    hrs = total_ms // 3600000
+    mins = (total_ms % 3600000) // 60000
+    secs = (total_ms % 60000) // 1000
+    ms = total_ms % 1000
+    return f"{hrs:02d}:{mins:02d}:{secs:02d},{ms:03d}"
+
+
+def parse_whisper_cpp_output(stdout_text: str) -> list[Dict[str, Any]]:
+    """
+    Parse standard whisper.cpp stdout timing output into structured segments.
+    Pattern: [00:00:00.000 --> 00:00:02.500]  Текст
+    """
+    segments: list[Dict[str, Any]] = []
+    if not stdout_text:
+        return segments
+
+    # Regex matching [hh:mm:ss.ms --> hh:mm:ss.ms] text
+    pattern = re.compile(
+        r"\[(\d{2}):(\d{2}):(\d{2}\.\d{3})\s*-->\s*(\d{2}):(\d{2}):(\d{2}\.\d{3})\]\s*(.*)"
+    )
+
+    idx = 1
+    for line in stdout_text.splitlines():
+        line = line.strip()
+        m = pattern.search(line)
+        if not m:
+            continue
+        h1, m1, s1, h2, m2, s2, txt = m.groups()
+        start_sec = int(h1) * 3600 + int(m1) * 60 + float(s1)
+        end_sec = int(h2) * 3600 + int(m2) * 60 + float(s2)
+        clean_txt = txt.strip()
+        if clean_txt:
+            words_list = clean_txt.split()
+            word_timings = []
+            if words_list:
+                duration = max(0.05, end_sec - start_sec)
+                step = duration / len(words_list)
+                for w_idx, w in enumerate(words_list):
+                    w_start = start_sec + w_idx * step
+                    w_end = start_sec + (w_idx + 1) * step
+                    word_timings.append({
+                        "word": w,
+                        "start": round(w_start, 3),
+                        "end": round(w_end, 3),
+                    })
+            segments.append({
+                "id": idx,
+                "start": round(start_sec, 3),
+                "end": round(end_sec, 3),
+                "text": clean_txt,
+                "words": word_timings,
+                "timing_source": "linear_interpolation_fallback",
+            })
+            idx += 1
+
+    return segments
+
+
+def parse_whisper_cpp_json(json_text: str) -> list[Dict[str, Any]]:
+    """
+    Parse whisper.cpp -ojf (JSON full) output to extract genuine acoustic token/word timestamps.
+    Aggregates tokens into words and extracts exact from/to timestamps directly from Whisper.
+    """
+    if not json_text or not json_text.strip():
+        return []
+    try:
+        data = json.loads(json_text)
+    except Exception:
+        return []
+
+    segments: list[Dict[str, Any]] = []
+
+    def parse_time(ts_str: str) -> float:
+        parts = ts_str.split(":")
+        h = int(parts[0])
+        m = int(parts[1])
+        s_parts = parts[2].split(",")
+        s = int(s_parts[0])
+        ms = int(s_parts[1]) if len(s_parts) > 1 else 0
+        return round(h * 3600 + m * 60 + s + ms / 1000.0, 3)
+
+    for idx, seg in enumerate(data.get("transcription", []), 1):
+        s_start = parse_time(seg["timestamps"]["from"])
+        s_end = parse_time(seg["timestamps"]["to"])
+        s_text = seg.get("text", "").strip()
+        s_text = re.sub(r"\[_[^\]]+\]", "", s_text).strip()
+
+        words: list[Dict[str, Any]] = []
+        cur_word_parts: list[str] = []
+        w_start: Optional[float] = None
+        w_end: Optional[float] = None
+
+        for tok in seg.get("tokens", []):
+            raw_t = tok.get("text", "")
+            if re.match(r"^\[_[^\]]+\]$", raw_t.strip()):
+                continue
+            clean_t = re.sub(r"\[_[^\]]+\]", "", raw_t)
+            if not clean_t:
+                continue
+
+            t_from = parse_time(tok["timestamps"]["from"])
+            t_to = parse_time(tok["timestamps"]["to"])
+
+            if clean_t.startswith(" ") and cur_word_parts:
+                word_str = "".join(cur_word_parts).strip()
+                if word_str:
+                    words.append({
+                        "word": word_str,
+                        "start": w_start,
+                        "end": w_end,
+                    })
+                cur_word_parts = [clean_t.lstrip()]
+                w_start = t_from
+                w_end = t_to
+            else:
+                if not cur_word_parts:
+                    w_start = t_from
+                    cur_word_parts.append(clean_t.lstrip())
+                else:
+                    cur_word_parts.append(clean_t)
+                w_end = t_to
+
+        if cur_word_parts:
+            word_str = "".join(cur_word_parts).strip()
+            if word_str:
+                words.append({
+                    "word": word_str,
+                    "start": w_start,
+                    "end": w_end,
+                })
+
+        if s_text or words:
+            segments.append({
+                "id": idx,
+                "start": s_start,
+                "end": s_end,
+                "text": s_text or " ".join(w["word"] for w in words),
+                "words": words,
+                "timing_source": "whisper_token_timestamps",
+            })
+
+    return segments
+
+
+def find_whisper_cpp_binary(extra_paths: Optional[list[str]] = None, prefer_cuda: bool = False) -> Optional[str]:
+    """
+    Locate whisper.cpp executable (whisper-cli-cuda.exe, whisper-cli.exe, main.exe, or whisper.exe).
+    Checks PATH, local tool directories, and CUDA prebuilt paths.
+    """
+    bin_names = (
+        ["whisper-cli-cuda.exe", "whisper-cli-cublas.exe", "whisper-cli.exe", "main.exe", "whisper.exe", "whisper-cli", "main"]
+        if prefer_cuda
+        else ["whisper-cli.exe", "whisper-cli-cuda.exe", "whisper-cli-cublas.exe", "main.exe", "whisper.exe", "whisper-cli", "main"]
+    )
+    search_dirs: list[str] = []
+
+    if extra_paths:
+        search_dirs.extend(extra_paths)
+
+    path_env = os.environ.get("PATH", "")
+    for p in path_env.split(os.pathsep):
+        if p and os.path.isdir(p):
+            search_dirs.append(p)
+
+    cwd = os.path.dirname(os.path.abspath(__file__))
+    search_dirs.extend([
+        os.path.join(cwd, "bin"),
+        os.path.join(cwd, "tools", "whisper.cpp"),
+        os.path.join(cwd, "tools", "whisper.cpp", "Release-cuda"),
+        os.path.join(cwd, "tools", "whisper.cpp", "Release"),
+        os.path.join(cwd, "tools", "whisper.cpp", "build", "bin", "Release"),
+        os.path.join(os.environ.get("LOCALAPPDATA", ""), "VOICE-App", "tools"),
+        os.path.join(os.environ.get("LOCALAPPDATA", ""), "VOICE-App", "tools", "whisper.cpp", "Release"),
+        os.path.join(os.environ.get("LOCALAPPDATA", ""), "VOICE-App", "bin"),
+    ])
+
+    for d in search_dirs:
+        if not d or not os.path.isdir(d):
+            continue
+        for name in bin_names:
+            full = os.path.join(d, name)
+            if os.path.isfile(full):
+                return full
+
+    return None
+
+
+def find_local_ggml_model(model_name: str = "base", custom_dirs: Optional[list[str]] = None) -> Optional[str]:
+    """
+    Locate a local GGML / GGUF model file on disk.
+    Checks models/, cache, and AppData directories.
+    """
+    info = WHISPER_MODELS_INFO.get(model_name, {})
+    ggml_filename = info.get("ggml_filename", f"ggml-{model_name}.bin")
+    candidate_names = [
+        ggml_filename,
+        f"ggml-{model_name}.bin",
+        f"ggml-{model_name}.gguf",
+        f"ggml-{model_name}-q5_1.bin",
+        f"ggml-{model_name}-q5_0.bin",
+        f"ggml-{model_name}-q8_0.bin",
+    ]
+
+    search_dirs: list[str] = []
+    if custom_dirs:
+        search_dirs.extend(custom_dirs)
+
+    cwd = os.path.dirname(os.path.abspath(__file__))
+    search_dirs.extend([
+        os.path.join(cwd, "models"),
+        os.path.join(cwd, "models", "whisper"),
+        os.path.join(os.environ.get("LOCALAPPDATA", ""), "VOICE-App", "models"),
+        os.path.join(os.environ.get("USERPROFILE", ""), ".cache", "whisper"),
+    ])
+
+    for d in search_dirs:
+        if not d or not os.path.isdir(d):
+            continue
+        for name in candidate_names:
+            candidate_path = os.path.join(d, name)
+            if os.path.isfile(candidate_path) and os.path.getsize(candidate_path) > 1024:
+                return candidate_path
+
+    return None
+
+
+_CACHED_GPU_INFO: Optional[Dict[str, Any]] = None
+
+
+def detect_gpu_hardware(force_refresh: bool = False) -> Dict[str, Any]:
+    """
+    Detect local GPU hardware, VRAM, and driver/CUDA support.
+    Parses nvidia-smi telemetry and checks for real CUDA binary availability.
+    """
+    global _CACHED_GPU_INFO
+    if _CACHED_GPU_INFO is not None and not force_refresh:
+        return dict(_CACHED_GPU_INFO)
+
+    info: Dict[str, Any] = {
+        "has_gpu": False,
+        "gpu_name": "",
+        "vram_mb": 0,
+        "driver_version": "",
+        "cuda_version": "",
+        "cuda_binary_available": False,
+        "backend_status": "cpu_avx2_haswell",
+        "status_message": "CPU AVX2 горим",
+        "recommended_backend": "cpu",
+    }
+    try:
+        proc = subprocess.run(
+            ["nvidia-smi", "--query-gpu=name,memory.total,driver_version", "--format=csv,noheader,nounits"],
+            capture_output=True,
+            text=True,
+            timeout=3,
+        )
+        if proc.returncode == 0 and proc.stdout.strip():
+            first_line = proc.stdout.strip().splitlines()[0]
+            parts = [p.strip() for p in first_line.split(",")]
+            if len(parts) >= 3:
+                info["has_gpu"] = True
+                info["gpu_name"] = parts[0]
+                info["vram_mb"] = int(float(parts[1]))
+                info["driver_version"] = parts[2]
+
+        proc_ver = subprocess.run(["nvidia-smi"], capture_output=True, text=True, timeout=3)
+        if proc_ver.returncode == 0 and proc_ver.stdout:
+            m = re.search(r"CUDA Version:\s*([0-9.]+)", proc_ver.stdout)
+            if m:
+                info["cuda_version"] = m.group(1)
+    except Exception:
+        pass
+
+    # Check if genuine CUDA whisper binary or ggml-cuda.dll exists
+    cuda_bin = find_whisper_cpp_binary(prefer_cuda=True)
+    has_cuda_dll = False
+    if cuda_bin:
+        bin_dir = os.path.dirname(cuda_bin)
+        for cand in ["ggml-cuda.dll", "ggml-cuda-12.dll", "cublas64_12.dll"]:
+            if os.path.isfile(os.path.join(bin_dir, cand)):
+                has_cuda_dll = True
+                break
+
+    if info["has_gpu"]:
+        if has_cuda_dll:
+            info["cuda_binary_available"] = True
+            info["backend_status"] = "cuda_accelerated"
+            info["status_message"] = f"NVIDIA {info['gpu_name']} дээр CUDA хурдасгуур идэвхтэй байна."
+            info["recommended_backend"] = "cuda"
+        else:
+            info["cuda_binary_available"] = False
+            info["backend_status"] = "cpu_avx2_haswell"
+            info["status_message"] = (
+                f"{info['gpu_name']} ({round(info['vram_mb'] / 1024)}GB) илэрсэн боловч "
+                "whisper.cpp-ийн CUDA бинар (ggml-cuda.dll) байхгүй тул одоогоор CPU AVX2 горимоор ажиллаж байна."
+            )
+            info["recommended_backend"] = "cpu"
+    else:
+        info["cuda_binary_available"] = False
+        info["backend_status"] = "cpu_avx2"
+        info["status_message"] = "GPU илрээгүй, CPU горимоор ажиллаж байна."
+        info["recommended_backend"] = "cpu"
+
+    _CACHED_GPU_INFO = info
+    return dict(info)
+
+
+def list_available_local_models() -> list[Dict[str, Any]]:
+    """
+    Return all configured Whisper models with their local download status and file sizes.
+    """
+    result: list[Dict[str, Any]] = []
+    for m_id, m_info in WHISPER_MODELS_INFO.items():
+        local_p = find_local_ggml_model(m_id)
+        result.append({
+            "id": m_id,
+            "params": m_info.get("params", ""),
+            "size_mb": m_info.get("size_mb", 0),
+            "license": m_info.get("license", ""),
+            "mn_evidence": m_info.get("mn_evidence", ""),
+            "is_downloaded": local_p is not None,
+            "local_path": local_p or "",
+        })
+    return result
+
+
+def transcribe_with_whisper_cpp_cli(
+    audio_path: str,
+    model_name: str = "tiny",
+    language: str = "mn",
+    timeout_sec: int = 45,
+    extra_paths: Optional[list[str]] = None,
+    use_gpu: bool = True,
+    threads: int = 6,
+    initial_prompt: Optional[str] = None,
+) -> tuple[str, list[Dict[str, Any]], str]:
+    """
+    Execute local whisper.cpp CLI via subprocess.run (shell=False) with timeouts,
+    model validation, GPU acceleration flags, and clean error reporting.
+    Returns: (full_text, segments, error_message)
+    """
+    if not audio_path or not os.path.isfile(audio_path):
+        return "", [], f"Аудио файл олдсонгүй: {audio_path}"
+
+    binary = find_whisper_cpp_binary(extra_paths, prefer_cuda=use_gpu)
+    if not binary:
+        return "", [], (
+            "whisper.cpp бинар олдсонгүй. "
+            "tools/whisper.cpp/Release/whisper-cli.exe байрлуулна уу."
+        )
+
+    model_path = find_local_ggml_model(model_name)
+    if not model_path:
+        # Fallback to tiny if requested model is not found
+        model_path = find_local_ggml_model("tiny")
+        if not model_path:
+            return "", [], (
+                f"Whisper GGML загвар '{model_name}' олдсонгүй. "
+                "models/whisper/ggml-tiny.bin татаж байрлуулна уу."
+            )
+
+    lang_arg = "mn" if language in ("auto", "mn", "", None) else language
+
+    cmd = [
+        binary,
+        "-m", model_path,
+        "-f", audio_path,
+        "-l", lang_arg,
+    ]
+
+    if not use_gpu:
+        cmd.append("-ng")
+    else:
+        cmd.extend(["-dev", "0", "-fa"])
+
+    if threads and threads > 0:
+        cmd.extend(["-t", str(min(16, max(1, threads)))])
+
+    if initial_prompt and isinstance(initial_prompt, str) and initial_prompt.strip():
+        cmd.extend(["--prompt", initial_prompt.strip()[:350]])
+
+    # Output full JSON with token timestamps via -ojf and temp file path -of
+    temp_json_base = os.path.join(tempfile.gettempdir(), f"whisper_tokens_{uuid.uuid4().hex[:8]}")
+    cmd.extend(["-ojf", "-of", temp_json_base])
+
+    try:
+        proc = subprocess.run(
+            cmd,
+            shell=False,
+            capture_output=True,
+            text=True,
+            timeout=timeout_sec,
+            errors="replace",
+        )
+        if proc.returncode != 0:
+            err_msg = (proc.stderr or proc.stdout or "").strip()
+            return "", [], f"whisper.cpp алдаа гарлаа (exit code {proc.returncode}): {err_msg[:200]}"
+
+        json_path = temp_json_base + ".json"
+        segments: list[Dict[str, Any]] = []
+        if os.path.isfile(json_path):
+            try:
+                with open(json_path, "r", encoding="utf-8") as jf:
+                    segments = parse_whisper_cpp_json(jf.read())
+            except Exception:
+                segments = []
+            finally:
+                try:
+                    os.remove(json_path)
+                except OSError:
+                    pass
+
+        stdout_txt = proc.stdout or ""
+        if not segments:
+            segments = parse_whisper_cpp_output(stdout_txt)
+
+        if segments:
+            full_text = " ".join([s["text"] for s in segments if s.get("text")]).strip()
+        else:
+            full_text = "\n".join([
+                line.strip() for line in stdout_txt.splitlines()
+                if line.strip() and not line.startswith("[")
+            ])
+
+        return full_text, segments, ""
+    except subprocess.TimeoutExpired:
+        return "", [], f"whisper.cpp тооцоолол хугацаа хэтэрлээ ({timeout_sec} сек)."
+    except Exception as e:
+        return "", [], f"whisper.cpp ажиллуулахад алдаа: {e}"

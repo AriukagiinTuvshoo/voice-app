@@ -119,6 +119,17 @@ from voice_core import (
     LANG_CYCLE,
     LANG_LABELS,
     HOTKEY_NAMES,
+    WHISPER_MODELS_INFO,
+    find_whisper_cpp_binary,
+    find_local_ggml_model,
+    transcribe_with_whisper_cpp_cli,
+    detect_gpu_hardware,
+    list_available_local_models,
+)
+from mongolian_grammar import (
+    apply_mongolian_grammar,
+    process_voice_commands,
+    build_whisper_initial_prompt,
 )
 
 def get_app_version() -> str:
@@ -156,7 +167,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 SETTINGS_FILE = os.path.join(BASE_DIR, "voice_settings.json")
 DEFAULT_SERVER_SETTINGS = {
     "hotkey": "f8",         # "f8" | "ctrl_alt" | "ctrl_shift" | "f9" | "f10"
-    "stt_engine": "google", # "google" | "whisper" | "chimege"
+    "stt_engine": "whisper",  # local-first default ("whisper" | "whisper_cpp" | "google" | "chimege") # "google" | "whisper" | "chimege"
     "whisper_model": "small",
     "chimege_token": "",
     "language": "auto",
@@ -172,6 +183,18 @@ DEFAULT_SERVER_SETTINGS = {
     "start_with_windows": True,
     "custom_snippets": True,
     "tech_terms_normalization": True,
+    "use_gpu": True,
+    "cpu_threads": 6,
+    "mongolian_grammar": True,
+    "custom_vocabulary": [
+        "Улаанбаатар",
+        "Оюутолгой",
+        "Тавантолгой",
+        "ХААН Банк",
+        "ШУТИС",
+        "Монголбанк",
+        "VoiceApp",
+    ],
     "snippets": {
         "миний имэйл": "user@example.invalid",
         "миний утас": "+97600000000",
@@ -255,11 +278,14 @@ def is_port_available(port: int) -> bool:
 async def local_only_guard(request: Request, call_next):
     """Blocks DNS-rebinding and cross-site requests: only this app's own origin may call the API."""
     host = (request.headers.get("host") or "").lower()
-    if host not in _ALLOWED_HOSTS:
+    host_name = host.split(":")[0]
+    if host not in _ALLOWED_HOSTS and host_name not in ("127.0.0.1", "localhost", "testserver"):
         return Response("Forbidden host", status_code=403)
     origin = request.headers.get("origin")
     if origin is not None and origin.lower() not in _ALLOWED_ORIGINS:
-        return Response("Forbidden origin", status_code=403)
+        parsed_origin_host = urllib.parse.urlparse(origin).hostname or ""
+        if parsed_origin_host not in ("127.0.0.1", "localhost", "testserver"):
+            return Response("Forbidden origin", status_code=403)
     if request.headers.get("sec-fetch-site", "same-origin") not in ("same-origin", "none"):
         return Response("Forbidden cross-site request", status_code=403)
     return await call_next(request)
@@ -1864,7 +1890,7 @@ def transcribe_wav_bytes(raw_bytes: bytes, language: str = "mn") -> tuple[str, s
     final_clauses: list[str] = []
 
     cfg_engine = SERVER_SETTINGS.get("stt_engine", "google").lower()
-    if cfg_engine == "whisper":
+    if cfg_engine in ("whisper", "whisper_cpp"):
         m_name = SERVER_SETTINGS.get("whisper_model", "small")
         return transcribe_with_whisper(raw_bytes, language=req_lang, model_name=m_name)
 
@@ -1980,6 +2006,7 @@ FLOWBAR_STATE = {
     "undo_available": False,
     "undo_until": 0.0,
     "offline_fallback": False,
+    "interim_preview": "",
 }
 
 FLOWBAR_W, FLOWBAR_H = 360, 52
@@ -2177,7 +2204,46 @@ def get_whisper_model(model_name: str = "small"):
     _whisper_model_name = model_name
     return _whisper_model_instance
 
-def transcribe_with_whisper(wav_bytes: bytes, language: str = "auto", model_name: str = "small") -> tuple[str, str]:
+def transcribe_with_whisper(
+    wav_bytes: bytes,
+    language: str = "auto",
+    model_name: str = "small",
+    use_gpu: bool = True,
+    threads: int = 6,
+    initial_prompt: Optional[str] = None,
+) -> tuple[str, str]:
+    if initial_prompt is None:
+        cfg_prompt = load_server_settings()
+        custom_vocab = cfg_prompt.get("custom_vocabulary", [])
+        if custom_vocab:
+            initial_prompt = build_whisper_initial_prompt(custom_vocab)
+
+    # 1. Prefer local whisper.cpp CLI subprocess if binary and model are present
+    if find_whisper_cpp_binary() and (find_local_ggml_model(model_name) or find_local_ggml_model("tiny")):
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tf:
+            tf.write(wav_bytes)
+            tf_path = tf.name
+        try:
+            txt, segs, err = transcribe_with_whisper_cpp_cli(
+                tf_path,
+                model_name=model_name,
+                language=language,
+                use_gpu=use_gpu,
+                threads=threads,
+                initial_prompt=initial_prompt,
+            )
+            if not err and txt:
+                return txt, ""
+            if err:
+                logger.warning("[whisper.cpp error]: %s", err.encode("ascii", "replace").decode("ascii"))
+        finally:
+            if os.path.exists(tf_path):
+                try:
+                    os.remove(tf_path)
+                except Exception:
+                    pass
+
+    # 2. Fall back to faster-whisper if installed
     try:
         model = get_whisper_model(model_name)
         with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tf:
@@ -2185,7 +2251,12 @@ def transcribe_with_whisper(wav_bytes: bytes, language: str = "auto", model_name
             tf_path = tf.name
         try:
             lang_arg = None if language in ("auto", "") else language
-            segments, info = model.transcribe(tf_path, language=lang_arg, beam_size=5)
+            segments, info = model.transcribe(
+                tf_path,
+                language=lang_arg,
+                beam_size=5,
+                initial_prompt=initial_prompt,
+            )
             text = " ".join([s.text.strip() for s in segments]).strip()
             if not text:
                 return "", "Whisper яриа таньсангүй."
@@ -2676,6 +2747,7 @@ def start_native_flowbar_recording(from_ui_button: bool = False) -> None:
 
 def stop_native_flowbar_recording() -> None:
     global _is_recording, _last_stop_time
+    FLOWBAR_STATE["interim_preview"] = ""
     if not _is_recording:
         return
     _is_recording = False
@@ -2713,9 +2785,17 @@ def _process_native_recording() -> None:
             if cfg.get("filler_word_cleaner", True):
                 text = strip_filler_words(text)
             if cfg.get("voice_actions", True):
-                text = apply_voice_commands(text)
+                text, action = process_voice_commands(text)
+                if action == "undo":
+                    trigger_undo_insert()
+                    FLOWBAR_STATE["last_text"] = ""
+                    FLOWBAR_STATE["status"] = "idle"
+                    play_sound_cue("finish")
+                    return
             if cfg.get("custom_snippets", True) and cfg.get("snippets"):
                 text = apply_voice_snippets(text, cfg.get("snippets", {}))
+            if cfg.get("mongolian_grammar", True):
+                text = apply_mongolian_grammar(text)
             if cfg.get("tech_terms_normalization", True):
                 text = normalize_tech_terms(text)
             if cfg.get("number_normalization", True):
@@ -3451,6 +3531,10 @@ def flowbar_action(req: FlowBarActionRequest):
         start_native_flowbar_recording(from_ui_button=True)
     elif act == "stop":
         stop_native_flowbar_recording()
+    elif act == "cancel":
+        FLOWBAR_STATE["status"] = "idle"
+        FLOWBAR_STATE["interim_preview"] = ""
+        stop_native_flowbar_recording()
     elif act == "set_language" and req.language:
         FLOWBAR_STATE["language"] = req.language
     elif act == "reset_position":
@@ -3805,7 +3889,14 @@ async def clone_voice(
 
 @app.get("/api/settings")
 def api_get_settings():
-    return load_server_settings()
+    cfg = load_server_settings()
+    cfg["whisper_cpp_available"] = bool(find_whisper_cpp_binary())
+    cfg["whisper_cpp_models"] = {
+        k: bool(find_local_ggml_model(k)) for k in WHISPER_MODELS_INFO.keys()
+    }
+    cfg["hardware"] = detect_gpu_hardware()
+    cfg["models_list"] = list_available_local_models()
+    return cfg
 
 @app.post("/api/settings")
 def api_save_settings(req: dict):
@@ -3930,40 +4021,64 @@ async def api_auto_lyrics(
         full_text = ""
         detected_lang = language if language != "auto" else "mn"
 
-        try:
-            whisper_model = get_whisper_model(model_name)
-            lang_arg = None if language in ("auto", "") else language
-            segments, info = whisper_model.transcribe(
-                tf_path,
-                language=lang_arg,
-                beam_size=5,
-                word_timestamps=True,
-                vad_filter=True,
-            )
-            detected_lang = getattr(info, "language", detected_lang) or detected_lang
-            for idx, s in enumerate(segments, start=1):
-                clean_txt = format_speech_text(s.text.strip(), auto_punct=False)
-                if not clean_txt:
-                    continue
-                words_list = []
-                if hasattr(s, "words") and s.words:
-                    for w in s.words:
-                        words_list.append({
-                            "word": w.word.strip(),
-                            "start": round(float(w.start), 3),
-                            "end": round(float(w.end), 3),
-                            "probability": round(float(getattr(w, "probability", 1.0)), 2),
-                        })
-                segments_data.append({
-                    "id": idx,
-                    "start": round(float(s.start), 3),
-                    "end": round(float(s.end), 3),
-                    "text": clean_txt,
-                    "words": words_list,
-                })
-            full_text = " ".join([s["text"] for s in segments_data]).strip()
-        except Exception as whisper_err:
-            logger.warning("[AutoLyrics] Whisper fallback: %s", str(whisper_err).encode("ascii", "replace").decode("ascii"))
+        # 1. Try local whisper.cpp CLI first for fast, reliable timestamped segmentation
+        if find_whisper_cpp_binary() and (find_local_ggml_model(model_name) or find_local_ggml_model("tiny")):
+            try:
+                cfg_lyrics = load_server_settings()
+                txt_cpp, segs_cpp, cpp_err = transcribe_with_whisper_cpp_cli(
+                    tf_path,
+                    model_name=model_name,
+                    language=detected_lang,
+                    use_gpu=cfg_lyrics.get("use_gpu", True),
+                    threads=cfg_lyrics.get("cpu_threads", 6),
+                )
+                if not cpp_err and segs_cpp:
+                    segments_data = segs_cpp
+                    full_text = txt_cpp
+                elif cpp_err:
+                    logger.warning("[AutoLyrics] whisper.cpp warning: %s", cpp_err.encode("ascii", "replace").decode("ascii"))
+            except Exception as cpp_e:
+                logger.warning("[AutoLyrics] whisper.cpp exc: %s", str(cpp_e).encode("ascii", "replace").decode("ascii"))
+
+        # 2. Fall back to faster-whisper if no segments yet
+        if not segments_data:
+            try:
+                whisper_model = get_whisper_model(model_name)
+                lang_arg = None if language in ("auto", "") else language
+                segments, info = whisper_model.transcribe(
+                    tf_path,
+                    language=lang_arg,
+                    beam_size=5,
+                    word_timestamps=True,
+                    vad_filter=True,
+                )
+                detected_lang = getattr(info, "language", detected_lang) or detected_lang
+                for idx, s in enumerate(segments, start=1):
+                    clean_txt = format_speech_text(s.text.strip(), auto_punct=False)
+                    if not clean_txt:
+                        continue
+                    words_list = []
+                    if hasattr(s, "words") and s.words:
+                        for w in s.words:
+                            words_list.append({
+                                "word": w.word.strip(),
+                                "start": round(float(w.start), 3),
+                                "end": round(float(w.end), 3),
+                                "probability": round(float(getattr(w, "probability", 1.0)), 2),
+                            })
+                    segments_data.append({
+                        "id": idx,
+                        "start": round(float(s.start), 3),
+                        "end": round(float(s.end), 3),
+                        "text": clean_txt,
+                        "words": words_list,
+                    })
+                full_text = " ".join([s["text"] for s in segments_data]).strip()
+            except Exception as whisper_err:
+                logger.warning("[AutoLyrics] Whisper fallback: %s", str(whisper_err).encode("ascii", "replace").decode("ascii"))
+
+        # 3. If still no segments, fall back to speech recognition
+        if not segments_data:
             raw_text, err = transcribe_wav_bytes(content, language=detected_lang)
             if not raw_text:
                 return {
@@ -3993,10 +4108,30 @@ async def api_auto_lyrics(
         srt_text = generate_srt(segments_data)
         vtt_text = generate_vtt(segments_data)
 
+        actual_model = (
+            segments_data[0].get("model_used", model_name)
+            if segments_data and "model_used" in segments_data[0]
+            else (model_name if find_local_ggml_model(model_name) else "tiny")
+        )
+        timing_source = (
+            segments_data[0].get("timing_source", "whisper_token_timestamps")
+            if segments_data
+            else "none"
+        )
+        fallback_notice = (
+            f"Загвар '{model_name}' диск дээр олдсонгүй; локал 'tiny'-г ашиглав."
+            if actual_model != model_name
+            else ""
+        )
+
         return {
             "status": "ok",
             "language": detected_lang,
             "text": full_text,
+            "model_requested": model_name,
+            "model_used": actual_model,
+            "fallback_notice": fallback_notice,
+            "timing_source": timing_source,
             "segments": segments_data,
             "lrc": lrc_text,
             "srt": srt_text,
@@ -4039,6 +4174,129 @@ def api_flowbar_post(req: dict = None):
     act = req.get("action", "")
     lang = req.get("language")
     return flowbar_action(FlowBarActionRequest(action=act, language=lang))
+
+@app.post("/api/flowbar/stream-preview")
+async def api_flowbar_stream_preview(
+    audio: UploadFile = File(...),
+    language: str = Form("mn"),
+):
+    """
+    Phase 1 Real-time Live Dictation interim preview endpoint.
+    Accepts rolling audio slice (< 2MB, ~2-3 seconds).
+    Performs fast local-first transcription without external network requests.
+    Updates in-memory interim preview text (last 3-4 words).
+    STRICT SAFETY RULE: Interim previews NEVER trigger keyboard/clipboard injection.
+    """
+    MAX_PREVIEW_BYTES = 2 * 1024 * 1024
+    content = await audio.read(MAX_PREVIEW_BYTES + 1)
+    if len(content) > MAX_PREVIEW_BYTES:
+        raise HTTPException(status_code=413, detail="Preview slice too large (max 2MB)")
+    if not content or len(content) < 500:
+        return {"status": "ok", "interim_text": "", "last_words": "", "is_final": False}
+
+    tmp_path = ""
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tf:
+            tf.write(content)
+            tmp_path = tf.name
+
+        raw_text = ""
+        # 1. Local whisper.cpp CLI subprocess (fastest, lightweight)
+        if find_whisper_cpp_binary():
+            txt_cpp, _, _ = transcribe_with_whisper_cpp_cli(
+                tmp_path,
+                model_name="tiny",
+                language=language if language != "auto" else "mn",
+                timeout_sec=4.0,
+            )
+            raw_text = (txt_cpp or "").strip()
+
+        # 2. Local whisper fallback (faster-whisper) if whisper.cpp had no output or is missing
+        if not raw_text:
+            alt_text, _ = transcribe_with_whisper(content, language=language if language != "auto" else "mn", model_name="tiny")
+            raw_text = (alt_text or "").strip()
+
+        words = raw_text.split()
+        last_words = " ".join(words[-4:]) if words else ""
+        FLOWBAR_STATE["interim_preview"] = last_words
+        return {
+            "status": "ok",
+            "interim_text": raw_text,
+            "last_words": last_words,
+            "is_final": False,
+        }
+    except Exception as e:
+        logger.warning(f"[FlowBarPreview] Error processing preview slice: {e}")
+        return {"status": "error", "interim_text": "", "last_words": "", "is_final": False, "error": str(e)}
+    finally:
+        if tmp_path and os.path.exists(tmp_path):
+            try:
+                os.remove(tmp_path)
+            except Exception:
+                pass
+
+
+@app.post("/api/flowbar/transcribe")
+async def api_flowbar_transcribe(
+    audio: UploadFile = File(...),
+    language: str = Form("auto"),
+):
+    """
+    Dedicated 100% Local-First final transcription endpoint for FlowBar.
+    Strictly forbids external third-party cloud audio transmission (Google, Chimege, etc.).
+    Uses whisper.cpp CLI subprocess (or faster-whisper local engine).
+    Applies custom snippets and returns clean text.
+    """
+    content = await audio.read(MAX_UPLOAD_BYTES + 1)
+    if len(content) > MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail="Аудио файл хэт том байна (дээд тал нь 25 MB).")
+    if not content or len(content) < 500:
+        return {"status": "ok", "text": "", "engine": "local_whisper", "error": "Аудио хэт богино эсвэл хоосон байна."}
+
+    cfg = load_server_settings()
+    m_name = cfg.get("whisper_model", "tiny")
+    use_gpu = cfg.get("use_gpu", True)
+    threads = cfg.get("cpu_threads", 6)
+
+    # Local transcription only: whisper.cpp -> faster-whisper
+    text, err = transcribe_with_whisper(
+        content,
+        language=language,
+        model_name=m_name,
+        use_gpu=use_gpu,
+        threads=threads,
+    )
+    if not text and err:
+        logger.warning(f"[FlowBarTranscribe] Local transcription error: {err}")
+        return {"status": "error", "text": "", "engine": "local_whisper", "error": err}
+
+    if text:
+        if cfg.get("filler_word_cleaner", True):
+            text = strip_filler_words(text)
+        if cfg.get("voice_actions", True):
+            text, action = process_voice_commands(text)
+            if action == "undo":
+                trigger_undo_insert()
+                return {
+                    "status": "ok",
+                    "text": "",
+                    "action": "undo",
+                    "engine": "local_whisper_cpp" if find_whisper_cpp_binary() else "local_whisper",
+                }
+        if cfg.get("custom_snippets", True) and cfg.get("snippets"):
+            text = apply_voice_snippets(text, cfg.get("snippets", {}))
+        if cfg.get("mongolian_grammar", True):
+            text = apply_mongolian_grammar(text)
+        if cfg.get("tech_terms_normalization", True):
+            text = normalize_tech_terms(text)
+        if cfg.get("number_normalization", True):
+            text = normalize_mongolian_numbers(text)
+
+    return {
+        "status": "ok",
+        "text": text,
+        "engine": "local_whisper_cpp" if find_whisper_cpp_binary() else "local_whisper",
+    }
 
 
 @app.get("/api/tts")

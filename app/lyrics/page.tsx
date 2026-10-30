@@ -2,12 +2,7 @@
 
 import { useState, useRef, useEffect, useCallback } from "react";
 import { MusicIcon, SparklesIcon, CopyIcon, CheckIcon, TrashIcon } from "@/components/Icons";
-
-interface Segment {
-  start: number;
-  end: number;
-  text: string;
-}
+import type { LyricsSegment, LyricsWordTiming } from "@/lib/types";
 
 export default function LyricsPage() {
   const [file, setFile] = useState<File | null>(null);
@@ -15,17 +10,29 @@ export default function LyricsPage() {
   const [title, setTitle] = useState("");
   const [artist, setArtist] = useState("");
   const [language, setLanguage] = useState("auto");
-  const [whisperModel, setWhisperModel] = useState("small");
+  const [whisperModel, setWhisperModel] = useState("small-q5_0");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [segments, setSegments] = useState<Segment[]>([]);
+  const [segments, setSegments] = useState<LyricsSegment[]>([]);
   const [currentTime, setCurrentTime] = useState(0);
+  const [duration, setDuration] = useState(0);
   const [activeSegmentIndex, setActiveSegmentIndex] = useState<number | null>(null);
   const [copiedType, setCopiedType] = useState<string | null>(null);
+  const [fallbackNotice, setFallbackNotice] = useState<string | null>(null);
+  const [timingSource, setTimingSource] = useState<string | null>(null);
+
+  // Dynamic Audio Waveform & Timeline states
+  const [waveformPeaks, setWaveformPeaks] = useState<number[]>([]);
+  const [waveformLoading, setWaveformLoading] = useState(false);
+  const [hoverTime, setHoverTime] = useState<number | null>(null);
+  const [hoverPos, setHoverPos] = useState<number | null>(null);
+  const [isPlaying, setIsPlaying] = useState(false);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const listRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const waveformCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const waveformContainerRef = useRef<HTMLDivElement | null>(null);
 
   // Clean up object URL when component unmounts or file changes
   useEffect(() => {
@@ -64,6 +71,134 @@ export default function LyricsPage() {
     }
   }, [activeSegmentIndex]);
 
+  // Compute waveform amplitude peaks using Web Audio API
+  const computeWaveform = async (selectedFile: File) => {
+    try {
+      setWaveformLoading(true);
+      const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+      if (!AudioContextClass) {
+        // Fallback procedural waveform
+        generateFallbackPeaks();
+        return;
+      }
+
+      const audioCtx = new AudioContextClass();
+      const arrayBuffer = await selectedFile.arrayBuffer();
+      const audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
+      
+      const trackDur = audioBuffer.duration;
+      setDuration(trackDur);
+
+      const channelData = audioBuffer.getChannelData(0);
+      const totalSamples = 160;
+      const blockSize = Math.max(1, Math.floor(channelData.length / totalSamples));
+      const peaks: number[] = [];
+
+      for (let i = 0; i < totalSamples; i++) {
+        let sum = 0;
+        const blockStart = i * blockSize;
+        const actualBlock = Math.min(blockSize, channelData.length - blockStart);
+        if (actualBlock <= 0) break;
+        for (let j = 0; j < actualBlock; j++) {
+          sum += Math.abs(channelData[blockStart + j] || 0);
+        }
+        peaks.push(sum / actualBlock);
+      }
+
+      const maxVal = Math.max(...peaks, 0.001);
+      setWaveformPeaks(peaks.map((p) => Math.min(1, p / maxVal)));
+      audioCtx.close().catch(() => {});
+    } catch (err) {
+      console.warn("Waveform decoding fallback triggered:", err);
+      generateFallbackPeaks();
+    } finally {
+      setWaveformLoading(false);
+    }
+  };
+
+  const generateFallbackPeaks = () => {
+    const fallback = Array.from({ length: 160 }, (_, i) => {
+      const base = 0.25 + 0.5 * Math.abs(Math.sin(i * 0.14) * Math.cos(i * 0.08));
+      return Math.min(1, Math.max(0.12, base));
+    });
+    setWaveformPeaks(fallback);
+  };
+
+  // Draw dynamic waveform and playhead scrubber onto canvas
+  useEffect(() => {
+    const canvas = waveformCanvasRef.current;
+    if (!canvas || waveformPeaks.length === 0) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+
+    const width = canvas.width;
+    const height = canvas.height;
+    ctx.clearRect(0, 0, width, height);
+
+    const effDuration = duration || (audioRef.current?.duration ?? 0);
+    const progress = effDuration > 0 ? Math.min(1, Math.max(0, currentTime / effDuration)) : 0;
+    const progressX = progress * width;
+
+    const barCount = waveformPeaks.length;
+    const spacing = width / barCount;
+    const barWidth = Math.max(2, spacing - 1.5);
+
+    // Draw bars
+    waveformPeaks.forEach((peak, i) => {
+      const x = i * spacing;
+      const barHeight = Math.max(4, peak * (height - 16));
+      const y = (height - barHeight) / 2;
+
+      if (x + barWidth <= progressX) {
+        // Played section: neon indigo-violet gradient
+        const grad = ctx.createLinearGradient(0, y, 0, y + barHeight);
+        grad.addColorStop(0, "#818cf8");
+        grad.addColorStop(1, "#6366f1");
+        ctx.fillStyle = grad;
+      } else {
+        // Unplayed section: soft translucent bars
+        ctx.fillStyle = "rgba(255, 255, 255, 0.22)";
+      }
+
+      ctx.beginPath();
+      const radius = Math.min(barWidth / 2, 2);
+      ctx.roundRect(x, y, barWidth, barHeight, radius);
+      ctx.fill();
+    });
+
+    // Draw scrubber playhead
+    if (progressX > 0 && progressX < width) {
+      // Vertical playhead line
+      ctx.strokeStyle = "#ffffff";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(progressX, 0);
+      ctx.lineTo(progressX, height);
+      ctx.stroke();
+
+      // Scrubber head diamond/circle indicator
+      ctx.fillStyle = "#818cf8";
+      ctx.beginPath();
+      ctx.arc(progressX, 8, 4.5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = "#ffffff";
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+    }
+
+    // Draw hover preview line
+    if (hoverPos !== null) {
+      ctx.strokeStyle = "rgba(165, 180, 252, 0.75)";
+      ctx.setLineDash([3, 3]);
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(hoverPos, 0);
+      ctx.lineTo(hoverPos, height);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+  }, [waveformPeaks, currentTime, duration, hoverPos]);
+
   const handleFileSelect = (selectedFile: File) => {
     setError(null);
     const validExtensions = [".mp3", ".wav", ".m4a", ".ogg", ".mp4"];
@@ -86,6 +221,9 @@ export default function LyricsPage() {
     setFile(selectedFile);
     const url = URL.createObjectURL(selectedFile);
     setAudioUrl(url);
+
+    // Compute waveform amplitude peaks
+    computeWaveform(selectedFile);
 
     // Auto-fill song title from file name without extension
     const baseName = selectedFile.name.replace(/\.[^/.]+$/, "");
@@ -143,6 +281,10 @@ export default function LyricsPage() {
         setError("Дуу/яриа илэрсэнгүй. Өөр аудио файл сонгож туршина уу.");
       } else {
         setSegments(data.segments);
+        if (data.fallback_notice) setFallbackNotice(data.fallback_notice);
+        else setFallbackNotice(null);
+        if (data.timing_source) setTimingSource(data.timing_source);
+        else setTimingSource(null);
       }
     } catch (err: any) {
       setError(err.message || "Auto Lyrics боловсруулахад алдаа гарлаа.");
@@ -159,9 +301,42 @@ export default function LyricsPage() {
 
   const seekTo = (seconds: number) => {
     if (audioRef.current) {
-      audioRef.current.currentTime = seconds;
+      audioRef.current.currentTime = Math.max(0, seconds);
       audioRef.current.play().catch(() => {});
+      setIsPlaying(true);
     }
+  };
+
+  const togglePlay = () => {
+    if (!audioRef.current) return;
+    if (audioRef.current.paused) {
+      audioRef.current.play().catch(() => {});
+      setIsPlaying(true);
+    } else {
+      audioRef.current.pause();
+      setIsPlaying(false);
+    }
+  };
+
+  const handleWaveformClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    const effDuration = duration || (audioRef.current?.duration ?? 0);
+    seekTo(ratio * effDuration);
+  };
+
+  const handleWaveformMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const x = Math.max(0, Math.min(rect.width, e.clientX - rect.left));
+    const ratio = x / rect.width;
+    const effDuration = duration || (audioRef.current?.duration ?? 0);
+    setHoverPos(x);
+    setHoverTime(ratio * effDuration);
+  };
+
+  const handleWaveformMouseLeave = () => {
+    setHoverPos(null);
+    setHoverTime(null);
   };
 
   const formatDisplayTime = (secs: number) => {
@@ -169,6 +344,19 @@ export default function LyricsPage() {
     const remainder = Math.floor(secs % 60);
     const ms = Math.floor((secs % 1) * 100);
     return `${mins.toString().padStart(2, "0")}:${remainder.toString().padStart(2, "0")}.${ms.toString().padStart(2, "0")}`;
+  };
+
+  const getSegmentWords = (seg: LyricsSegment): LyricsWordTiming[] => {
+    if (seg.words && seg.words.length > 0) return seg.words;
+    const tokens = seg.text.trim().split(/\s+/).filter(Boolean);
+    if (tokens.length === 0) return [];
+    const dur = Math.max(0.05, seg.end - seg.start);
+    const step = dur / tokens.length;
+    return tokens.map((word, i) => ({
+      word,
+      start: Number((seg.start + i * step).toFixed(3)),
+      end: Number((seg.start + (i + 1) * step).toFixed(3)),
+    }));
   };
 
   const downloadFile = (content: string, filename: string, mimeType: string) => {
@@ -188,7 +376,7 @@ export default function LyricsPage() {
     let lrc = "";
     if (title) lrc += `[ti:${title}]\r\n`;
     if (artist) lrc += `[ar:${artist}]\r\n`;
-    lrc += `[by:VOICE AI]\r\n\r\n`;
+    lrc += `[by:VOICE AI Studio]\r\n\r\n`;
 
     segments.forEach((s) => {
       const centis = Math.round(s.start * 100);
@@ -269,6 +457,12 @@ export default function LyricsPage() {
     setError(null);
     setTitle("");
     setArtist("");
+    setWaveformPeaks([]);
+    setDuration(0);
+    setCurrentTime(0);
+    setIsPlaying(false);
+    setFallbackNotice(null);
+    setTimingSource(null);
   };
 
   return (
@@ -283,7 +477,7 @@ export default function LyricsPage() {
             <h1 style={{ fontSize: "1.75rem", fontWeight: 700, margin: 0 }}>Auto Lyrics & Subtitle Studio</h1>
           </div>
           <p style={{ color: "var(--text-muted, #888)", marginTop: "6px", fontSize: "0.95rem" }}>
-            Дуу хөгжим болон видеоноос миллисекундын синхрон дууны үг (.LRC) болон хадмал (.SRT / .VTT) автоматаар үүсгэх.
+            Дуу хөгжим болон видеоноос үгийн түвшний синхрончлолтой (.LRC) болон хадмал (.SRT / .VTT) автоматаар үүсгэх.
           </p>
         </div>
 
@@ -351,34 +545,119 @@ export default function LyricsPage() {
                 <div>
                   <div style={{ fontWeight: 600, fontSize: "1rem" }}>{file.name}</div>
                   <div style={{ color: "var(--text-muted, #888)", fontSize: "0.82rem" }}>
-                    {(file.size / (1024 * 1024)).toFixed(2)} MB
+                    {(file.size / (1024 * 1024)).toFixed(2)} MB • {duration > 0 ? formatDisplayTime(duration) : "Уншиж байна..."}
                   </div>
                 </div>
               </div>
 
               <button
                 className="btn-secondary"
-                onClick={() => {
-                  setFile(null);
-                  if (audioUrl) URL.revokeObjectURL(audioUrl);
-                  setAudioUrl(null);
-                  setSegments([]);
-                }}
+                onClick={handleClear}
                 style={{ fontSize: "0.82rem", padding: "6px 12px" }}
               >
                 Өөр файл сонгох
               </button>
             </div>
 
-            {/* Audio Player */}
+            {/* Dynamic Audio Waveform & Interactive Timeline Scrub Bar */}
             {audioUrl && (
-              <div style={{ marginTop: "4px" }}>
+              <div
+                style={{
+                  background: "rgba(15, 23, 42, 0.65)",
+                  borderRadius: "12px",
+                  padding: "16px",
+                  border: "1px solid rgba(255, 255, 255, 0.08)",
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: "10px",
+                }}
+              >
+                {/* Timeline Header with Player Controls */}
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", fontSize: "0.84rem" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                    <button
+                      type="button"
+                      onClick={togglePlay}
+                      className="btn-primary"
+                      style={{
+                        padding: "6px 14px",
+                        fontSize: "0.85rem",
+                        borderRadius: "6px",
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "6px",
+                      }}
+                      title={isPlaying ? "Түр зогсоох" : "Тоглуулах"}
+                    >
+                      <span>{isPlaying ? "⏸ Зогсоох" : "▶ Тоглуулах"}</span>
+                    </button>
+                    <span style={{ fontFamily: "monospace", color: "#a5b4fc", fontWeight: 600 }}>
+                      {formatDisplayTime(currentTime)}
+                    </span>
+                    <span style={{ color: "var(--text-muted, #666)" }}>/</span>
+                    <span style={{ fontFamily: "monospace", color: "var(--text-muted, #888)" }}>
+                      {formatDisplayTime(duration || (audioRef.current?.duration ?? 0))}
+                    </span>
+                  </div>
+
+                  <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                    {hoverTime !== null && (
+                      <span
+                        style={{
+                          fontFamily: "monospace",
+                          fontSize: "0.78rem",
+                          background: "rgba(99, 102, 241, 0.25)",
+                          color: "#c7d2fe",
+                          padding: "2px 8px",
+                          borderRadius: "4px",
+                          border: "1px solid rgba(99, 102, 241, 0.4)",
+                        }}
+                      >
+                        Товшиж шилжих: {formatDisplayTime(hoverTime)}
+                      </span>
+                    )}
+                    <span style={{ fontSize: "0.78rem", color: "var(--text-muted, #777)" }}>
+                      {waveformLoading ? "Долгион шинжилж байна..." : "Интерактив таймлайн"}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Canvas Waveform Container */}
+                <div
+                  ref={waveformContainerRef}
+                  onClick={handleWaveformClick}
+                  onMouseMove={handleWaveformMouseMove}
+                  onMouseLeave={handleWaveformMouseLeave}
+                  style={{
+                    position: "relative",
+                    width: "100%",
+                    height: "72px",
+                    background: "rgba(0, 0, 0, 0.35)",
+                    borderRadius: "8px",
+                    cursor: "pointer",
+                    overflow: "hidden",
+                    border: "1px solid rgba(255, 255, 255, 0.05)",
+                  }}
+                  title="Хүссэн секундийн долгион дээр дарж шууд тоглуулах"
+                >
+                  <canvas
+                    ref={waveformCanvasRef}
+                    width={800}
+                    height={72}
+                    style={{ width: "100%", height: "100%", display: "block" }}
+                  />
+                </div>
+
+                {/* Native Audio (Hidden or auxiliary) */}
                 <audio
                   ref={audioRef}
                   src={audioUrl}
-                  controls
                   onTimeUpdate={handleTimeUpdate}
-                  style={{ width: "100%", borderRadius: "8px" }}
+                  onLoadedMetadata={(e) => setDuration(e.currentTarget.duration)}
+                  onPlay={() => setIsPlaying(true)}
+                  onPause={() => setIsPlaying(false)}
+                  onEnded={() => setIsPlaying(false)}
+                  style={{ display: "none" }}
                 />
               </div>
             )}
@@ -442,10 +721,12 @@ export default function LyricsPage() {
                   className="input-field"
                   style={{ width: "100%", padding: "8px 12px", borderRadius: "6px" }}
                 >
-                  <option value="tiny">Tiny (Хамгийн хурдан)</option>
-                  <option value="base">Base (Ердийн)</option>
-                  <option value="small">Small (Тэнцвэртэй - Зөвлөмж)</option>
-                  <option value="medium">Medium (Өндөр нарийвчлал)</option>
+                  <option value="tiny">Tiny (Хамгийн хурдан, 39M)</option>
+                  <option value="base">Base (Ердийн, 74M)</option>
+                  <option value="small-q5_0">Small-q5_0 (Quantized, 244M • RTX Санал болгох)</option>
+                  <option value="small">Small (Стандарт, 244M)</option>
+                  <option value="medium">Medium (Өндөр нарийвчлал, 769M)</option>
+                  <option value="large-v3-turbo">Large-v3-Turbo (Хамгийн нарийн, 809M)</option>
                 </select>
               </div>
             </div>
@@ -517,8 +798,18 @@ export default function LyricsPage() {
               <h2 style={{ fontSize: "1.15rem", fontWeight: 600, margin: 0 }}>
                 {title ? `${title} ${artist ? `- ${artist}` : ""}` : "Синхрон дууны үг"}
               </h2>
-              <div style={{ color: "var(--text-muted, #888)", fontSize: "0.82rem", marginTop: "2px" }}>
-                Нийт {segments.length} мөр тайлагдсан. Мөр дээр дарж тухайн секундыг тоглуулах буюу үгийг засах боломжтой.
+              <div style={{ color: "var(--text-muted, #888)", fontSize: "0.82rem", marginTop: "2px", display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+                <span>Нийт {segments.length} мөр тайлагдсан.</span>
+                {timingSource === "whisper_token_timestamps" && (
+                  <span style={{ fontSize: "0.75rem", color: "#34d399", background: "rgba(16, 185, 129, 0.15)", border: "1px solid rgba(16, 185, 129, 0.3)", padding: "1px 6px", borderRadius: "4px" }}>
+                    🎯 Жинхэнэ Whisper Token Цаглавар
+                  </span>
+                )}
+                {timingSource === "linear_interpolation_fallback" && (
+                  <span style={{ fontSize: "0.75rem", color: "#fbbf24", background: "rgba(245, 158, 11, 0.15)", border: "1px solid rgba(245, 158, 11, 0.3)", padding: "1px 6px", borderRadius: "4px" }}>
+                    ⚡ Линейн үгийн хуваалт
+                  </span>
+                )}
               </div>
             </div>
 
@@ -543,74 +834,135 @@ export default function LyricsPage() {
             </div>
           </div>
 
+          {fallbackNotice && (
+            <div
+              style={{
+                padding: "8px 14px",
+                background: "rgba(245, 158, 11, 0.12)",
+                border: "1px solid rgba(245, 158, 11, 0.3)",
+                color: "#fbbf24",
+                borderRadius: "8px",
+                fontSize: "0.85rem",
+                marginBottom: "14px",
+                display: "flex",
+                alignItems: "center",
+                gap: "8px",
+              }}
+            >
+              <span>⚠️</span>
+              <span>{fallbackNotice}</span>
+            </div>
+          )}
+
           {/* Synchronized Lyrics Container */}
           <div
             ref={listRef}
             style={{
-              maxHeight: "460px",
+              maxHeight: "520px",
               overflowY: "auto",
               display: "flex",
               flexDirection: "column",
-              gap: "8px",
+              gap: "10px",
               paddingRight: "6px",
             }}
           >
             {segments.map((seg, idx) => {
               const isActive = activeSegmentIndex === idx;
+              const words = getSegmentWords(seg);
+
               return (
                 <div
                   key={idx}
                   data-index={idx}
                   style={{
                     display: "flex",
-                    alignItems: "center",
-                    gap: "12px",
-                    padding: "10px 14px",
-                    borderRadius: "8px",
-                    background: isActive ? "rgba(99, 102, 241, 0.2)" : "rgba(255, 255, 255, 0.02)",
-                    border: isActive ? "1px solid rgba(99, 102, 241, 0.5)" : "1px solid transparent",
-                    transition: "all 0.2s ease",
+                    flexDirection: "column",
+                    gap: "8px",
+                    padding: "12px 14px",
+                    borderRadius: "10px",
+                    background: isActive ? "rgba(99, 102, 241, 0.18)" : "rgba(255, 255, 255, 0.02)",
+                    border: isActive ? "1px solid rgba(99, 102, 241, 0.5)" : "1px solid rgba(255, 255, 255, 0.04)",
+                    boxShadow: isActive ? "0 0 16px rgba(99, 102, 241, 0.2)" : "none",
+                    transition: "all 0.22s cubic-bezier(0.4, 0, 0.2, 1)",
                   }}
                 >
-                  {/* Timestamp seek button */}
-                  <button
-                    onClick={() => seekTo(seg.start)}
-                    style={{
-                      fontFamily: "monospace",
-                      fontSize: "0.82rem",
-                      padding: "4px 8px",
-                      borderRadius: "4px",
-                      background: isActive ? "var(--primary, #6366f1)" : "rgba(255,255,255,0.06)",
-                      color: isActive ? "#fff" : "var(--text-muted, #aaa)",
-                      border: "none",
-                      cursor: "pointer",
-                      whiteSpace: "nowrap",
-                    }}
-                    title="Энэ мөчөөс эхлүүлэн тоглуулах"
-                  >
-                    ▶ {formatDisplayTime(seg.start)}
-                  </button>
+                  <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                    {/* Timestamp seek button */}
+                    <button
+                      onClick={() => seekTo(seg.start)}
+                      style={{
+                        fontFamily: "monospace",
+                        fontSize: "0.82rem",
+                        padding: "4px 8px",
+                        borderRadius: "4px",
+                        background: isActive ? "var(--primary, #6366f1)" : "rgba(255,255,255,0.06)",
+                        color: isActive ? "#fff" : "var(--text-muted, #aaa)",
+                        border: "none",
+                        cursor: "pointer",
+                        whiteSpace: "nowrap",
+                      }}
+                      title="Энэ мөчөөс эхлүүлэн тоглуулах"
+                    >
+                      ▶ {formatDisplayTime(seg.start)}
+                    </button>
 
-                  {/* Inline editable lyric line */}
-                  <input
-                    type="text"
-                    value={seg.text}
-                    onChange={(e) => updateSegmentText(idx, e.target.value)}
-                    style={{
-                      flex: 1,
-                      background: "transparent",
-                      border: "none",
-                      outline: "none",
-                      color: isActive ? "#ffffff" : "var(--text-color, #e0e0e0)",
-                      fontSize: isActive ? "1.05rem" : "0.95rem",
-                      fontWeight: isActive ? 600 : 400,
-                      transition: "font-size 0.2s, font-weight 0.2s",
-                    }}
-                  />
+                    {/* Inline editable lyric line */}
+                    <input
+                      type="text"
+                      value={seg.text}
+                      onChange={(e) => updateSegmentText(idx, e.target.value)}
+                      style={{
+                        flex: 1,
+                        background: "transparent",
+                        border: "none",
+                        outline: "none",
+                        color: isActive ? "#ffffff" : "var(--text-color, #e0e0e0)",
+                        fontSize: isActive ? "1.02rem" : "0.95rem",
+                        fontWeight: isActive ? 600 : 400,
+                        transition: "font-size 0.2s, font-weight 0.2s",
+                      }}
+                    />
 
-                  <div style={{ fontFamily: "monospace", fontSize: "0.78rem", color: "var(--text-muted, #777)", whiteSpace: "nowrap" }}>
-                    {formatDisplayTime(seg.end)}
+                    <div style={{ fontFamily: "monospace", fontSize: "0.78rem", color: "var(--text-muted, #777)", whiteSpace: "nowrap" }}>
+                      {formatDisplayTime(seg.end)}
+                    </div>
                   </div>
+
+                  {/* Word-level Karaoke Sync Tokens */}
+                  {words.length > 0 && (
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: "6px", paddingLeft: "4px" }}>
+                      {words.map((w, wIdx) => {
+                        const isWordActive = currentTime >= w.start && currentTime <= w.end;
+                        return (
+                          <button
+                            key={wIdx}
+                            type="button"
+                            onClick={() => seekTo(w.start)}
+                            title={`${w.word} • [${formatDisplayTime(w.start)} - ${formatDisplayTime(w.end)}] (Товшиж сонсох)`}
+                            style={{
+                              fontSize: "0.8rem",
+                              padding: "2px 8px",
+                              borderRadius: "5px",
+                              cursor: "pointer",
+                              border: isWordActive
+                                ? "1px solid #818cf8"
+                                : "1px solid rgba(255, 255, 255, 0.07)",
+                              background: isWordActive
+                                ? "linear-gradient(135deg, rgba(99, 102, 241, 0.45), rgba(168, 85, 247, 0.45))"
+                                : "rgba(255, 255, 255, 0.03)",
+                              color: isWordActive ? "#ffffff" : "var(--text-muted, #aaa)",
+                              fontWeight: isWordActive ? 600 : 400,
+                              boxShadow: isWordActive ? "0 0 12px rgba(99, 102, 241, 0.55)" : "none",
+                              transform: isWordActive ? "scale(1.06)" : "scale(1)",
+                              transition: "all 0.15s cubic-bezier(0.4, 0, 0.2, 1)",
+                            }}
+                          >
+                            {w.word}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
               );
             })}

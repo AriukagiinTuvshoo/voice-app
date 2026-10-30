@@ -39,6 +39,8 @@ export interface Settings {
   autoInsertText: boolean;
   showFlowBar: boolean;
   whisperModel?: string;
+  useGpu?: boolean;
+  cpuThreads?: number;
   // Enhanced features (v1.2.8)
   soundCues?: boolean;
   numberNormalization?: boolean;
@@ -49,6 +51,8 @@ export interface Settings {
   customSnippets?: boolean;
   techTermsNormalization?: boolean;
   snippets?: Record<string, string>;
+  customVocabulary?: string[];
+  mongolianGrammar?: boolean;
 }
 
 export interface TranscriptionRecord {
@@ -68,4 +72,19 @@ export interface SpellCheckResult {
   text: string;
   misspelled: string[];
   suggestions: Record<string, string[]>;
+}
+
+
+export interface LyricsWordTiming {
+  word: string;
+  start: number;
+  end: number;
+}
+
+export interface LyricsSegment {
+  id?: number;
+  start: number;
+  end: number;
+  text: string;
+  words?: LyricsWordTiming[];
 }

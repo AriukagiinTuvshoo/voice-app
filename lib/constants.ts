@@ -83,6 +83,18 @@ export const defaultSettings: Settings = {
   startWithWindows: true,
   customSnippets: true,
   techTermsNormalization: true,
+  useGpu: true,
+  cpuThreads: 6,
+  mongolianGrammar: true,
+  customVocabulary: [
+    "Улаанбаатар",
+    "Оюутолгой",
+    "Тавантолгой",
+    "ХААН Банк",
+    "ШУТИС",
+    "Монголбанк",
+    "VoiceApp",
+  ],
   snippets: {
     "миний имэйл": "user@example.invalid",
     "миний утас": "+97600000000",

@@ -124,8 +124,16 @@ function Provider({ children }: { children: ReactNode }) {
             if (srv.start_with_windows !== undefined) merged.startWithWindows = Boolean(srv.start_with_windows);
             if (srv.custom_snippets !== undefined) merged.customSnippets = Boolean(srv.custom_snippets);
             if (srv.tech_terms_normalization !== undefined) merged.techTermsNormalization = Boolean(srv.tech_terms_normalization);
+            if (srv.use_gpu !== undefined) merged.useGpu = Boolean(srv.use_gpu);
+            if (srv.cpu_threads !== undefined) merged.cpuThreads = Number(srv.cpu_threads);
             if (srv.snippets && typeof srv.snippets === "object") {
               merged.snippets = { ...(merged.snippets || {}), ...srv.snippets };
+            }
+            if (Array.isArray(srv.custom_vocabulary)) {
+              merged.customVocabulary = srv.custom_vocabulary;
+            }
+            if (srv.mongolian_grammar !== undefined) {
+              merged.mongolianGrammar = Boolean(srv.mongolian_grammar);
             }
           }
         }
@@ -290,7 +298,7 @@ function Provider({ children }: { children: ReactNode }) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         hotkey: settings.desktopHotkey || "f8",
-        stt_engine: settings.sttEngine === "auto" ? "google" : settings.sttEngine,
+        stt_engine: settings.sttEngine === "auto" ? "whisper" : settings.sttEngine,
         whisper_model: settings.whisperModel || "small",
         chimege_token: settings.chimegeToken || "",
         language: settings.language || "auto",
@@ -303,7 +311,11 @@ function Provider({ children }: { children: ReactNode }) {
         start_with_windows: Boolean(settings.startWithWindows),
         custom_snippets: Boolean(settings.customSnippets),
         tech_terms_normalization: Boolean(settings.techTermsNormalization),
+        use_gpu: settings.useGpu !== undefined ? Boolean(settings.useGpu) : true,
+        cpu_threads: settings.cpuThreads || 6,
         snippets: settings.snippets || {},
+        custom_vocabulary: settings.customVocabulary || [],
+        mongolian_grammar: settings.mongolianGrammar !== undefined ? Boolean(settings.mongolianGrammar) : true,
       }),
     }).catch(() => {});
   }, [settings]);
@@ -1607,7 +1619,19 @@ export function Workspace() {
 export function SettingsPanel() {
   const { settings, update, flowbarStatus, toggleFlowBar, triggerFlowBarRecording, resetFlowBarPosition, quitVoiceApp } = useSettings();
   const [audioDevices, setAudioDevices] = useState<MediaDeviceInfo[]>([]);
+  const [hardwareInfo, setHardwareInfo] = useState<{
+    has_gpu: boolean;
+    gpu_name: string;
+    vram_mb: number;
+    driver_version: string;
+    cuda_version: string;
+    cuda_binary_available?: boolean;
+    backend_status?: string;
+    status_message?: string;
+  } | null>(null);
   const [newTrigger, setNewTrigger] = useState("");
+  const [newVocabWord, setNewVocabWord] = useState("");
+  const [vocabError, setVocabError] = useState("");
   const [newReplacement, setNewReplacement] = useState("");
   const [isTestingMic, setIsTestingMic] = useState(false);
   const [micVolume, setMicVolume] = useState(0);
@@ -1617,6 +1641,12 @@ export function SettingsPanel() {
 
   useEffect(() => {
     getAudioInputDevices().then(setAudioDevices);
+    fetch("/api/settings")
+      .then((r) => r.json())
+      .then((d) => {
+        if (d?.hardware) setHardwareInfo(d.hardware);
+      })
+      .catch(() => {});
   }, []);
 
   const stopMicTest = useCallback(() => {
@@ -1675,6 +1705,35 @@ export function SettingsPanel() {
       stopMicTest();
     };
   }, [stopMicTest]);
+
+  const handleAddVocabWord = () => {
+    setVocabError("");
+    const trimmed = newVocabWord.trim();
+    if (!trimmed) {
+      setVocabError("Үгээ бичнэ үү.");
+      return;
+    }
+    if (trimmed.length < 2) {
+      setVocabError("Дор хаяж 2 тэмдэгт оруулна уу.");
+      return;
+    }
+    if (trimmed.length > 64) {
+      setVocabError("Хэт урт байна (дээд тал нь 64 тэмдэгт).");
+      return;
+    }
+    const currentVocab = settings.customVocabulary || [];
+    if (currentVocab.some((w) => w.toLowerCase() === trimmed.toLowerCase())) {
+      setVocabError(`"${trimmed}" аль хэдийн толь бичигт байна.`);
+      return;
+    }
+    update("customVocabulary", [...currentVocab, trimmed]);
+    setNewVocabWord("");
+  };
+
+  const handleRemoveVocabWord = (wordToRemove: string) => {
+    const currentVocab = settings.customVocabulary || [];
+    update("customVocabulary", currentVocab.filter((w) => w !== wordToRemove));
+  };
 
   const handleAddSnippet = () => {
     const trig = newTrigger.trim().toLowerCase();
@@ -1996,6 +2055,121 @@ export function SettingsPanel() {
         </div>
       </section>
 
+      {/* Stage 3: Mongolian Grammar & Custom Vocabulary */}
+      <section className="settings">
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
+          <div>
+            <h2>Монгол хэлний ухаалаг дүрэм & Хувийн толь бичиг</h2>
+            <p>Хүний нэр, байгууллага, нэр томьёог бүртгэж, тасарсан нөхцөлийг зөв холбох систем.</p>
+          </div>
+          <span style={{ fontSize: "11px", padding: "3px 8px", borderRadius: "12px", background: "rgba(16, 185, 129, 0.15)", color: "#10b981", fontWeight: 600 }}>
+            ҮЕ 3 • Идэвхтэй
+          </span>
+        </div>
+
+        <Toggle
+          k="mongolianGrammar"
+          label="Монгол хэлний ухаалаг дүрэм ба залгавар засвар (Morphology & Vowel Harmony)"
+          description="Тасарсан нөхцөлийг зөв залгах (Улаанбаатар т -> Улаанбаатарт), эгшиг зохицуулах, 'дээр', 'дагуу', 'тухай' үгсийг зөв салгах."
+        />
+
+        <div style={{ marginTop: "16px", padding: "14px", background: "var(--subtle)", borderRadius: "12px", border: "1px solid var(--border)" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
+            <span style={{ fontSize: "13px", fontWeight: 600 }}>
+              Хувийн толь бичиг (Custom Vocabulary / Biasing):
+            </span>
+            <span style={{ fontSize: "11px", color: "var(--muted)" }}>
+              {(settings.customVocabulary || []).length} үг бүртгэгдсэн • Whisper Prompt-д дамжуулна
+            </span>
+          </div>
+
+          <div style={{ display: "flex", flexWrap: "wrap", gap: "6px", margin: "10px 0" }}>
+            {(settings.customVocabulary || []).map((word) => (
+              <span
+                key={word}
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: "6px",
+                  padding: "4px 10px",
+                  background: "var(--card)",
+                  border: "1px solid var(--border)",
+                  borderRadius: "20px",
+                  fontSize: "12px",
+                  color: "var(--foreground)",
+                }}
+              >
+                <span>{word}</span>
+                <button
+                  type="button"
+                  onClick={() => handleRemoveVocabWord(word)}
+                  style={{
+                    background: "none",
+                    border: "none",
+                    color: "var(--muted)",
+                    cursor: "pointer",
+                    padding: "0 2px",
+                    fontSize: "13px",
+                    lineHeight: 1,
+                  }}
+                  title="Устгах"
+                >
+                  ×
+                </button>
+              </span>
+            ))}
+            {(settings.customVocabulary || []).length === 0 && (
+              <span style={{ fontSize: "12px", color: "var(--muted)", fontStyle: "italic" }}>
+                Одоогоор хувийн үг бүртгэгдээгүй байна.
+              </span>
+            )}
+          </div>
+
+          <div style={{ display: "flex", gap: "8px", marginTop: "10px" }}>
+            <input
+              type="text"
+              placeholder="Шинэ үг, нэр томьёо (жнь: Оюутолгой, ШУТИС, VoiceApp)"
+              value={newVocabWord}
+              onChange={(e) => {
+                setNewVocabWord(e.target.value);
+                if (vocabError) setVocabError("");
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  handleAddVocabWord();
+                }
+              }}
+              style={{
+                flex: 1,
+                padding: "8px 10px",
+                borderRadius: "8px",
+                border: "1px solid var(--border)",
+                background: "var(--card)",
+                fontSize: "12px",
+                color: "var(--foreground)",
+              }}
+            />
+            <button
+              type="button"
+              onClick={handleAddVocabWord}
+              className="btn-primary"
+              style={{ fontSize: "12px", padding: "8px 16px" }}
+            >
+              + Нэмэх
+            </button>
+          </div>
+          {vocabError && (
+            <div style={{ color: "#ef4444", fontSize: "11px", marginTop: "6px" }}>
+              ⚠️ {vocabError}
+            </div>
+          )}
+          <small style={{ display: "block", color: "var(--muted)", fontSize: "11px", marginTop: "6px" }}>
+            Энд бүртгэгдсэн үгсийг Whisper орон нутгийн загвар (offline initial prompt) хамгийн түрүүнд оновчтой танина.
+          </small>
+        </div>
+      </section>
+
       {/* STT Engine & Microphone */}
       <section className="settings">
         <h2>Яриа таних хөдөлгүүр & Микрофон</h2>
@@ -2049,6 +2223,103 @@ export function SettingsPanel() {
           </div>
         </div>
 
+        {/* Hardware & GPU Acceleration Status */}
+        {hardwareInfo?.has_gpu ? (
+          hardwareInfo.cuda_binary_available ? (
+            <div
+              style={{
+                padding: "10px 14px",
+                background: "rgba(16, 185, 129, 0.08)",
+                border: "1px solid rgba(16, 185, 129, 0.3)",
+                borderRadius: "10px",
+                margin: "12px 0",
+                display: "flex",
+                alignItems: "center",
+                gap: "10px",
+              }}
+            >
+              <span style={{ fontSize: "18px" }}>⚡</span>
+              <div>
+                <div style={{ fontSize: "12px", fontWeight: 700, color: "#10b981" }}>
+                  RTX GPU Хурдасгуур: {hardwareInfo.gpu_name} (CUDA Идэвхтэй)
+                </div>
+                <div style={{ fontSize: "11px", color: "var(--muted)", marginTop: "2px" }}>
+                  VRAM: {(hardwareInfo.vram_mb / 1024).toFixed(1)} GB • Драйвер: {hardwareInfo.driver_version} • CUDA: {hardwareInfo.cuda_version || "12.5"}
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div
+              style={{
+                padding: "10px 14px",
+                background: "rgba(245, 158, 11, 0.08)",
+                border: "1px solid rgba(245, 158, 11, 0.3)",
+                borderRadius: "10px",
+                margin: "12px 0",
+                display: "flex",
+                alignItems: "center",
+                gap: "10px",
+              }}
+            >
+              <span style={{ fontSize: "18px" }}>⚠️</span>
+              <div>
+                <div style={{ fontSize: "12px", fontWeight: 700, color: "#f59e0b" }}>
+                  {hardwareInfo.gpu_name} илэрсэн • Одоогоор CPU AVX2 горим идэвхтэй
+                </div>
+                <div style={{ fontSize: "11px", color: "var(--muted)", marginTop: "2px" }}>
+                  whisper.cpp-ийн CUDA бинар (ggml-cuda.dll) суулгаагүй тул бодит тооцоолол 6-thread CPU AVX2-оор хийгдэж байна.
+                </div>
+              </div>
+            </div>
+          )
+        ) : (
+          <div
+            style={{
+              padding: "8px 12px",
+              background: "var(--subtle)",
+              border: "1px solid var(--border)",
+              borderRadius: "8px",
+              margin: "12px 0",
+              fontSize: "11px",
+              color: "var(--muted)",
+            }}
+          >
+            💻 CPU тооцооллын горим (AVX2 / Dynamic GGML Backend)
+          </div>
+        )}
+
+        <Toggle
+          k="useGpu"
+          label={
+            hardwareInfo?.cuda_binary_available
+              ? "RTX GPU (CUDA / cuBLAS) хурдасгуур ашиглах"
+              : "RTX GPU (CUDA) хурдасгуур (Бинар байхгүй тул CPU горимд шилжсэн)"
+          }
+          description={
+            hardwareInfo?.cuda_binary_available
+              ? "NVIDIA GPU ашиглан 0.1-0.2с latency, 0% CPU ачаалалтай тооцоолох."
+              : "NVIDIA RTX 3050 Ti байгаа ч whisper.cpp-д ggml-cuda.dll байхгүй тул CPU ашиглана."
+          }
+        />
+
+        <div style={{ marginTop: "10px", marginBottom: "14px" }}>
+          <label style={{ display: "block", fontSize: "12px", fontWeight: 600, marginBottom: "6px" }}>
+            CPU тооцооллын утас (CPU Threads):
+          </label>
+          <select
+            value={settings.cpuThreads || 6}
+            onChange={(e) => update("cpuThreads", Number(e.target.value))}
+            style={{ width: "100%", padding: "7px 10px", borderRadius: "8px", background: "var(--card)", color: "var(--foreground)", border: "1px solid var(--border)", fontSize: "12px" }}
+          >
+            <option value={2}>2 Threads (Хэмнэлттэй)</option>
+            <option value={4}>4 Threads (Стандарт)</option>
+            <option value={6}>6 Threads (Санал болгох - Ryzen 7 5800H)</option>
+            <option value={8}>8 Threads (Бүрэн хүч)</option>
+            <option value={12}>12 Threads</option>
+            <option value={16}>16 Threads</option>
+          </select>
+        </div>
+
         <div className="option-list">
           {sttEngines.map((x) => (
             <label className="radio" key={x.value}>
@@ -2076,11 +2347,12 @@ export function SettingsPanel() {
               onChange={(e) => update("whisperModel", e.target.value)}
               style={{ width: "100%", padding: "7px 10px", borderRadius: "8px", background: "var(--card)", color: "var(--foreground)", border: "1px solid var(--border)" }}
             >
-              <option value="tiny">Tiny (Хамгийн хурдан, 39M)</option>
-              <option value="base">Base (Хөнгөн, 74M)</option>
-              <option value="small">Small (Тэнцвэртэй - Санал болгох, 244M)</option>
-              <option value="medium">Medium (Өндөр чанар, 769M)</option>
-              <option value="large-v3">Large-v3 (Хамгийн нарийн, 1550M)</option>
+              <option value="tiny">Tiny (39M • 75MB - Хамгийн хурдан, суусан)</option>
+              <option value="base">Base (74M • 142MB - Хөнгөн оффлайн)</option>
+              <option value="small-q5_0">Small Quantized (244M q5_0 • 175MB - Санал болгох RTX)</option>
+              <option value="small">Small (244M • 466MB - Тэнцвэртэй)</option>
+              <option value="medium">Medium (769M • 1.5GB - Өндөр чанар)</option>
+              <option value="large-v3-turbo">Large-v3 Turbo (809M • 1.6GB - Дэвшилтэт)</option>
             </select>
             <small style={{ display: "block", color: "var(--muted)", fontSize: "11px", marginTop: "4px" }}>
               Интернетгүй үед оффлайн ажиллана.

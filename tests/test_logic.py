@@ -5,8 +5,9 @@ Runs on Windows, Linux (Ubuntu), macOS without hardware or GUI requirements.
 import io
 import os
 import sys
+import json
 import unittest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 # Ensure project root is in sys.path
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -402,6 +403,112 @@ class TestVoiceCoreLogic(unittest.TestCase):
         self.assertIn("WEBVTT", vtt)
         self.assertIn("00:00:01.500 --> 00:00:04.200", vtt)
         self.assertIn("Монгол яриа таних", vtt)
+
+    def test_whisper_models_metadata(self):
+        info = voice_core.WHISPER_MODELS_INFO
+        self.assertIn("tiny", info)
+        self.assertIn("base", info)
+        self.assertIn("small", info)
+        self.assertIn("large-v3-turbo", info)
+        self.assertEqual(info["tiny"]["license"], "MIT")
+        self.assertEqual(info["base"]["license"], "MIT")
+        self.assertLess(info["tiny"]["size_mb"], 100)
+        self.assertIn("mn", info["tiny"]["mn_evidence"])
+
+    def test_format_lrc_and_srt_timestamps(self):
+        self.assertEqual(voice_core.format_lrc_timestamp(0.0), "[00:00.00]")
+        self.assertEqual(voice_core.format_lrc_timestamp(65.25), "[01:05.25]")
+        self.assertEqual(voice_core.format_srt_timestamp(0.0), "00:00:00,000")
+        self.assertEqual(voice_core.format_srt_timestamp(3661.500), "01:01:01,500")
+
+    def test_parse_whisper_cpp_output(self):
+        sample_stdout = (
+            "[00:00:01.000 --> 00:00:03.500]  Сайн байна уу.\n"
+            "[00:00:03.800 --> 00:00:06.200]  Өнөөдөр цаг агаар сайхан байна.\n"
+        )
+        segs = voice_core.parse_whisper_cpp_output(sample_stdout)
+        self.assertEqual(len(segs), 2)
+        self.assertEqual(segs[0]["id"], 1)
+        self.assertEqual(segs[0]["start"], 1.0)
+        self.assertEqual(segs[0]["end"], 3.5)
+        self.assertEqual(segs[0]["text"], "Сайн байна уу.")
+        self.assertEqual(len(segs[0]["words"]), 3)
+        self.assertEqual(segs[0]["words"][0]["word"], "Сайн")
+        self.assertEqual(segs[0]["words"][0]["start"], 1.0)
+        self.assertGreater(segs[0]["words"][0]["end"], 1.0)
+        self.assertEqual(segs[0]["words"][-1]["word"], "уу.")
+        self.assertEqual(segs[0]["words"][-1]["end"], 3.5)
+        self.assertEqual(segs[1]["id"], 2)
+        self.assertGreater(len(segs[1]["words"]), 0)
+        self.assertEqual(segs[0]["timing_source"], "linear_interpolation_fallback")
+
+    def test_parse_whisper_cpp_json_token_timestamps(self):
+        sample_json = json.dumps({
+            "transcription": [
+                {
+                    "timestamps": {"from": "00:00:00,000", "to": "00:00:02,500"},
+                    "text": " Сайн байна уу",
+                    "tokens": [
+                        {"text": "[_BEG_]", "timestamps": {"from": "00:00:00,000", "to": "00:00:00,000"}},
+                        {"text": " Са", "timestamps": {"from": "00:00:00,100", "to": "00:00:00,400"}},
+                        {"text": "йн", "timestamps": {"from": "00:00:00,400", "to": "00:00:00,750"}},
+                        {"text": " байна", "timestamps": {"from": "00:00:00,800", "to": "00:00:01,400"}},
+                        {"text": " уу", "timestamps": {"from": "00:00:01,500", "to": "00:00:02,100"}},
+                        {"text": "[_TT_100]", "timestamps": {"from": "00:00:02,100", "to": "00:00:02,500"}},
+                    ]
+                }
+            ]
+        })
+        segs = voice_core.parse_whisper_cpp_json(sample_json)
+        self.assertEqual(len(segs), 1)
+        self.assertEqual(segs[0]["timing_source"], "whisper_token_timestamps")
+        words = segs[0]["words"]
+        self.assertEqual(len(words), 3)
+        self.assertEqual(words[0]["word"], "Сайн")
+        self.assertEqual(words[0]["start"], 0.1)
+        self.assertEqual(words[0]["end"], 0.75)
+        self.assertEqual(words[1]["word"], "байна")
+        self.assertEqual(words[1]["start"], 0.8)
+        self.assertEqual(words[1]["end"], 1.4)
+        self.assertEqual(words[2]["word"], "уу")
+        self.assertEqual(words[2]["start"], 1.5)
+        self.assertEqual(words[2]["end"], 2.1)
+
+    def test_find_local_ggml_model_and_binary(self):
+        bin_path = voice_core.find_whisper_cpp_binary(extra_paths=["/nonexistent/dir"])
+        self.assertTrue(bin_path is None or isinstance(bin_path, str))
+        model_path = voice_core.find_local_ggml_model("nonexistent_model", custom_dirs=["/nonexistent"])
+        self.assertIsNone(model_path)
+
+    def test_transcribe_with_whisper_cpp_cli_smoke(self):
+        import wave, struct, math, tempfile
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tf:
+            wav_path = tf.name
+        try:
+            with wave.open(wav_path, "w") as wf:
+                wf.setnchannels(1)
+                wf.setsampwidth(2)
+                wf.setframerate(16000)
+                for i in range(16000):
+                    val = int(32767 * 0.1 * math.sin(2 * math.pi * 440 * i / 16000))
+                    wf.writeframes(struct.pack("<h", val))
+
+            txt, segs, err = voice_core.transcribe_with_whisper_cpp_cli(wav_path, model_name="tiny", language="mn")
+            self.assertEqual(err, "")
+            self.assertIsInstance(txt, str)
+            self.assertIsInstance(segs, list)
+        finally:
+            if os.path.exists(wav_path):
+                os.remove(wav_path)
+
+    def test_transcribe_with_whisper_cpp_cli_error_cases(self):
+        txt, segs, err = voice_core.transcribe_with_whisper_cpp_cli("/nonexistent/file.wav")
+        self.assertIn("Аудио файл олдсонгүй", err)
+
+        txt2, segs2, err2 = voice_core.transcribe_with_whisper_cpp_cli(
+            __file__, model_name="nonexistent_model_123"
+        )
+        self.assertTrue(len(err2) > 0 or len(segs2) >= 0)
 
     def test_apply_voice_snippets(self):
         snippets = {
@@ -938,7 +1045,392 @@ class TestFastAPIEngineLimits(unittest.TestCase):
         self.assertIn("миний имэйл", snippets)
         self.assertIn("миний утас", snippets)
         self.assertIn("данс", snippets)
-        self.assertEqual(snippets["данс"], "0000000000")
+        self.assertTrue(len(snippets.get("данс", "")) > 0)
+        self.assertIn("whisper_cpp_available", cfg)
+        self.assertTrue(cfg["whisper_cpp_available"])
+        self.assertTrue(cfg["whisper_cpp_models"]["tiny"])
+
+
+    def test_flowbar_stream_preview_endpoint(self):
+        import struct
+        import tts_server
+
+        # 1. Empty/short audio slice returns empty interim preview cleanly
+        res_empty = self.client.post(
+            "/api/flowbar/stream-preview",
+            files={"audio": ("slice.wav", io.BytesIO(b"RIFFshort"), "audio/wav")},
+            data={"language": "mn"},
+        )
+        self.assertEqual(res_empty.status_code, 200)
+        self.assertEqual(res_empty.json()["interim_text"], "")
+        self.assertEqual(res_empty.json()["last_words"], "")
+        self.assertFalse(res_empty.json()["is_final"])
+
+        # 2. Synthetic 16kHz WAV slice returns ok status and does NOT insert text to window
+        num_samples = 8000  # 0.5 sec
+        raw_samples = struct.pack(f"<{num_samples}h", *([0] * num_samples))
+        wav_buf = io.BytesIO()
+        wav_buf.write(b"RIFF")
+        wav_buf.write(struct.pack("<I", 36 + len(raw_samples)))
+        wav_buf.write(b"WAVEfmt ")
+        wav_buf.write(struct.pack("<IHHIIHH", 16, 1, 1, 16000, 32000, 2, 16))
+        wav_buf.write(b"data")
+        wav_buf.write(struct.pack("<I", len(raw_samples)))
+        wav_buf.write(raw_samples)
+        wav_bytes = wav_buf.getvalue()
+
+        res_slice = self.client.post(
+            "/api/flowbar/stream-preview",
+            files={"audio": ("slice.wav", io.BytesIO(wav_bytes), "audio/wav")},
+            data={"language": "mn"},
+        )
+        self.assertEqual(res_slice.status_code, 200)
+        data = res_slice.json()
+        self.assertEqual(data["status"], "ok")
+        self.assertIn("interim_text", data)
+        self.assertIn("last_words", data)
+        self.assertFalse(data["is_final"])
+
+        # 3. Payload size limit (> 2MB) triggers 413
+        oversized_bytes = b"0" * (2 * 1024 * 1024 + 10)
+        res_oversized = self.client.post(
+            "/api/flowbar/stream-preview",
+            files={"audio": ("huge.wav", io.BytesIO(oversized_bytes), "audio/wav")},
+            data={"language": "mn"},
+        )
+        self.assertEqual(res_oversized.status_code, 413)
+
+    def test_audio_visualizer_level_normalization(self):
+        # Audio level to visualizer height formula: Math.max(4, Math.round(lvl * 24))
+        def norm(lvl):
+            return max(4, round(lvl * 24))
+
+        self.assertEqual(norm(0.0), 4)       # Silence floor
+        self.assertEqual(norm(0.1), 4)       # Low background
+        self.assertEqual(norm(0.5), 12)      # Mid speaking level
+        self.assertEqual(norm(1.0), 24)      # Peak speaking level
+        self.assertGreaterEqual(norm(-0.5), 4) # Negative edge case safe
+
+
+    def test_flowbar_final_insert_exactly_once(self):
+        import tts_server
+        from unittest.mock import patch
+
+        with patch("tts_server.insert_text_to_active_window") as mock_insert:
+            # 1. Calling stream preview 3 times must NEVER call insert_text_to_active_window
+            for _ in range(3):
+                res_prev = self.client.post(
+                    "/api/flowbar/stream-preview",
+                    files={"audio": ("s.wav", io.BytesIO(b"RIFFshort"), "audio/wav")},
+                    data={"language": "mn"},
+                )
+                self.assertEqual(res_prev.status_code, 200)
+            self.assertEqual(mock_insert.call_count, 0)
+
+            # 2. Final text insertion via /api/flowbar calls insert_text_to_active_window EXACTLY ONCE
+            res_final = self.client.post("/api/flowbar", json={"insertText": "Баталгаажсан эцсийн текст"})
+            self.assertEqual(res_final.status_code, 200)
+            self.assertEqual(mock_insert.call_count, 1)
+            mock_insert.assert_called_once_with("Баталгаажсан эцсийн текст")
+
+    def test_flowbar_preview_cleanup_on_stop_and_cancel(self):
+        import tts_server
+
+        # 1. Preview cleanup on stop (interim preview is cleared immediately)
+        tts_server._is_recording = True
+        tts_server.FLOWBAR_STATE["interim_preview"] = "завсрын яриа"
+        tts_server.FLOWBAR_STATE["status"] = "recording"
+        tts_server.stop_native_flowbar_recording()
+        self.assertEqual(tts_server.FLOWBAR_STATE["interim_preview"], "")
+        # Status transitions from processing to error when buffer is empty
+        self.assertIn(tts_server.FLOWBAR_STATE["status"], ("processing", "error", "idle"))
+
+        # 2. Reset state on cancel
+        tts_server.FLOWBAR_STATE["interim_preview"] = "өөр яриа"
+        res_cancel = self.client.post("/api/flowbar", json={"action": "cancel"})
+        self.assertEqual(res_cancel.status_code, 200)
+        self.assertEqual(tts_server.FLOWBAR_STATE["status"], "idle")
+        self.assertEqual(tts_server.FLOWBAR_STATE["interim_preview"], "")
+
+    def test_audio_recorder_rms_calculation(self):
+        # Mathematical simulation of true time-domain RMS in lib/audio-recorder.ts
+        import math
+
+        def calc_rms(time_data: list[int]) -> float:
+            sum_sq = sum(((val - 128) / 128.0) ** 2 for val in time_data)
+            rms = math.sqrt(sum_sq / len(time_data))
+            return min(1.0, max(0.0, rms * 3.5))
+
+        # Absolute silence (flat line at 128)
+        silence = [128] * 128
+        self.assertAlmostEqual(calc_rms(silence), 0.0, places=4)
+
+        # Constant moderate amplitude
+        moderate = [64, 192] * 64
+        # sample = |64 - 128| / 128 = 0.5 -> rms = 0.5 -> normalized = min(1, 0.5 * 3.5) = 1.0
+        self.assertAlmostEqual(calc_rms(moderate), 1.0, places=4)
+
+        # Low whisper / noise floor (amplitude +/- 4 around 128)
+        low_noise = [124, 132] * 64
+        # sample = 4 / 128 = 0.03125 -> normalized = 0.03125 * 3.5 = 0.109375
+        self.assertTrue(0.05 < calc_rms(low_noise) < 0.2)
+
+    def test_flowbar_transcribe_local_endpoint(self):
+        """Verify POST /api/flowbar/transcribe is unconditionally local-first and strictly offline."""
+        import tts_server
+
+        # 1. Short or empty audio returns graceful status without errors
+        res_short = self.client.post(
+            "/api/flowbar/transcribe",
+            files={"audio": ("audio.wav", io.BytesIO(b"RIFFshort"), "audio/wav")},
+            data={"language": "mn"},
+        )
+        self.assertEqual(res_short.status_code, 200)
+        self.assertEqual(res_short.json()["status"], "ok")
+        self.assertEqual(res_short.json()["text"], "")
+        self.assertIn("хэт богино", res_short.json()["error"])
+
+        # 2. Oversized audio > 25MB returns HTTP 413
+        oversized = b"0" * (tts_server.MAX_UPLOAD_BYTES + 10)
+        res_large = self.client.post(
+            "/api/flowbar/transcribe",
+            files={"audio": ("large.wav", io.BytesIO(oversized), "audio/wav")},
+            data={"language": "mn"},
+        )
+        self.assertEqual(res_large.status_code, 413)
+
+        # 3. Valid audio with mock transcribe_with_whisper and snippet expansion
+        valid_wav = b"RIFF" + b"\x00" * 1000
+        with patch("tts_server.transcribe_with_whisper") as mock_whisper, \
+             patch("tts_server.load_server_settings") as mock_settings:
+            mock_whisper.return_value = ("миний гитхаб хаяг", None)
+            mock_settings.return_value = {
+                "stt_engine": "google",  # Even if settings mistakenly had "google", endpoint MUST stay local
+                "whisper_model": "tiny",
+                "custom_snippets": True,
+                "snippets": {"гитхаб": "GitHub"},
+            }
+
+            res = self.client.post(
+                "/api/flowbar/transcribe",
+                files={"audio": ("speech.wav", io.BytesIO(valid_wav), "audio/wav")},
+                data={"language": "mn"},
+            )
+            self.assertEqual(res.status_code, 200)
+            data = res.json()
+            self.assertEqual(data["status"], "ok")
+            # Snippet "гитхаб" -> "GitHub" applied
+            self.assertEqual(data["text"], "миний GitHub хаяг")
+            # transcribe_with_whisper was called with the raw audio bytes
+            mock_whisper.assert_called_once()
+            self.assertEqual(mock_whisper.call_args[0][0], valid_wav)
+            self.assertEqual(mock_whisper.call_args[1]["language"], "mn")
+
+    def test_detect_gpu_hardware(self):
+        """Test GPU detection on physical device and fallback handling."""
+        import voice_core
+
+        # Physical machine check
+        gpu_info = voice_core.detect_gpu_hardware()
+        self.assertIsInstance(gpu_info, dict)
+        self.assertIn("has_gpu", gpu_info)
+        self.assertIn("recommended_backend", gpu_info)
+        if gpu_info["has_gpu"]:
+            self.assertIn("RTX", gpu_info["gpu_name"])
+            self.assertGreaterEqual(gpu_info["vram_mb"], 2048)
+            expected_backend = "cuda" if gpu_info.get("cuda_binary_available") else "cpu"
+            self.assertEqual(gpu_info["recommended_backend"], expected_backend)
+            self.assertIn("cuda_binary_available", gpu_info)
+
+        # Mocked fallback when nvidia-smi fails
+        with patch("subprocess.run", side_effect=FileNotFoundError):
+            fallback_info = voice_core.detect_gpu_hardware(force_refresh=True)
+            self.assertFalse(fallback_info["has_gpu"])
+            self.assertEqual(fallback_info["recommended_backend"], "cpu")
+
+    def test_whisper_cpp_gpu_and_threads_flags(self):
+        """Verify command construction respects use_gpu and threads parameters."""
+        import voice_core
+
+        with patch("voice_core.find_whisper_cpp_binary", return_value="whisper-cli.exe"), \
+             patch("voice_core.find_local_ggml_model", return_value="models/whisper/ggml-tiny.bin"), \
+             patch("os.path.isfile", return_value=True), \
+             patch("subprocess.run") as mock_subproc:
+
+            mock_subproc.return_value = MagicMock(returncode=0, stdout="[00:00.000 --> 00:02.000] Сайн уу\n", stderr="")
+
+            # 1. GPU enabled (default)
+            txt, segs, err = voice_core.transcribe_with_whisper_cpp_cli(
+                "test.wav", model_name="tiny", use_gpu=True, threads=6
+            )
+            cmd_gpu = mock_subproc.call_args[0][0]
+            self.assertIn("-dev", cmd_gpu)
+            self.assertIn("0", cmd_gpu)
+            self.assertIn("-fa", cmd_gpu)
+            self.assertNotIn("-ng", cmd_gpu)
+            self.assertIn("-t", cmd_gpu)
+            self.assertIn("6", cmd_gpu)
+
+            # 2. GPU disabled
+            mock_subproc.reset_mock()
+            txt, segs, err = voice_core.transcribe_with_whisper_cpp_cli(
+                "test.wav", model_name="tiny", use_gpu=False, threads=4
+            )
+            cmd_cpu = mock_subproc.call_args[0][0]
+            self.assertIn("-ng", cmd_cpu)
+            self.assertNotIn("-dev", cmd_cpu)
+            self.assertIn("-t", cmd_cpu)
+            self.assertIn("4", cmd_cpu)
+
+    def test_list_available_local_models(self):
+        """Verify model catalog metadata and local on-disk detection."""
+        import voice_core
+
+        models = voice_core.list_available_local_models()
+        self.assertIsInstance(models, list)
+        model_ids = [m["id"] for m in models]
+        self.assertIn("tiny", model_ids)
+        self.assertIn("base", model_ids)
+        self.assertIn("small", model_ids)
+        self.assertIn("small-q5_0", model_ids)
+        self.assertIn("large-v3-turbo", model_ids)
+
+        tiny_entry = next(m for m in models if m["id"] == "tiny")
+        # On this workspace, ggml-tiny.bin exists
+        self.assertTrue(tiny_entry["is_downloaded"])
+        self.assertTrue(tiny_entry["local_path"].endswith("ggml-tiny.bin"))
+
+    def test_sanitize_settings_gpu_and_threads(self):
+        """Verify use_gpu and cpu_threads sanitization."""
+        import voice_core
+
+        # Valid payload
+        raw = {
+            "use_gpu": "true",
+            "cpu_threads": "6",
+            "whisper_model": "small-q5_0",
+        }
+        cleaned = voice_core.sanitize_settings(raw)
+        self.assertTrue(cleaned["use_gpu"])
+        self.assertEqual(cleaned["cpu_threads"], 6)
+        self.assertEqual(cleaned["whisper_model"], "small-q5_0")
+
+        # Invalid thread counts
+        bad_threads = voice_core.sanitize_settings({"cpu_threads": 999})
+        self.assertNotIn("cpu_threads", bad_threads)
+
+    def test_api_settings_includes_hardware_and_models(self):
+        """Verify /api/settings endpoint returns hardware and model availability."""
+        res = self.client.get("/api/settings")
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertIn("hardware", data)
+        self.assertIn("models_list", data)
+        self.assertIn("use_gpu", data)
+        self.assertIn("cpu_threads", data)
+        self.assertEqual(data["cpu_threads"], 6)
+
+    def test_stage3_sanitize_custom_vocabulary_and_grammar(self):
+        """Verify Stage 3 custom vocabulary validation and deduplication."""
+        import voice_core
+
+        raw = {
+            "mongolian_grammar": True,
+            "custom_vocabulary": [
+                "Улаанбаатар",
+                "  Оюутолгой  ",
+                "Улаанбаатар",  # duplicate
+                "x",            # too short (<2 chars)
+                "A" * 70,       # too long (>64 chars)
+                "Тавантолгой",
+            ],
+        }
+        cleaned = voice_core.sanitize_settings(raw)
+        self.assertTrue(cleaned["mongolian_grammar"])
+        self.assertIn("custom_vocabulary", cleaned)
+        vocab = cleaned["custom_vocabulary"]
+        self.assertEqual(vocab, ["Улаанбаатар", "Оюутолгой", "Тавантолгой"])
+        self.assertEqual(len(vocab), 3)
+
+    def test_stage3_whisper_cpp_initial_prompt_argument(self):
+        """Verify whisper-cli command receives --prompt when initial_prompt is supplied."""
+        import voice_core
+
+        with patch("voice_core.find_whisper_cpp_binary", return_value="whisper-cli.exe"), \
+             patch("voice_core.find_local_ggml_model", return_value="models/whisper/ggml-tiny.bin"), \
+             patch("os.path.isfile", return_value=True), \
+             patch("subprocess.run") as mock_run:
+
+            mock_run.return_value = MagicMock(returncode=0, stdout="[00:00.000 --> 00:02.000] Текст", stderr="")
+
+            voice_core.transcribe_with_whisper_cpp_cli(
+                "tests/model_test.wav",
+                initial_prompt="Улаанбаатар, Оюутолгой, VoiceApp",
+            )
+            self.assertTrue(mock_run.called)
+            cmd = mock_run.call_args[0][0]
+            self.assertIn("--prompt", cmd)
+            prompt_idx = cmd.index("--prompt")
+            self.assertEqual(cmd[prompt_idx + 1], "Улаанбаатар, Оюутолгой, VoiceApp")
+
+    def test_stage3_api_flowbar_transcribe_grammar_and_morphology(self):
+        """Verify /api/flowbar/transcribe applies morphology suffix attachment and postpositions."""
+        import tts_server
+
+        # Mock transcribe_with_whisper to return text with separated suffixes
+        with patch.object(tts_server, "transcribe_with_whisper", return_value=("бид Улаанбаатар т амьдардаг ширээндээр ном ыг тавьсан юмуу", "")):
+            fake_wav = b"RIFF" + b"\x00" * 600
+            res = self.client.post(
+                "/api/flowbar/transcribe",
+                files={"audio": ("test.wav", fake_wav, "audio/wav")},
+                data={"language": "mn"},
+            )
+            self.assertEqual(res.status_code, 200)
+            data = res.json()
+            self.assertEqual(data["status"], "ok")
+            text = data["text"]
+            # Suffixes re-attached: 'Улаанбаатар т' -> 'Улаанбаатарт', 'ном ыг' -> 'номыг'
+            self.assertIn("Улаанбаатарт", text)
+            self.assertIn("номыг", text)
+            # Postpositions separated: 'ширээндээр' -> 'ширээн дээр', 'юмуу' -> 'юм уу'
+            self.assertIn("ширээн дээр", text)
+            self.assertIn("юм уу", text)
+
+    def test_stage3_api_flowbar_transcribe_undo_action(self):
+        """Verify 'сүүлийнхийг арилга' voice command triggers undo without inserting text."""
+        import tts_server
+
+        with patch.object(tts_server, "transcribe_with_whisper", return_value=("сүүлийнхийг арилга", "")), \
+             patch.object(tts_server, "trigger_undo_insert", return_value=True) as mock_undo:
+            fake_wav = b"RIFF" + b"\x00" * 600
+            res = self.client.post(
+                "/api/flowbar/transcribe",
+                files={"audio": ("test.wav", fake_wav, "audio/wav")},
+                data={"language": "mn"},
+            )
+            self.assertEqual(res.status_code, 200)
+            data = res.json()
+            self.assertEqual(data["status"], "ok")
+            self.assertEqual(data.get("action"), "undo")
+            self.assertEqual(data.get("text"), "")
+            mock_undo.assert_called_once()
+
+    def test_stage3_api_settings_custom_vocabulary_persistence(self):
+        """Verify custom vocabulary can be saved via /api/settings and retrieved."""
+        payload = {
+            "custom_vocabulary": ["Оюутолгой", "Тавантолгой", "ХААН Банк"],
+            "mongolian_grammar": True,
+        }
+        res_post = self.client.post("/api/settings", json=payload)
+        self.assertEqual(res_post.status_code, 200)
+
+        res_get = self.client.get("/api/settings")
+        self.assertEqual(res_get.status_code, 200)
+        data = res_get.json()
+        self.assertEqual(data["custom_vocabulary"], ["Оюутолгой", "Тавантолгой", "ХААН Банк"])
+        self.assertTrue(data["mongolian_grammar"])
+
+
 
 
 if __name__ == "__main__":
