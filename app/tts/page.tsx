@@ -231,7 +231,7 @@ const DEFAULT_VOICES = [
 ];
 
 export default function TTSPage() {
-  const [activeTab, setActiveTab] = useState<"standard" | "clone">("standard");
+  const [activeTab, setActiveTab] = useState<"standard" | "clone" | "separate">("standard");
   const [voiceFilter, setVoiceFilter] = useState<"all" | "mn" | "intl" | "cloned">("all");
 
   // Synthesis State
@@ -258,6 +258,17 @@ export default function TTSPage() {
   const [isCloning, setIsCloning] = useState(false);
   const [cloneError, setCloneError] = useState("");
   const [recordSeconds, setRecordSeconds] = useState(0);
+  const [consentGiven, setConsentGiven] = useState(false);
+  const [refTranscript, setRefTranscript] = useState("");
+
+  // Vocal / Instrumental Separation State
+  const [sepAudioFile, setSepAudioFile] = useState<File | null>(null);
+  const [sepAudioPreviewUrl, setSepAudioPreviewUrl] = useState<string | null>(null);
+  const [isSeparating, setIsSeparating] = useState(false);
+  const [sepError, setSepError] = useState("");
+  const [vocalsUrl, setVocalsUrl] = useState<string | null>(null);
+  const [instrumentalUrl, setInstrumentalUrl] = useState<string | null>(null);
+  const [sepJobId, setSepJobId] = useState<string | null>(null);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const previewSampleRef = useRef<HTMLAudioElement | null>(null);
@@ -468,6 +479,10 @@ export default function TTSPage() {
       setCloneError("Хоолойн нэрээ оруулна уу.");
       return;
     }
+    if (!consentGiven) {
+      setCloneError("Хувийн дуу хоолой ашиглах зөвшөөрөл (Consent)-ийг заавал олгоно уу.");
+      return;
+    }
 
     setIsCloning(true);
     setCloneError("");
@@ -477,7 +492,11 @@ export default function TTSPage() {
       formData.append("audio", sampleBlob, "sample.wav");
       formData.append("name", cloneName.trim());
 
-      const res = await fetch("/api/tts/clone", {
+      formData.append("consent", "true");
+      if (refTranscript.trim()) {
+        formData.append("transcript", refTranscript.trim());
+      }
+      const res = await fetch("/api/voice-profiles", {
         method: "POST",
         body: formData,
       });
@@ -494,6 +513,8 @@ export default function TTSPage() {
       setSelectedVoiceId(clonedProfile.id);
       setActiveTab("standard");
       setCloneName("Миний хоолой");
+      setConsentGiven(false);
+      setRefTranscript("");
       setSampleBlob(null);
       setSampleAudioUrl(null);
     } catch (err: unknown) {
@@ -515,6 +536,42 @@ export default function TTSPage() {
         method: "DELETE",
       });
     } catch {}
+  };
+
+  const handleSeparateAudio = async () => {
+    if (!sepAudioFile) {
+      setSepError("Эхлээд дууны файл (MP3 эсвэл WAV) оруулна уу.");
+      return;
+    }
+    setIsSeparating(true);
+    setSepError("");
+    setVocalsUrl(null);
+    setInstrumentalUrl(null);
+
+    try {
+      const fd = new FormData();
+      fd.append("audio", sepAudioFile);
+      fd.append("vocal_strength", "1.3");
+
+      const res = await fetch("/api/audio/separate", {
+        method: "POST",
+        body: fd,
+      });
+
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.detail || "Аудио салгахад алдаа гарлаа.");
+      }
+
+      const data = await res.json();
+      setVocalsUrl(data.vocals_url);
+      setInstrumentalUrl(data.instrumental_url);
+      setSepJobId(data.job_id);
+    } catch (err: any) {
+      setSepError(err.message || "Аудио салгахад алдаа гарлаа.");
+    } finally {
+      setIsSeparating(false);
+    }
   };
 
   const samplePhrases = [
@@ -634,7 +691,26 @@ export default function TTSPage() {
           }}
         >
           <SparklesIcon width={16} height={16} />
-          <span>✨ Хүний дуу хоолой хувилах (Voice Clone)</span>
+          <span>✨ Хоолой хувилах (Voice Profiles)</span>
+        </button>
+
+        <button
+          onClick={() => setActiveTab("separate")}
+          className="btn-secondary"
+          style={{
+            background: activeTab === "separate" ? "var(--accent)" : "var(--surface)",
+            color: activeTab === "separate" ? "#fff" : "var(--text)",
+            padding: "9px 18px",
+            borderRadius: "12px",
+            fontWeight: 600,
+            display: "inline-flex",
+            alignItems: "center",
+            gap: "8px",
+            boxShadow: activeTab === "separate" ? "0 0 16px rgba(99, 102, 241, 0.4)" : "none",
+          }}
+        >
+          <WavesIcon width={16} height={16} />
+          <span>✂️ Дуу салгагч (Vocals & Instrumental)</span>
         </button>
       </div>
 
@@ -1211,6 +1287,134 @@ export default function TTSPage() {
       )}
 
       {/* TAB 2: VOICE CLONING STUDIO */}
+      {/* TAB 3: VOCAL / INSTRUMENTAL SEPARATION */}
+      {activeTab === "separate" && (
+        <div className="settings" style={{ marginTop: "20px" }}>
+          <h2 style={{ fontSize: "18px", marginBottom: "8px", display: "flex", alignItems: "center", gap: "8px" }}>
+            <WavesIcon width={20} height={20} style={{ color: "var(--accent)" }} />
+            <span>✂️ Дуу салгагч (AI Vocal & Instrumental Separation)</span>
+          </h2>
+          <p style={{ marginBottom: "20px", fontSize: "14px", color: "var(--muted)" }}>
+            Дурын дуу хөгжмийг 100% орон нутгийн (local-first) STFT Spectral Pan болон Mid-Side фазын задлагчаар <b>Хоолой (Vocals)</b> болон <b>Ая (Instrumental)</b> болгон 2 тусдаа зам руу салгана.
+          </p>
+
+          <div style={{ display: "grid", gap: "20px", maxWidth: "720px" }}>
+            <div
+              style={{
+                padding: "24px",
+                borderRadius: "16px",
+                border: "2px dashed var(--border-focus)",
+                background: "var(--subtle)",
+                textAlign: "center",
+              }}
+            >
+              <label style={{ cursor: "pointer", display: "inline-block" }}>
+                <div style={{ fontSize: "36px", marginBottom: "10px" }}>🎵</div>
+                <div style={{ fontWeight: 600, fontSize: "15px", marginBottom: "6px" }}>
+                  {sepAudioFile ? sepAudioFile.name : "Дууны файл сонгох (MP3 эсвэл WAV)"}
+                </div>
+                <div style={{ fontSize: "12px", color: "var(--muted)", marginBottom: "16px" }}>
+                  Дээд тал нь 25 MB. Аудио таны төхөөрөмж дээр локал боловсруулагдана.
+                </div>
+                <span className="btn-secondary" style={{ display: "inline-block" }}>
+                  Файл сонгох
+                </span>
+                <input
+                  type="file"
+                  accept="audio/*"
+                  onChange={(e) => {
+                    const f = e.target.files?.[0];
+                    if (f) {
+                      setSepAudioFile(f);
+                      setSepAudioPreviewUrl(URL.createObjectURL(f));
+                      setVocalsUrl(null);
+                      setInstrumentalUrl(null);
+                      setSepError("");
+                    }
+                  }}
+                  style={{ display: "none" }}
+                />
+              </label>
+
+              {sepAudioPreviewUrl && (
+                <div style={{ marginTop: "16px", textAlign: "left" }}>
+                  <div style={{ fontSize: "12px", color: "var(--muted)", marginBottom: "4px" }}>Эх аудиог сонсох:</div>
+                  <audio controls src={sepAudioPreviewUrl} style={{ width: "100%", height: "36px" }} />
+                </div>
+              )}
+            </div>
+
+            {sepError && (
+              <div className="error" style={{ marginTop: 0 }}>
+                {sepError}
+              </div>
+            )}
+
+            <div>
+              <button
+                type="button"
+                onClick={handleSeparateAudio}
+                disabled={isSeparating || !sepAudioFile}
+                className="btn-primary"
+                style={{ padding: "12px 24px", fontSize: "14px" }}
+              >
+                <WavesIcon width={16} height={16} />
+                <span>{isSeparating ? "Дууг салгаж байна (STFT Spectral Separation)..." : "Дууг салгах (Vocal / Instrumental)"}</span>
+              </button>
+            </div>
+
+            {/* Separation Results */}
+            {(vocalsUrl || instrumentalUrl) && (
+              <div style={{ display: "grid", gap: "16px", marginTop: "12px" }}>
+                <div
+                  style={{
+                    padding: "18px",
+                    borderRadius: "14px",
+                    background: "rgba(16, 185, 129, 0.08)",
+                    border: "1px solid rgba(16, 185, 129, 0.3)",
+                  }}
+                >
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
+                    <div style={{ fontWeight: 600, color: "#10b981", display: "flex", alignItems: "center", gap: "6px" }}>
+                      <span>🎤</span>
+                      <span>Тусгаарласан хоолой (Isolated Vocals):</span>
+                    </div>
+                    {vocalsUrl && (
+                      <a href={vocalsUrl} download="vocals.wav" className="btn-secondary" style={{ fontSize: "12px", padding: "4px 10px" }}>
+                        Татах (.WAV)
+                      </a>
+                    )}
+                  </div>
+                  {vocalsUrl && <audio controls src={vocalsUrl} style={{ width: "100%", height: "36px" }} />}
+                </div>
+
+                <div
+                  style={{
+                    padding: "18px",
+                    borderRadius: "14px",
+                    background: "rgba(99, 102, 241, 0.08)",
+                    border: "1px solid rgba(99, 102, 241, 0.3)",
+                  }}
+                >
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
+                    <div style={{ fontWeight: 600, color: "var(--accent)", display: "flex", alignItems: "center", gap: "6px" }}>
+                      <span>🎹</span>
+                      <span>Хөгжмийн ая (Accompaniment / Instrumental):</span>
+                    </div>
+                    {instrumentalUrl && (
+                      <a href={instrumentalUrl} download="instrumental.wav" className="btn-secondary" style={{ fontSize: "12px", padding: "4px 10px" }}>
+                        Татах (.WAV)
+                      </a>
+                    )}
+                  </div>
+                  {instrumentalUrl && <audio controls src={instrumentalUrl} style={{ width: "100%", height: "36px" }} />}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       {activeTab === "clone" && (
         <div className="settings" style={{ marginTop: "20px" }}>
           <h2 style={{ fontSize: "18px", marginBottom: "8px" }}>
@@ -1301,6 +1505,51 @@ export default function TTSPage() {
               )}
             </div>
 
+            <div>
+              <label style={{ display: "block", fontSize: "13px", fontWeight: 600, marginBottom: "6px" }}>
+                3. Ярьсан эх бичвэр (Transcript - заавал биш):
+              </label>
+              <textarea
+                value={refTranscript}
+                onChange={(e) => setRefTranscript(e.target.value)}
+                placeholder="Бичлэг дээр юу гэж хэлснээ энд бичиж болно..."
+                rows={2}
+                style={{
+                  width: "100%",
+                  padding: "10px 14px",
+                  borderRadius: "12px",
+                  border: "1px solid var(--border)",
+                  background: "var(--subtle)",
+                  color: "var(--text)",
+                  fontSize: "13px",
+                  resize: "vertical",
+                }}
+              />
+            </div>
+
+            <div
+              style={{
+                padding: "14px 18px",
+                borderRadius: "12px",
+                background: "rgba(99, 102, 241, 0.08)",
+                border: "1px solid rgba(99, 102, 241, 0.25)",
+                display: "flex",
+                alignItems: "flex-start",
+                gap: "12px",
+              }}
+            >
+              <input
+                type="checkbox"
+                id="consent-check"
+                checked={consentGiven}
+                onChange={(e) => setConsentGiven(e.target.checked)}
+                style={{ width: "18px", height: "18px", marginTop: "2px", cursor: "pointer", accentColor: "var(--accent)" }}
+              />
+              <label htmlFor="consent-check" style={{ fontSize: "13px", cursor: "pointer", lineHeight: 1.5 }}>
+                <b>Зөвшөөрлийн баталгаажуулалт (Consent & Privacy):</b> Би энэхүү дуу хоолойг зөвхөн хувийн болон хууль ёсны зөвшөөрөгдсөн зорилгоор орон нутгийн (local-first) орчинд ашиглахыг зөвшөөрч байна. Миний аудио файл гадаад cloud сүлжээ рүү илгээгдэхгүй.
+              </label>
+            </div>
+
             {cloneError && (
               <div className="error" style={{ marginTop: 0 }}>
                 {cloneError}
@@ -1311,7 +1560,7 @@ export default function TTSPage() {
               <button
                 type="button"
                 onClick={handleCloneSubmit}
-                disabled={isCloning || !sampleBlob}
+                disabled={isCloning || !sampleBlob || !consentGiven}
                 className="btn-primary"
                 style={{ padding: "12px 24px", fontSize: "14px" }}
               >

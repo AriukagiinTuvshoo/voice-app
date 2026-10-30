@@ -38,3 +38,6 @@ tools/
 
 voice-diagnose.txt
 clones/
+stems/
+*.ass
+*.mp4

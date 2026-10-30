@@ -115,10 +115,15 @@ export default function FlowBarPage() {
         });
 
         const data = await res.json().catch(() => ({}));
-        if (data.action === "undo") {
-          setErrorMessage("Буцаах (Undo) хийгдлээ");
-          setState("success");
-          setTimeout(() => setState("idle"), 2200);
+        if (data.action === "undo" || data.action === "undo_failed") {
+          if (data.action === "undo" || data.undo_ok) {
+            setErrorMessage("Буцаах (Undo) хийгдлээ");
+            setState("success");
+          } else {
+            setErrorMessage(data.message || "Буцаах боломжгүй (хугацаа дууссан)");
+            setState("error");
+          }
+          setTimeout(() => setState("idle"), 2400);
           return;
         }
         serverText = (data.text || "").trim();

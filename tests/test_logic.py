@@ -1413,6 +1413,54 @@ class TestFastAPIEngineLimits(unittest.TestCase):
             self.assertEqual(data["status"], "ok")
             self.assertEqual(data.get("action"), "undo")
             self.assertEqual(data.get("text"), "")
+            self.assertTrue(data.get("undo_ok"))
+            mock_undo.assert_called_once()
+
+    def test_stage4_undo_expiration_and_single_use(self):
+        """Verify trigger_undo_insert strictly enforces 8s expiration and single-use."""
+        import tts_server
+        import time
+
+        # Case 1: undo not available
+        tts_server.FLOWBAR_STATE["undo_available"] = False
+        tts_server.FLOWBAR_STATE["undo_until"] = time.time() + 10.0
+        self.assertFalse(tts_server.trigger_undo_insert())
+
+        # Case 2: undo available but expired
+        tts_server.FLOWBAR_STATE["undo_available"] = True
+        tts_server.FLOWBAR_STATE["undo_until"] = time.time() - 1.0  # expired
+        self.assertFalse(tts_server.trigger_undo_insert())
+        # Must be consumed (single use)
+        self.assertFalse(tts_server.FLOWBAR_STATE["undo_available"])
+
+        # Case 3: undo available and not expired, but no target HWND
+        tts_server.FLOWBAR_STATE["undo_available"] = True
+        tts_server.FLOWBAR_STATE["undo_until"] = time.time() + 8.0
+        tts_server._target_hwnd = 0
+        self.assertFalse(tts_server.trigger_undo_insert())
+        # Should now be consumed
+        self.assertFalse(tts_server.FLOWBAR_STATE["undo_available"])
+
+        # Case 4: single-use: second attempt immediately returns False
+        self.assertFalse(tts_server.trigger_undo_insert())
+
+    def test_stage4_api_flowbar_transcribe_undo_failed_when_expired(self):
+        """Verify /api/flowbar/transcribe returns undo_failed when trigger_undo_insert returns False."""
+        import tts_server
+
+        with patch.object(tts_server, "transcribe_with_whisper", return_value=("сүүлийнхийг арилга", "")), \
+             patch.object(tts_server, "trigger_undo_insert", return_value=False) as mock_undo:
+            fake_wav = b"RIFF" + b"\x00" * 600
+            res = self.client.post(
+                "/api/flowbar/transcribe",
+                files={"audio": ("test.wav", fake_wav, "audio/wav")},
+                data={"language": "mn"},
+            )
+            self.assertEqual(res.status_code, 200)
+            data = res.json()
+            self.assertEqual(data["status"], "failed")
+            self.assertEqual(data.get("action"), "undo_failed")
+            self.assertFalse(data.get("undo_ok"))
             mock_undo.assert_called_once()
 
     def test_stage3_api_settings_custom_vocabulary_persistence(self):

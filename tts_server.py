@@ -131,6 +131,25 @@ from mongolian_grammar import (
     process_voice_commands,
     build_whisper_initial_prompt,
 )
+from karaoke_ass import (
+    generate_karaoke_ass,
+    export_karaoke_video,
+    is_ffmpeg_available,
+    find_system_or_bundled_ffmpeg,
+)
+from audio_separator import (
+    separate_audio_stems,
+    process_separation_job,
+    cleanup_stems,
+    STEMS_DIR,
+)
+from voice_cloning import (
+    create_voice_profile,
+    delete_voice_profile,
+    load_voice_profiles_db,
+    get_voice_cloning_system_status,
+    sanitize_profile_id,
+)
 
 def get_app_version() -> str:
     v_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "VERSION")
@@ -2680,20 +2699,38 @@ def insert_text_to_active_window(text: str, hwnd: int = 0) -> bool:
 def trigger_undo_insert() -> bool:
     """Send Ctrl+Z to the target window if undo is currently active within 8 seconds."""
     global _target_hwnd
+    # Must check if undo was made available
     if not FLOWBAR_STATE.get("undo_available"):
+        logger.info("[FlowBar] Undo requested but undo_available is False")
         return False
+
+    # Consume token immediately (single-use per transcription)
     FLOWBAR_STATE["undo_available"] = False
+
+    # Check 8-second expiration strictly
+    undo_until = float(FLOWBAR_STATE.get("undo_until", 0.0))
+    if time.time() > undo_until:
+        FLOWBAR_STATE["status"] = "idle"
+        logger.info(f"[FlowBar] Undo expired (now={time.time():.2f} > until={undo_until:.2f})")
+        return False
+
     FLOWBAR_STATE["status"] = "idle"
     if os.name == "nt" and _target_hwnd:
-        restore_window_focus(_target_hwnd)
-        time.sleep(0.04)
-        user32.keybd_event(VK_CONTROL, 0, 0, 0)
-        user32.keybd_event(ord('Z'), 0, 0, 0)
-        time.sleep(0.02)
-        user32.keybd_event(ord('Z'), 0, KEYEVENTF_KEYUP, 0)
-        user32.keybd_event(VK_CONTROL, 0, KEYEVENTF_KEYUP, 0)
-        logger.info(f"[FlowBar] Undo (Ctrl+Z) sent to target HWND 0x{_target_hwnd:X}")
-        return True
+        try:
+            restore_window_focus(_target_hwnd)
+            time.sleep(0.04)
+            user32.keybd_event(VK_CONTROL, 0, 0, 0)
+            user32.keybd_event(ord('Z'), 0, 0, 0)
+            time.sleep(0.02)
+            user32.keybd_event(ord('Z'), 0, KEYEVENTF_KEYUP, 0)
+            user32.keybd_event(VK_CONTROL, 0, KEYEVENTF_KEYUP, 0)
+            logger.info(f"[FlowBar] Undo (Ctrl+Z) successfully sent to target HWND 0x{_target_hwnd:X}")
+            return True
+        except Exception as e:
+            logger.error(f"[FlowBar] Failed to send undo Ctrl+Z: {e}")
+            return False
+
+    logger.warning("[FlowBar] Undo could not be executed: no valid target window HWND")
     return False
 
 def start_native_flowbar_recording(from_ui_button: bool = False) -> None:
@@ -3884,6 +3921,227 @@ async def clone_voice(
 
 
 # ---------------------------------------------------------------------------
+# Stage 4: VoiceStudio, Voice Profiles, Karaoke ASS, & Vocal Separation APIs
+# ---------------------------------------------------------------------------
+
+@app.get("/api/voice-profiles")
+def api_list_voice_profiles():
+    """List all registered local voice profiles."""
+    db = load_voice_profiles_db()
+    # Merge with in-memory CLONED_VOICES_DB if any
+    for k, v in CLONED_VOICES_DB.items():
+        if k not in db:
+            db[k] = v
+    return {"status": "ok", "profiles": list(db.values())}
+
+
+@app.post("/api/voice-profiles")
+async def api_create_voice_profile(
+    name: str = Form("Миний хоолой"),
+    consent: bool = Form(False),
+    transcript: Optional[str] = Form(None),
+    audio: UploadFile = File(...),
+):
+    """
+    Create a local voice profile with mandatory user consent & audio validation.
+    """
+    if not consent:
+        raise HTTPException(status_code=400, detail="Хувийн дуу хоолой ашиглах зөвшөөрөл (Consent) заавал шаардлагатай.")
+
+    content = await audio.read(MAX_UPLOAD_BYTES + 1)
+    if len(content) > MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail="Аудио файл хэт том байна (дээд тал нь 25 MB).")
+
+    try:
+        profile = create_voice_profile(
+            name=name,
+            audio_bytes=content,
+            consent=consent,
+            ref_transcript=transcript,
+        )
+        # Register in in-memory dict as well
+        CLONED_VOICES_DB[profile["id"]] = profile
+        return {"status": "ok", "profile": profile}
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    except PermissionError as pe:
+        raise HTTPException(status_code=403, detail=str(pe))
+    except Exception as e:
+        logger.error(f"Error creating voice profile: {e}")
+        raise HTTPException(status_code=500, detail=f"Хоолой хадгалахад алдаа гарлаа: {str(e)}")
+
+
+@app.get("/api/voice-profiles/{profile_id}")
+def api_get_voice_profile(profile_id: str):
+    """Retrieve metadata of a single voice profile."""
+    safe_id = sanitize_profile_id(profile_id)
+    db = load_voice_profiles_db()
+    profile = db.get(safe_id) or CLONED_VOICES_DB.get(safe_id)
+    if not profile:
+        raise HTTPException(status_code=404, detail="Дуу хоолойн профайл олдсонгүй.")
+    return {"status": "ok", "profile": profile}
+
+
+@app.get("/api/voice-profiles/{profile_id}/audio")
+def api_get_voice_profile_audio(profile_id: str):
+    """Stream reference audio of a voice profile."""
+    safe_id = sanitize_profile_id(profile_id)
+    wav_path = os.path.join(CLONES_DIR, f"{safe_id}.wav")
+    if not os.path.isfile(wav_path):
+        raise HTTPException(status_code=404, detail="Аудио файл олдсонгүй.")
+    return FileResponse(wav_path, media_type="audio/wav", filename=f"{safe_id}.wav")
+
+
+@app.delete("/api/voice-profiles/{profile_id}")
+def api_delete_voice_profile(profile_id: str):
+    """Delete a local voice profile and its audio file permanently."""
+    safe_id = sanitize_profile_id(profile_id)
+    deleted = delete_voice_profile(safe_id)
+    if safe_id in CLONED_VOICES_DB:
+        del CLONED_VOICES_DB[safe_id]
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Дуу хоолойн профайл олдсонгүй.")
+    return {"status": "ok", "deleted": safe_id}
+
+
+@app.get("/api/voice-cloning/status")
+def api_voice_cloning_status():
+    """Report hardware readiness and model feasibility audit for Voice Cloning."""
+    return get_voice_cloning_system_status()
+
+
+@app.post("/api/audio/separate")
+async def api_audio_separate(
+    audio: UploadFile = File(...),
+    vocal_strength: float = Form(1.3),
+):
+    """
+    Separate an audio track into isolated vocals and instrumental stems.
+    """
+    content = await audio.read(MAX_UPLOAD_BYTES + 1)
+    if len(content) > MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail="Аудио файл хэт том байна (дээд тал нь 25 MB).")
+    if len(content) < 4000:
+        raise HTTPException(status_code=400, detail="Аудио файл хэт богино байна.")
+
+    try:
+        job = process_separation_job(
+            content,
+            original_filename=audio.filename or "track.wav",
+            vocal_strength=float(vocal_strength),
+        )
+        return job
+    except Exception as e:
+        logger.error(f"Error in audio separation: {e}")
+        raise HTTPException(status_code=500, detail=f"Аудио салгахад алдаа гарлаа: {str(e)}")
+
+
+@app.get("/api/audio/stems/{job_id}/{stem_name}")
+def api_get_audio_stem(job_id: str, stem_name: str):
+    """Stream or download separated stem (vocals.wav or instrumental.wav)."""
+    clean_job = sanitize_profile_id(job_id)
+    if stem_name not in ("vocals", "instrumental"):
+        raise HTTPException(status_code=400, detail="Буруу stem нэр. 'vocals' эсвэл 'instrumental' сонгоно уу.")
+
+    stem_path = os.path.join(STEMS_DIR, clean_job, f"{stem_name}.wav")
+    if not os.path.isfile(stem_path):
+        raise HTTPException(status_code=404, detail="Stem файл олдсонгүй.")
+    return FileResponse(stem_path, media_type="audio/wav", filename=f"{clean_job}_{stem_name}.wav")
+
+
+@app.post("/api/lyrics/export-ass")
+def api_lyrics_export_ass(req: dict):
+    """
+    Export Aegisub standard Advanced SubStation Alpha (.ass) with word-level karaoke timing.
+    """
+    segments = req.get("segments", [])
+    title = req.get("title", "Voice Karaoke")
+    font_name = req.get("font_name", "Arial")
+    font_size = int(req.get("font_size", 48))
+    primary_color = req.get("primary_color", "&H0000FFFF")
+    secondary_color = req.get("secondary_color", "&H00FFFFFF")
+    outline_color = req.get("outline_color", "&H00101010")
+
+    ass_text = generate_karaoke_ass(
+        segments=segments,
+        title=title,
+        font_name=font_name,
+        font_size=font_size,
+        primary_color=primary_color,
+        secondary_color=secondary_color,
+        outline_color=outline_color,
+    )
+    return {"status": "ok", "ass_content": ass_text}
+
+
+@app.get("/api/lyrics/ffmpeg-status")
+def api_lyrics_ffmpeg_status():
+    """Check if FFmpeg is available for video rendering."""
+    avail = is_ffmpeg_available()
+    bin_path = find_system_or_bundled_ffmpeg()
+    return {
+        "available": avail,
+        "path": bin_path or "",
+        "version": "FFmpeg 8.1 (Gyan.dev full build with libass)" if avail else "Not found",
+    }
+
+
+@app.post("/api/lyrics/export-video")
+async def api_lyrics_export_video(
+    audio: UploadFile = File(...),
+    ass_content: str = Form(...),
+    title: str = Form("karaoke"),
+    resolution: str = Form("1280x720"),
+    bg_color: str = Form("#0f172a"),
+):
+    """
+    Render video with hard-burned karaoke subtitles using FFmpeg.
+    """
+    if not is_ffmpeg_available():
+        raise HTTPException(status_code=503, detail="FFmpeg суулгаагүй тул видео үүсгэх боломжгүй байна. Субтитр .ASS файлаар татаж авна уу.")
+
+    tmp_dir = os.path.join(STEMS_DIR, f"video_{uuid.uuid4().hex[:8]}")
+    os.makedirs(tmp_dir, exist_ok=True)
+
+    audio_bytes = await audio.read()
+    audio_path = os.path.join(tmp_dir, "input_audio.wav")
+    with open(audio_path, "wb") as f:
+        f.write(audio_bytes)
+
+    ass_path = os.path.join(tmp_dir, "karaoke.ass")
+    with open(ass_path, "w", encoding="utf-8") as f:
+        f.write(ass_content)
+
+    out_mp4 = os.path.join(tmp_dir, "output.mp4")
+
+    try:
+        ok = export_karaoke_video(
+            audio_path=audio_path,
+            ass_path=ass_path,
+            output_mp4_path=out_mp4,
+            background_color=bg_color,
+            resolution=resolution,
+        )
+        if not ok or not os.path.isfile(out_mp4):
+            raise RuntimeError("FFmpeg did not produce output video.")
+
+        # Read mp4 into memory to serve before cleaning up tmp_dir
+        with open(out_mp4, "rb") as f:
+            mp4_bytes = f.read()
+
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+        return Response(
+            content=mp4_bytes,
+            media_type="video/mp4",
+            headers={"Content-Disposition": f'attachment; filename="{title}.mp4"'},
+        )
+    except Exception as e:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+        logger.error(f"Error rendering karaoke video: {e}")
+        raise HTTPException(status_code=500, detail=f"Видео үүсгэхэд алдаа гарлаа: {str(e)}")
+
+
+# ---------------------------------------------------------------------------
 # Frontend Direct /api/... Route Aliases (Supports single-port 8000 desktop app)
 # ---------------------------------------------------------------------------
 
@@ -4276,11 +4534,13 @@ async def api_flowbar_transcribe(
         if cfg.get("voice_actions", True):
             text, action = process_voice_commands(text)
             if action == "undo":
-                trigger_undo_insert()
+                undo_ok = trigger_undo_insert()
                 return {
-                    "status": "ok",
+                    "status": "ok" if undo_ok else "failed",
                     "text": "",
-                    "action": "undo",
+                    "action": "undo" if undo_ok else "undo_failed",
+                    "undo_ok": undo_ok,
+                    "message": "Сүүлийнхийг арилгалаа (Undo)" if undo_ok else "Буцаах боломжгүй эсвэл хугацаа (8 сек) дууссан",
                     "engine": "local_whisper_cpp" if find_whisper_cpp_binary() else "local_whisper",
                 }
         if cfg.get("custom_snippets", True) and cfg.get("snippets"):
