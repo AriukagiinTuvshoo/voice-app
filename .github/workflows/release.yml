@@ -21,13 +21,26 @@ jobs:
           node-version: 22
           cache: npm
 
+      - name: Install Inno Setup
+        run: choco install innosetup --no-progress
+
       - name: Install Node dependencies
         run: npm ci
 
       - name: Build static export (out/)
         run: npm run build
 
-      - name: Prepare Release Package
+      - name: Build Standalone Installer (Inno Setup)
+        shell: powershell
+        run: |
+          $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) {
+              $iscc = (Get-Command iscc.exe -ErrorAction SilentlyContinue).Source
+          }
+          & $iscc installer\voice-setup.iss
+          Get-ChildItem -Path "dist"
+
+      - name: Prepare Portable Zip Release Package
         shell: powershell
         run: |
           $version = "${{ github.ref_name }}"
@@ -35,26 +48,52 @@ jobs:
           $distDir = "dist-package"
           New-Item -ItemType Directory -Path $distDir -Force | Out-Null
           
-          # Copy release files
-          Copy-Item -Path "Install-VOICE.bat" -Destination $distDir
-          Copy-Item -Path "Start-VOICE.bat" -Destination $distDir
-          Copy-Item -Path "Uninstall-VOICE.bat" -Destination $distDir
-          Copy-Item -Path "make-shortcut.ps1" -Destination $distDir
-          Copy-Item -Path "tts_server.py" -Destination $distDir
-          Copy-Item -Path "requirements.txt" -Destination $distDir
-          Copy-Item -Path "README.md" -Destination $distDir
-          Copy-Item -Path "LICENSE" -Destination $distDir
-          Copy-Item -Path "public" -Destination $distDir -Recurse
-          Copy-Item -Path "out" -Destination $distDir -Recurse
+          # Core scripts & modules
+          $files = @(
+            "Install-VOICE.bat", "Start-VOICE.bat", "Uninstall-VOICE.bat", "Diagnose-VOICE.bat",
+            "make-shortcut.ps1", "tts_server.py", "voice_core.py", "mongolian_grammar.py",
+            "voice_cloning.py", "audio_separator.py", "karaoke_ass.py", "auto_updater.py",
+            "requirements.txt", "requirements-tray.txt", "requirements-offline.txt",
+            "VERSION", "README.md", "LICENSE"
+          )
+          foreach ($f in $files) {
+            if (Test-Path $f) { Copy-Item -Path $f -Destination $distDir }
+          }
+
+          if (Test-Path "public") { Copy-Item -Path "public" -Destination $distDir -Recurse }
+          if (Test-Path "out") { Copy-Item -Path "out" -Destination $distDir -Recurse }
+          if (Test-Path "tools") { Copy-Item -Path "tools" -Destination $distDir -Recurse }
 
           # Compress to zip
           Compress-Archive -Path "$distDir\*" -DestinationPath $zipName -Force
-          Write-Host "Created release package: $zipName"
+          Write-Host "Created portable release package: $zipName"
+
+      - name: Generate Checksums
+        shell: powershell
+        run: |
+          $version = "${{ github.ref_name }}"
+          $installer = Get-ChildItem -Path "dist" -Filter "VOICE-Setup-*.exe" | Select-Object -First 1
+          $zip = "VOICE-Windows-$version.zip"
+          
+          $hashes = @()
+          if ($installer) {
+            $h1 = Get-FileHash -Path $installer.FullName -Algorithm SHA256
+            $hashes += "$($h1.Hash.ToLower())  $($installer.Name)"
+          }
+          if (Test-Path $zip) {
+            $h2 = Get-FileHash -Path $zip -Algorithm SHA256
+            $hashes += "$($h2.Hash.ToLower())  $zip"
+          }
+          $hashes | Out-File -FilePath "SHA256SUMS.txt" -Encoding ascii
+          Get-Content "SHA256SUMS.txt"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: VOICE-Windows-${{ github.ref_name }}.zip
+          files: |
+            dist/VOICE-Setup-*.exe
+            VOICE-Windows-${{ github.ref_name }}.zip
+            SHA256SUMS.txt
           generate_release_notes: true
           draft: false
           prerelease: false

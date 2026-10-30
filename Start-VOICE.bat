@@ -6,6 +6,18 @@ cd /d "%~dp0"
 set "PYW=%~dp0.venv\Scripts\pythonw.exe"
 if not exist "%PYW%" goto not_installed
 
+rem ---- Check if background daemon requested (autostart) ---
+if "%~1"=="--background" (
+    rem If server is already running, we do nothing and exit
+    powershell -NoProfile -Command "try { $h = Invoke-RestMethod -Uri 'http://127.0.0.1:8000/health' -TimeoutSec 2; if ($h.status -eq 'ok') { exit 0 } } catch { }; exit 1" >nul 2>&1
+    if not errorlevel 1 exit /b 0
+
+    rem Start server with --background flag so it doesn't open browser
+    set "VOICE_NO_BROWSER=1"
+    start "" "%PYW%" "%~dp0tts_server.py" --background
+    exit /b 0
+)
+
 rem ---- Is OUR server already running on port 8000? --------------------------------
 powershell -NoProfile -Command "try { $h = Invoke-RestMethod -Uri 'http://127.0.0.1:8000/health' -TimeoutSec 2; if ($h.status -eq 'ok') { if ($h.desktop -like '*exebox*') { try { Invoke-RestMethod -Uri 'http://127.0.0.1:8000/api/quit' -Method Post -TimeoutSec 2 } catch { }; exit 1 } else { exit 0 } } } catch { }; exit 1"
 if not errorlevel 1 (

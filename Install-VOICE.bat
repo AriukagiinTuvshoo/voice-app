@@ -8,7 +8,7 @@ rem ---- 0. Unblock downloaded files (Windows Smart App Control MOTW) ---
 powershell -NoProfile -Command "Get-ChildItem -Path '%~dp0*' -Recurse | Unblock-File -ErrorAction SilentlyContinue" >nul 2>&1
 
 echo ============================================================
-set "APP_VER=1.2.5"
+set "APP_VER=1.4.0"
 if exist "%~dp0VERSION" set /p APP_VER=<"%~dp0VERSION"
 echo   VOICE - Speak. Clean. Write.   (Installer v%APP_VER%)
 echo ============================================================
@@ -104,7 +104,8 @@ echo [2/4] Copying files to %TARGET% ...
 if not exist "%TARGET%" mkdir "%TARGET%"
 if exist "%~dp0out" xcopy /E /I /Y /Q "%~dp0out" "%TARGET%\out" >nul
 if exist "%~dp0public" xcopy /E /I /Y /Q "%~dp0public" "%TARGET%\public" >nul
-for %%F in (tts_server.py voice_core.py requirements.txt requirements-tray.txt requirements-offline.txt VERSION Start-VOICE.bat Uninstall-VOICE.bat make-shortcut.ps1 README.md LICENSE Diagnose-VOICE.bat diagnose_flowbar.py) do (
+if exist "%~dp0tools" xcopy /E /I /Y /Q "%~dp0tools" "%TARGET%\tools" >nul
+for %%F in (tts_server.py voice_core.py mongolian_grammar.py voice_cloning.py audio_separator.py karaoke_ass.py auto_updater.py requirements.txt requirements-tray.txt requirements-offline.txt VERSION Start-VOICE.bat Uninstall-VOICE.bat make-shortcut.ps1 README.md LICENSE Diagnose-VOICE.bat diagnose_flowbar.py) do (
     if exist "%~dp0%%F" copy /Y "%~dp0%%F" "%TARGET%\" >nul
 )
 
@@ -123,6 +124,9 @@ if not exist "%TARGET%\.venv\Scripts\pythonw.exe" (
 if errorlevel 1 echo [!] pip upgrade skipped ^(not fatal^).
 "%TARGET%\.venv\Scripts\python.exe" -m pip install --disable-pip-version-check -r "%TARGET%\requirements.txt"
 if errorlevel 1 goto fail
+if exist "%TARGET%\requirements-tray.txt" (
+    "%TARGET%\.venv\Scripts\python.exe" -m pip install --disable-pip-version-check -r "%TARGET%\requirements-tray.txt"
+)
 
 rem Verify tkinter is available for floating FlowBar
 "%TARGET%\.venv\Scripts\python.exe" -c "import tkinter" >nul 2>&1

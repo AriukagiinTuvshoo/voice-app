@@ -80,6 +80,7 @@ import queue
 import threading
 import time
 import tempfile
+import unicodedata
 import uuid
 from typing import Optional
 
@@ -2003,6 +2004,7 @@ def transcribe_wav_bytes(raw_bytes: bytes, language: str = "mn") -> tuple[str, s
 FLOWBAR_STATE = {
     "status": "idle",        # idle | recording | processing | success | error
     "visible": True,
+    "is_paused": False,      # Stage 5 dictation pause/resume state
     "last_text": "",
     "last_timestamp": 0,
     "error": "",
@@ -2425,10 +2427,13 @@ def play_sound_cue(cue: str) -> None:
 def copy_to_windows_clipboard(text: str) -> None:
     """
     Thread-safe native Win32 clipboard copy using CF_UNICODETEXT.
+    Applies Unicode NFC normalization to preserve proper glyph rendering (e.g. ө, ү)
+    and preserve document font styles in Word, OneNote, and Notepad.
     Never touches Tkinter from background threads and never spawns clip.exe!
     """
     if not text or os.name != "nt":
         return
+    text = unicodedata.normalize("NFC", text)
     data = text.encode("utf-16-le") + b"\x00\x00"
     for _ in range(5):
         if user32.OpenClipboard(0):
@@ -2445,6 +2450,17 @@ def copy_to_windows_clipboard(text: str) -> None:
             finally:
                 user32.CloseClipboard()
         time.sleep(0.01)
+
+
+def inject_text_into_target_window(text: str, hwnd: int = 0) -> bool:
+    """
+    Safe text insertion into target window with Unicode NFC normalization.
+    Ensures Mongolian characters (ө, ү) are canonically composed and target application
+    (Word, OneNote, Notepad, Browser) fonts/styles are preserved.
+    """
+    if not text:
+        return False
+    return insert_text_to_active_window(unicodedata.normalize("NFC", text), hwnd)
 
 
 def restore_window_focus(target: int) -> bool:
@@ -2502,7 +2518,7 @@ def set_autostart_enabled(enabled: bool) -> bool:
                 start_bat = os.path.join(BASE_DIR, "Start-VOICE.bat")
                 if not os.path.exists(start_bat):
                     start_bat = os.path.expandvars(r"%LOCALAPPDATA%\VOICE-App\Start-VOICE.bat")
-                cmd = f'"{start_bat}"'
+                cmd = f'"{start_bat}" --background'
                 winreg.SetValueEx(key, "VOICE", 0, winreg.REG_SZ, cmd)
                 logger.info("[Autostart] Enabled in HKCU Run: %s", cmd)
             else:
@@ -2545,15 +2561,62 @@ def _start_tray_icon() -> None:
             draw = ImageDraw.Draw(img)
             draw.ellipse((4, 4, 60, 60), fill=(99, 102, 241), outline=(129, 140, 248), width=3)
 
-        def on_show_flowbar(icon, item):
-            _flowbar_cmds.put(("show",))
-            ensure_flowbar_ui()
+        def on_open_dashboard(icon, item):
+            _open_browser_window()
+
+        def on_toggle_flowbar(icon, item):
+            cur = bool(FLOWBAR_STATE.get("visible", True))
+            FLOWBAR_STATE["visible"] = not cur
+            if FLOWBAR_STATE["visible"]:
+                ensure_flowbar_ui()
+                _flowbar_cmds.put(("show",))
+            else:
+                _flowbar_cmds.put(("hide",))
 
         def on_reset_pos(icon, item):
             reset_flowbar_position()
 
-        def on_open_dashboard(icon, item):
-            _open_browser_window()
+        def on_set_lang(lang_code):
+            def _handler(icon, item):
+                FLOWBAR_STATE["language"] = lang_code
+                save_server_settings({"language": lang_code})
+                SERVER_SETTINGS["language"] = lang_code
+                logger.info("[Tray] Language switched to: %s", lang_code)
+            return _handler
+
+        def on_toggle_pause(icon, item):
+            cur = FLOWBAR_STATE.get("is_paused", False)
+            FLOWBAR_STATE["is_paused"] = not cur
+            if FLOWBAR_STATE["is_paused"]:
+                if _is_recording:
+                    stop_native_flowbar_recording()
+                FLOWBAR_STATE["status"] = "idle"
+            logger.info("[Tray] Dictation is_paused=%s", FLOWBAR_STATE["is_paused"])
+
+        def on_check_update(icon, item):
+            def _check():
+                try:
+                    import auto_updater
+                    info = auto_updater.check_github_release(current_version=APP_VERSION)
+                    if info.get("has_update"):
+                        msg = f"Шинэ хувилбар v{info.get('latest_version')} бэлэн боллоо!\nХувилбарын хуудсыг нээж татаж авах боломжтой."
+                        try:
+                            if hasattr(icon, "notify"):
+                                icon.notify(msg, "VOICE Шинэчлэл")
+                        except Exception:
+                            pass
+                        import webbrowser
+                        if info.get("html_url"):
+                            webbrowser.open(info["html_url"])
+                    else:
+                        try:
+                            if hasattr(icon, "notify"):
+                                icon.notify(f"Та хамгийн сүүлийн үеийн (v{APP_VERSION}) хувилбарыг ашиглаж байна.", "VOICE")
+                        except Exception:
+                            pass
+                except Exception as e:
+                    logger.warning("[Tray] Update check failed: %s", e)
+            threading.Thread(target=_check, daemon=True).start()
 
         def on_toggle_autostart(icon, item):
             cur = is_autostart_enabled()
@@ -2564,18 +2627,48 @@ def _start_tray_icon() -> None:
             threading.Thread(target=lambda: (time.sleep(0.3), os._exit(0))).start()
 
         menu = pystray.Menu(
-            pystray.MenuItem("Show FlowBar", on_show_flowbar, default=True),
-            pystray.MenuItem("Reset position", on_reset_pos),
-            pystray.MenuItem("Open dashboard", on_open_dashboard),
+            pystray.MenuItem("VOICE нээх", on_open_dashboard, default=True),
+            pystray.MenuItem("FlowBar харуулах / нуух", on_toggle_flowbar),
+            pystray.MenuItem("Байрлал шинэчлэх", on_reset_pos),
             pystray.Menu.SEPARATOR,
-            pystray.MenuItem("Start with Windows", on_toggle_autostart, checked=lambda item: is_autostart_enabled()),
+            pystray.MenuItem(
+                "Хэл сонгох (Language)",
+                pystray.Menu(
+                    pystray.MenuItem(
+                        "Монгол хэл (MN)",
+                        on_set_lang("mn"),
+                        checked=lambda item: FLOWBAR_STATE.get("language") == "mn",
+                        radio=True,
+                    ),
+                    pystray.MenuItem(
+                        "English (EN)",
+                        on_set_lang("en"),
+                        checked=lambda item: FLOWBAR_STATE.get("language") == "en",
+                        radio=True,
+                    ),
+                    pystray.MenuItem(
+                        "Автомат (Auto)",
+                        on_set_lang("auto"),
+                        checked=lambda item: FLOWBAR_STATE.get("language") not in ("mn", "en"),
+                        radio=True,
+                    ),
+                ),
+            ),
+            pystray.MenuItem(
+                "Дуугаар бичихийг түр зогсоох (Pause)",
+                on_toggle_pause,
+                checked=lambda item: FLOWBAR_STATE.get("is_paused", False),
+            ),
             pystray.Menu.SEPARATOR,
-            pystray.MenuItem("Quit VOICE", on_quit),
+            pystray.MenuItem("Шинэ хувилбар шалгах", on_check_update),
+            pystray.MenuItem("Windows-той хамт эхлэх", on_toggle_autostart, checked=lambda item: is_autostart_enabled()),
+            pystray.Menu.SEPARATOR,
+            pystray.MenuItem("Гарах (Quit VOICE)", on_quit),
         )
 
-        _tray_icon = pystray.Icon("VOICE", img, "VOICE - Speech & FlowBar", menu=menu)
+        _tray_icon = pystray.Icon("VOICE", img, f"VOICE v{APP_VERSION} - Speech & FlowBar", menu=menu)
         _TRAY_AVAILABLE = True
-        logger.info("[Tray] System tray icon running")
+        logger.info("[Tray] System tray icon running (v%s)", APP_VERSION)
         _tray_icon.run()
     except Exception as e:
         logger.warning("[Tray] System tray error: %s", e)
@@ -2584,13 +2677,15 @@ def insert_text_to_active_window(text: str, hwnd: int = 0) -> bool:
     """
     Ultra-reliable text insertion for Windows:
     1. Backs up user's existing clipboard text.
-    2. Puts new recognized text onto clipboard.
+    2. Puts new recognized text onto clipboard with Unicode NFC normalization.
     3. Restores focus to target window (Word, Chrome, Notepad, Messenger...).
     4. Releases modifier keys and sends Ctrl+V paste with hardware scan codes so Chrome/Word reliably receive it.
     5. Restores original clipboard text after 1.2s delay so the app has time to paste.
     """
     if not text or os.name != "nt":
         return False
+
+    text = unicodedata.normalize("NFC", text)
 
     old_clip = get_windows_clipboard_text()
     text_with_space = text if text.endswith(("\n", "\r\n", " ")) else text + " "
@@ -2736,6 +2831,10 @@ def trigger_undo_insert() -> bool:
 def start_native_flowbar_recording(from_ui_button: bool = False) -> None:
     global _is_recording, _target_hwnd, _record_start_time, _last_speech_time, _has_spoken, _speech_frames_count
     if _is_recording or FLOWBAR_STATE["status"] == "processing":
+        return
+
+    if FLOWBAR_STATE.get("is_paused", False):
+        logger.info("[FlowBar] Recording ignored because dictation is paused.")
         return
 
     if not FLOWBAR_STATE.get("mic_ok", True):
@@ -3367,7 +3466,8 @@ _bg_started = False
 
 def _open_browser_window() -> None:
     """Auto-launch the desktop dashboard in Edge/Chrome app mode once the server is listening."""
-    if os.environ.get("VOICE_NO_BROWSER"):
+    if os.environ.get("VOICE_NO_BROWSER") or "--background" in sys.argv or "-b" in sys.argv:
+        logger.info("[Browser] Skipping browser auto-launch due to background mode.")
         return
     time.sleep(1.0)
     url = f"http://127.0.0.1:{SERVER_PORT}/dashboard"
@@ -3576,7 +3676,34 @@ def flowbar_action(req: FlowBarActionRequest):
         FLOWBAR_STATE["language"] = req.language
     elif act == "reset_position":
         reset_flowbar_position()
+    elif act == "pause":
+        FLOWBAR_STATE["is_paused"] = True
+        if _is_recording:
+            stop_native_flowbar_recording()
+        FLOWBAR_STATE["status"] = "idle"
+    elif act == "resume":
+        FLOWBAR_STATE["is_paused"] = False
     return get_flowbar_status()
+
+
+@app.get("/api/flowbar/state")
+def api_flowbar_state():
+    return get_flowbar_status()
+
+
+@app.post("/api/flowbar/pause")
+def api_flowbar_pause():
+    FLOWBAR_STATE["is_paused"] = True
+    if _is_recording:
+        stop_native_flowbar_recording()
+    FLOWBAR_STATE["status"] = "idle"
+    return {"status": "ok", "is_paused": True}
+
+
+@app.post("/api/flowbar/resume")
+def api_flowbar_resume():
+    FLOWBAR_STATE["is_paused"] = False
+    return {"status": "ok", "is_paused": False}
 
 
 @app.post("/insert-text")
@@ -4664,26 +4791,12 @@ def serve_app_page(request: Request):
     raise HTTPException(status_code=404, detail="Page not found")
 
 @app.get("/api/check-update")
+@app.get("/api/update/check")
 def check_for_updates():
-    """Non-blocking release update checker from GitHub Releases."""
+    """Non-blocking release update checker from GitHub Releases using semver."""
     try:
-        import urllib.request
-        req = urllib.request.Request(
-            "https://api.github.com/repos/AriukagiinTuvshoo/voice-app/releases/latest",
-            headers={"User-Agent": "VOICE-Desktop-App"}
-        )
-        with urllib.request.urlopen(req, timeout=2.5) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-            tag = data.get("tag_name", "").lstrip("v")
-            current = APP_VERSION.lstrip("v")
-            has_update = bool(tag and tag != current)
-            return {
-                "current_version": APP_VERSION,
-                "latest_version": tag or APP_VERSION,
-                "has_update": has_update,
-                "html_url": data.get("html_url", ""),
-                "name": data.get("name", ""),
-            }
+        import auto_updater
+        return auto_updater.check_github_release(current_version=APP_VERSION)
     except Exception as e:
         return {
             "current_version": APP_VERSION,
@@ -4691,6 +4804,42 @@ def check_for_updates():
             "has_update": False,
             "error": str(e),
         }
+
+
+class UpdateDownloadRequest(BaseModel):
+    download_url: str
+    expected_sha256: Optional[str] = None
+
+
+@app.post("/api/update/download")
+def api_update_download(req: UpdateDownloadRequest):
+    """Download verified installer to temporary directory."""
+    import auto_updater
+    try:
+        path = auto_updater.download_and_verify_installer(
+            req.download_url,
+            expected_sha256=req.expected_sha256,
+        )
+        return {"status": "ok", "installer_path": path}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+class UpdateInstallRequest(BaseModel):
+    installer_path: str
+
+
+@app.post("/api/update/install")
+def api_update_install(req: UpdateInstallRequest):
+    """Launch verified installer and shut down current instance."""
+    import auto_updater
+    if not os.path.isfile(req.installer_path):
+        raise HTTPException(status_code=404, detail="Installer file not found")
+    threading.Thread(
+        target=lambda: auto_updater.launch_installer_and_exit(req.installer_path),
+        daemon=True,
+    ).start()
+    return {"status": "ok", "message": "Launching installer and exiting..."}
 
 try:
     from fastapi.staticfiles import StaticFiles

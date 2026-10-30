@@ -13,7 +13,7 @@ import subprocess
 from typing import Any, Optional, Tuple, Dict, Set
 
 # Version
-CORE_VERSION = "1.3.0"
+CORE_VERSION = "1.4.0"
 
 # Setting choices allowed by the engine
 SETTING_CHOICES: Dict[str, Set[str]] = {
