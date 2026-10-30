@@ -6,6 +6,9 @@ on:
   pull_request:
     branches: [ "main" ]
 
+permissions:
+  contents: write
+
 jobs:
   test:
     runs-on: ${{ matrix.os }}
@@ -17,6 +20,8 @@ jobs:
 
     steps:
     - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
 
     - name: Set up Python ${{ matrix.python-version }}
       uses: actions/setup-python@v5
@@ -47,12 +52,18 @@ jobs:
       run: |
         python -m unittest discover -s tests -p "test_*.py" -v 2>&1 | tee test_results.log
 
-    - name: Upload Test Results
-      if: always()
-      uses: actions/upload-artifact@v4
-      with:
-        name: test-results-${{ matrix.os }}-${{ matrix.python-version }}
-        path: test_results.log
+    - name: Push failure log to git
+      if: failure()
+      shell: bash
+      run: |
+        git config user.name "github-actions[bot]"
+        git config user.email "github-actions[bot]@users.noreply.github.com"
+        git fetch origin ci-debug-log:ci-debug-log || git checkout -b ci-debug-log
+        git checkout ci-debug-log
+        cp test_results.log "ci-failure-${{ matrix.os }}-${{ matrix.python-version }}.log"
+        git add "ci-failure-${{ matrix.os }}-${{ matrix.python-version }}.log"
+        git commit -m "ci: debug failure log for ${{ matrix.os }}-${{ matrix.python-version }}" || true
+        git push origin ci-debug-log || git push origin ci-debug-log --force || true
 
   frontend:
     runs-on: ubuntu-latest
