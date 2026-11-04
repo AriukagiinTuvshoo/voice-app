@@ -25,6 +25,8 @@ stdout.txt
 stderr.txt
 flowbar_pos.txt
 voice_settings.json
+session.json
+*.session.json
 
 # Audio and binaries
 *.wav
