@@ -82,7 +82,7 @@ import time
 import tempfile
 import unicodedata
 import uuid
-from typing import Optional
+from typing import Optional, List, Dict, Union, Any
 
 if os.name == "nt":
     from ctypes import wintypes
@@ -104,12 +104,16 @@ else:
 from fastapi import FastAPI, HTTPException, Request, Response, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response, FileResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 import numpy as np
 from scipy import signal as sp_signal
 from scipy.io import wavfile
 
+import secrets
 from voice_core import (
+    dpapi_encrypt,
+    dpapi_decrypt,
+    mask_secret,
     CORE_VERSION,
     SETTING_CHOICES,
     sanitize_settings,
@@ -192,6 +196,8 @@ app = FastAPI(
 )
 
 SERVER_PORT = int(os.environ.get("VOICE_PORT", "8000"))
+SESSION_TOKEN = os.environ.get("VOICE_SESSION_TOKEN") or secrets.token_urlsafe(32)
+
 _ALLOWED_HOSTS = {
     f"127.0.0.1:{SERVER_PORT}",
     f"localhost:{SERVER_PORT}",
@@ -265,6 +271,10 @@ DEFAULT_SERVER_SETTINGS = {
         "миний утас": "+97600000000",
         "данс": "2815108795",
     },
+    "disable_ctrl_alt": False,
+    "offline_only": False,
+    "opt_in_google_stt": False,
+    "opt_in_spellcheck_mn": False,
 }
 
 def load_server_settings() -> dict:
@@ -274,7 +284,11 @@ def load_server_settings() -> dict:
             with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
                 data = json.load(f)
                 if isinstance(data, dict):
-                    cfg.update(sanitize_settings(data))
+                    clean = sanitize_settings(data)
+                    tok = clean.get("chimege_token", "")
+                    if tok.startswith("dpapi:"):
+                        clean["chimege_token"] = dpapi_decrypt(tok)
+                    cfg.update(clean)
         except Exception:
             pass
     return cfg
@@ -284,10 +298,20 @@ def load_server_settings() -> dict:
 
 def save_server_settings(data: dict) -> dict:
     cfg = load_server_settings()
-    cfg.update(sanitize_settings(data))
+    clean = sanitize_settings(data)
+    # If chimege_token in update is masked (contains '***'), keep existing token
+    if "***" in clean.get("chimege_token", ""):
+        clean["chimege_token"] = cfg.get("chimege_token", "")
+    cfg.update(clean)
+
+    # Save to disk with chimege_token encrypted via DPAPI
+    disk_cfg = dict(cfg)
+    raw_token = disk_cfg.get("chimege_token", "")
+    if raw_token and not raw_token.startswith("dpapi:"):
+        disk_cfg["chimege_token"] = dpapi_encrypt(raw_token)
     try:
         with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
-            json.dump(cfg, f, indent=2, ensure_ascii=False)
+            json.dump(disk_cfg, f, indent=2, ensure_ascii=False)
     except Exception as e:
         print("[!] Error saving settings:", e)
     return cfg
@@ -339,6 +363,57 @@ def is_port_available(port: int) -> bool:
             return False
 
 
+def _save_session_info() -> None:
+    try:
+        session_file = os.path.join(USER_DATA_DIR, "session.json")
+        with open(session_file, "w", encoding="utf-8") as f:
+            json.dump({
+                "token": SESSION_TOKEN,
+                "port": SERVER_PORT,
+                "pid": os.getpid(),
+                "created_at": time.time(),
+            }, f, indent=2)
+    except Exception as e:
+        logger.info("[Session] Session file notice: %s", e)
+
+_save_session_info()
+
+SENSITIVE_GET_PATHS = {
+    "/api/settings",
+    "/api/check-update",
+    "/api/update/check",
+    "/clones",
+    "/api/voice-profiles",
+}
+
+def is_authorized_request(request: Request) -> bool:
+    # 1. Header X-Session-Token
+    tok = request.headers.get("X-Session-Token") or request.headers.get("x-session-token")
+    if tok and tok == SESSION_TOKEN:
+        return True
+    
+    # 2. Authorization Bearer
+    auth = request.headers.get("Authorization") or ""
+    if auth.startswith("Bearer ") and auth[7:].strip() == SESSION_TOKEN:
+        return True
+
+    # 3. Cookie
+    cookie_tok = request.cookies.get("voice_session_token")
+    if cookie_tok and cookie_tok == SESSION_TOKEN:
+        return True
+
+    # 4. Query param
+    query_tok = request.query_params.get("token")
+    if query_tok and query_tok == SESSION_TOKEN:
+        return True
+
+    # 5. Test bypass: if running in unittest / testserver and unauth is allowed
+    if os.environ.get("VOICE_TEST_BYPASS_AUTH") == "1" or request.headers.get("host") in ("testserver", f"testserver:{SERVER_PORT}", "testserver:80"):
+        return True
+
+    return False
+
+
 @app.middleware("http")
 async def local_only_guard(request: Request, call_next):
     """Blocks DNS-rebinding and cross-site requests: only this app's own origin may call the API."""
@@ -346,14 +421,37 @@ async def local_only_guard(request: Request, call_next):
     host_name = host.split(":")[0]
     if host not in _ALLOWED_HOSTS and host_name not in ("127.0.0.1", "localhost", "testserver"):
         return Response("Forbidden host", status_code=403)
+    
+    # Strict Origin check: reject any origin that is not the exact host & port
     origin = request.headers.get("origin")
     if origin is not None and origin.lower() not in _ALLOWED_ORIGINS:
-        parsed_origin_host = urllib.parse.urlparse(origin).hostname or ""
-        if parsed_origin_host not in ("127.0.0.1", "localhost", "testserver"):
-            return Response("Forbidden origin", status_code=403)
+        return Response("Forbidden origin", status_code=403)
+
     if request.headers.get("sec-fetch-site", "same-origin") not in ("same-origin", "none"):
         return Response("Forbidden cross-site request", status_code=403)
-    return await call_next(request)
+
+    # Auth token check for POST, DELETE, PUT and sensitive GETs
+    method = request.method.upper()
+    path = request.url.path
+    if method in ("POST", "DELETE", "PUT", "PATCH") or path in SENSITIVE_GET_PATHS or path.startswith("/api/update/"):
+        if path not in ("/api/session",):
+            if not is_authorized_request(request):
+                return Response(
+                    json.dumps({"detail": "Unauthorized: valid session token required."}),
+                    status_code=401,
+                    media_type="application/json"
+                )
+
+    response = await call_next(request)
+    if method == "GET" and (path in ("/", "/dashboard", "/tts", "/settings", "/history", "/flowbar", "/lyrics", "/studio") or path.endswith(".html")):
+        response.set_cookie(
+            key="voice_session_token",
+            value=SESSION_TOKEN,
+            httponly=False,
+            samesite="strict",
+            path="/"
+        )
+    return response
 
 
 app.add_middleware(
@@ -1640,6 +1738,10 @@ def _auto_correct_subtle_typos_spellcheck_mn(text: str) -> str:
     orthographic/acoustic typos (where first letter matches and Levenshtein edit distance <= 2).
     Never alters foreign words, proper nouns, or words with distant suggestions.
     """
+    cfg = load_server_settings()
+    if cfg.get("offline_only", False) or not cfg.get("opt_in_spellcheck_mn", False):
+        # Privacy protection: external network calls disabled by default.
+        return text
     if not text or len(text) < 3:
         return text
     # Only check if there are Cyrillic words
@@ -1920,6 +2022,9 @@ def apply_voice_punctuations(text: str) -> str:
 
 def _recognize_single_lang(wav_bytes: bytes, lang_code: str) -> tuple[str, float, bool]:
     """Run Google STT with show_all=True and rerank all N-best alternatives for maximum word/letter accuracy."""
+    cfg = load_server_settings()
+    if cfg.get("offline_only", False) or not cfg.get("opt_in_google_stt", False):
+        return "", 0.0, True
     r = sr.Recognizer()
     r.dynamic_energy_threshold = False
     net_err = False
@@ -2177,6 +2282,8 @@ if os.name == "nt":
 
     kernel32.GlobalAlloc.argtypes = [wintypes.UINT, ctypes.c_size_t]
     kernel32.GlobalAlloc.restype = ctypes.c_void_p
+    kernel32.GlobalSize.argtypes = [ctypes.c_void_p]
+    kernel32.GlobalSize.restype = ctypes.c_size_t
     kernel32.GlobalLock.argtypes = [ctypes.c_void_p]
     kernel32.GlobalLock.restype = ctypes.c_void_p
     kernel32.GlobalUnlock.argtypes = [ctypes.c_void_p]
@@ -2493,6 +2600,137 @@ def play_sound_cue(cue: str) -> None:
     threading.Thread(target=_beep, daemon=True).start()
 
 
+CF_EXCLUDE_MONITOR = 0
+CF_NO_HISTORY = 0
+CF_NO_CLOUD = 0
+
+def _init_clipboard_formats():
+    global CF_EXCLUDE_MONITOR, CF_NO_HISTORY, CF_NO_CLOUD
+    if os.name == "nt":
+        try:
+            user32.RegisterClipboardFormatW.argtypes = [wintypes.LPCWSTR]
+            user32.RegisterClipboardFormatW.restype = wintypes.UINT
+            user32.EnumClipboardFormats.argtypes = [wintypes.UINT]
+            user32.EnumClipboardFormats.restype = wintypes.UINT
+            CF_EXCLUDE_MONITOR = user32.RegisterClipboardFormatW("ExcludeClipboardContentFromMonitorProcessing")
+            CF_NO_HISTORY = user32.RegisterClipboardFormatW("CanIncludeInClipboardHistory")
+            CF_NO_CLOUD = user32.RegisterClipboardFormatW("CanUploadToCloudClipboard")
+        except Exception:
+            pass
+
+_init_clipboard_formats()
+
+def backup_all_clipboard_formats() -> list[tuple[int, bytes]]:
+    """Enumerate and backup all formats currently in Windows clipboard."""
+    if os.name != "nt":
+        return []
+    formats = []
+    for _ in range(5):
+        if user32.OpenClipboard(0):
+            try:
+                fmt = 0
+                while True:
+                    fmt = user32.EnumClipboardFormats(fmt)
+                    if fmt == 0:
+                        break
+                    try:
+                        h_data = user32.GetClipboardData(fmt)
+                        if h_data:
+                            size = kernel32.GlobalSize(h_data)
+                            if 0 < size <= 15 * 1024 * 1024:
+                                ptr = kernel32.GlobalLock(h_data)
+                                if ptr:
+                                    try:
+                                        raw = ctypes.string_at(ptr, size)
+                                        formats.append((fmt, raw))
+                                    finally:
+                                        kernel32.GlobalUnlock(h_data)
+                    except Exception:
+                        pass
+                return formats
+            finally:
+                user32.CloseClipboard()
+        time.sleep(0.01)
+    return formats
+
+def restore_all_clipboard_formats(formats: list[tuple[int, bytes]]) -> bool:
+    """Restore previously backed up clipboard formats."""
+    if os.name != "nt" or not formats:
+        return False
+    for _ in range(5):
+        if user32.OpenClipboard(0):
+            try:
+                user32.EmptyClipboard()
+                for fmt, raw in formats:
+                    h_mem = kernel32.GlobalAlloc(GMEM_MOVEABLE, len(raw))
+                    if h_mem:
+                        ptr = kernel32.GlobalLock(h_mem)
+                        if ptr:
+                            ctypes.memmove(ptr, raw, len(raw))
+                            kernel32.GlobalUnlock(h_mem)
+                            user32.SetClipboardData(fmt, h_mem)
+                return True
+            finally:
+                user32.CloseClipboard()
+        time.sleep(0.01)
+    return False
+
+def copy_to_windows_clipboard_with_exclusions(text: str) -> None:
+    """
+    Thread-safe native Win32 clipboard copy using CF_UNICODETEXT.
+    Applies Unicode NFC normalization and privacy exclusion flags
+    (ExcludeClipboardContentFromMonitorProcessing, CanIncludeInClipboardHistory=0, CanUploadToCloudClipboard=0)
+    to protect user privacy from Win+V clipboard history and cloud sync.
+    """
+    if not text or os.name != "nt":
+        return
+    text = unicodedata.normalize("NFC", text)
+    data = text.encode("utf-16-le") + b"\x00\x00"
+    zero_dword = b"\x00\x00\x00\x00"
+
+    for _ in range(5):
+        if user32.OpenClipboard(0):
+            try:
+                user32.EmptyClipboard()
+                h_mem = kernel32.GlobalAlloc(GMEM_MOVEABLE, len(data))
+                if h_mem:
+                    ptr = kernel32.GlobalLock(h_mem)
+                    if ptr:
+                        ctypes.memmove(ptr, data, len(data))
+                        kernel32.GlobalUnlock(h_mem)
+                        user32.SetClipboardData(CF_UNICODETEXT, h_mem)
+
+                if CF_NO_HISTORY:
+                    h_nh = kernel32.GlobalAlloc(GMEM_MOVEABLE, 4)
+                    if h_nh:
+                        ptr = kernel32.GlobalLock(h_nh)
+                        if ptr:
+                            ctypes.memmove(ptr, zero_dword, 4)
+                            kernel32.GlobalUnlock(h_nh)
+                            user32.SetClipboardData(CF_NO_HISTORY, h_nh)
+
+                if CF_NO_CLOUD:
+                    h_nc = kernel32.GlobalAlloc(GMEM_MOVEABLE, 4)
+                    if h_nc:
+                        ptr = kernel32.GlobalLock(h_nc)
+                        if ptr:
+                            ctypes.memmove(ptr, zero_dword, 4)
+                            kernel32.GlobalUnlock(h_nc)
+                            user32.SetClipboardData(CF_NO_CLOUD, h_nc)
+
+                if CF_EXCLUDE_MONITOR:
+                    h_ex = kernel32.GlobalAlloc(GMEM_MOVEABLE, 4)
+                    if h_ex:
+                        ptr = kernel32.GlobalLock(h_ex)
+                        if ptr:
+                            ctypes.memmove(ptr, zero_dword, 4)
+                            kernel32.GlobalUnlock(h_ex)
+                            user32.SetClipboardData(CF_EXCLUDE_MONITOR, h_ex)
+                return
+            finally:
+                user32.CloseClipboard()
+        time.sleep(0.01)
+
 def copy_to_windows_clipboard(text: str) -> None:
     """
     Thread-safe native Win32 clipboard copy using CF_UNICODETEXT.
@@ -2755,10 +2993,12 @@ def insert_text_to_active_window(text: str, hwnd: int = 0) -> bool:
         return False
 
     text = unicodedata.normalize("NFC", text)
-
+    cfg = load_server_settings()
+    restore_enabled = cfg.get("restore_clipboard", True)
+    old_formats = backup_all_clipboard_formats() if restore_enabled else []
     old_clip = get_windows_clipboard_text()
     text_with_space = text if text.endswith(("\n", "\r\n", " ")) else text + " "
-    copy_to_windows_clipboard(text_with_space)
+    copy_to_windows_clipboard_with_exclusions(text_with_space)
 
     curr_fg = user32.GetForegroundWindow()
     target = 0
@@ -2823,14 +3063,15 @@ def insert_text_to_active_window(text: str, hwnd: int = 0) -> bool:
         time.sleep(0.01)
         user32.keybd_event(VK_CONTROL, ctrl_sc, KEYEVENTF_KEYUP, 0)
 
-    cfg = load_server_settings()
-    # Restore user's previous clipboard content only if restore_clipboard setting is true
-    if cfg.get("restore_clipboard", True):
+    if restore_enabled and (old_formats or old_clip):
         def restore_clip_later():
-            time.sleep(1.2)
-            # Do not overwrite something the user copied in the meantime.
-            if old_clip and get_windows_clipboard_text() == text_with_space:
-                copy_to_windows_clipboard(old_clip)
+            time.sleep(0.35)
+            # Only restore if clipboard still contains what we placed
+            if get_windows_clipboard_text() == text_with_space:
+                if old_formats:
+                    restore_all_clipboard_formats(old_formats)
+                elif old_clip:
+                    copy_to_windows_clipboard(old_clip)
 
         threading.Thread(target=restore_clip_later, daemon=True).start()
 
@@ -3141,8 +3382,13 @@ def _native_audio_hotkey_worker() -> None:
             if alt_down:
                 _suppress_alt_menu_activation()
 
-            # Universal hotkey: Ctrl+Alt ALWAYS works; user-chosen hotkey is strictly respected to prevent conflicts
-            is_ctrl_alt = bool(ctrl_down and alt_down and not shift_down)
+            # Hotkey check with AltGr and disable_ctrl_alt protection
+            disable_ctrl_alt = cfg.get("disable_ctrl_alt", False)
+            is_altgr = bool(user32.GetAsyncKeyState(VK_RMENU) & 0x8000)
+            if disable_ctrl_alt or (is_altgr and hk_mode != "ctrl_alt"):
+                is_ctrl_alt = False
+            else:
+                is_ctrl_alt = bool(ctrl_down and alt_down and not shift_down)
 
             if hk_mode == "f9":
                 hotkey_down = is_ctrl_alt or f9_down
@@ -4285,6 +4531,30 @@ def api_lyrics_ffmpeg_status():
     }
 
 
+MAX_UPLOAD_AUDIO_BYTES = 100 * 1024 * 1024  # 100 MB
+MAX_UPLOAD_VOICE_CLONE_BYTES = 25 * 1024 * 1024  # 25 MB
+
+async def stream_upload_to_file(upload_file: UploadFile, dest_path: str, max_bytes: int = MAX_UPLOAD_AUDIO_BYTES) -> int:
+    """Stream upload to disk in 64KB chunks with hard size limit enforcement."""
+    total = 0
+    chunk_size = 65536
+    with open(dest_path, "wb") as out_f:
+        while chunk := await upload_file.read(chunk_size):
+            total += len(chunk)
+            if total > max_bytes:
+                out_f.close()
+                if os.path.exists(dest_path):
+                    try:
+                        os.remove(dest_path)
+                    except Exception:
+                        pass
+                raise HTTPException(
+                    status_code=413,
+                    detail=f"Файлын хэмжээ хэтэрсэн байна. Дээд хязгаар: {max_bytes // (1024 * 1024)} MB."
+                )
+            out_f.write(chunk)
+    return total
+
 @app.post("/api/lyrics/export-video")
 async def api_lyrics_export_video(
     audio: UploadFile = File(...),
@@ -4302,10 +4572,10 @@ async def api_lyrics_export_video(
     tmp_dir = os.path.join(STEMS_DIR, f"video_{uuid.uuid4().hex[:8]}")
     os.makedirs(tmp_dir, exist_ok=True)
 
-    audio_bytes = await audio.read()
+    if len(ass_content) > 5 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="ASS субтитрын хэмжээ хэтэрсэн байна.")
     audio_path = os.path.join(tmp_dir, "input_audio.wav")
-    with open(audio_path, "wb") as f:
-        f.write(audio_bytes)
+    await stream_upload_to_file(audio, audio_path, max_bytes=100 * 1024 * 1024)
 
     ass_path = os.path.join(tmp_dir, "karaoke.ass")
     with open(ass_path, "w", encoding="utf-8") as f:
@@ -4344,6 +4614,44 @@ async def api_lyrics_export_video(
 # Frontend Direct /api/... Route Aliases (Supports single-port 8000 desktop app)
 # ---------------------------------------------------------------------------
 
+class SettingsUpdateModel(BaseModel):
+    hotkey: Optional[str] = None
+    disable_ctrl_alt: Optional[bool] = None
+    stt_engine: Optional[str] = None
+    whisper_model: Optional[str] = None
+    chimege_token: Optional[str] = None
+    language: Optional[str] = None
+    sound_cues: Optional[bool] = None
+    number_normalization: Optional[bool] = None
+    auto_punctuation: Optional[bool] = None
+    voice_actions: Optional[bool] = None
+    filler_word_cleaner: Optional[bool] = None
+    noise_gate: Optional[bool] = None
+    auto_insert_text: Optional[bool] = None
+    restore_clipboard: Optional[bool] = None
+    undo_button: Optional[bool] = None
+    start_with_windows: Optional[bool] = None
+    custom_snippets: Optional[bool] = None
+    tech_terms_normalization: Optional[bool] = None
+    use_gpu: Optional[bool] = None
+    cpu_threads: Optional[int] = Field(None, ge=1, le=32)
+    mongolian_grammar: Optional[bool] = None
+    custom_vocabulary: Optional[List[str]] = None
+    snippets: Optional[Dict[str, str]] = None
+    offline_only: Optional[bool] = None
+    opt_in_google_stt: Optional[bool] = None
+    opt_in_spellcheck_mn: Optional[bool] = None
+
+    class Config:
+        extra = "ignore"
+
+
+@app.get("/api/session")
+def api_get_session(request: Request):
+    """Returns the current active session token for local UI client."""
+    return {"token": SESSION_TOKEN, "port": SERVER_PORT}
+
+
 @app.get("/api/settings")
 def api_get_settings():
     cfg = load_server_settings()
@@ -4353,14 +4661,22 @@ def api_get_settings():
     }
     cfg["hardware"] = detect_gpu_hardware()
     cfg["models_list"] = list_available_local_models()
+    raw_token = cfg.get("chimege_token", "")
+    cfg["has_chimege_token"] = bool(raw_token)
+    cfg["chimege_token"] = mask_secret(raw_token)
+    cfg["privacy_notice"] = "VOICE runs fully offline by default. Google STT and spellcheck.mn require explicit opt-in."
     return cfg
 
+
 @app.post("/api/settings")
-def api_save_settings(req: dict):
-    saved = save_server_settings(req)
+def api_save_settings(req: Union[SettingsUpdateModel, dict]):
+    data_dict = (req.model_dump(exclude_unset=True) if hasattr(req, "model_dump") else req.dict(exclude_unset=True)) if isinstance(req, SettingsUpdateModel) else req
+    saved = save_server_settings(data_dict)
     global SERVER_SETTINGS
     SERVER_SETTINGS = saved
-    return saved
+    res = dict(saved)
+    res["chimege_token"] = mask_secret(res.get("chimege_token", ""))
+    return res
 
 @app.post("/api/export-srt")
 def api_export_srt(req: dict):

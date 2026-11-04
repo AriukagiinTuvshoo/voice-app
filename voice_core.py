@@ -74,6 +74,10 @@ BOOLEAN_SETTINGS: Set[str] = {
     "tech_terms_normalization",
     "use_gpu",
     "mongolian_grammar",
+    "disable_ctrl_alt",
+    "offline_only",
+    "opt_in_google_stt",
+    "opt_in_spellcheck_mn",
 }
 
 VOICE_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
@@ -121,6 +125,84 @@ MN_PHONE_PREFIXES: Set[str] = {
     "70", "75", "77",
 }
 
+
+
+def dpapi_encrypt(plaintext: str) -> str:
+    """Encrypt a string using Windows DPAPI (CryptProtectData). Returns 'dpapi:<base64>'."""
+    if not plaintext:
+        return ""
+    if os.name != "nt":
+        return plaintext
+    try:
+        import ctypes
+        from ctypes import wintypes
+        import base64
+
+        class DATA_BLOB(ctypes.Structure):
+            _fields_ = [
+                ("cbData", wintypes.DWORD),
+                ("pbData", ctypes.POINTER(ctypes.c_char)),
+            ]
+
+        crypt32 = ctypes.windll.crypt32
+        kernel32 = ctypes.windll.kernel32
+
+        data = plaintext.encode("utf-8")
+        in_blob = DATA_BLOB(len(data), ctypes.cast(ctypes.create_string_buffer(data), ctypes.POINTER(ctypes.c_char)))
+        out_blob = DATA_BLOB()
+        if not crypt32.CryptProtectData(ctypes.byref(in_blob), "voice_secret", None, None, None, 0, ctypes.byref(out_blob)):
+            return plaintext
+        encrypted_bytes = ctypes.string_at(out_blob.pbData, out_blob.cbData)
+        kernel32.LocalFree(out_blob.pbData)
+        return "dpapi:" + base64.b64encode(encrypted_bytes).decode("ascii")
+    except Exception:
+        return plaintext
+
+
+def dpapi_decrypt(ciphertext: str) -> str:
+    """Decrypt a string encrypted with dpapi_encrypt. If not starting with 'dpapi:', returns as-is."""
+    if not ciphertext or not isinstance(ciphertext, str):
+        return ""
+    if not ciphertext.startswith("dpapi:"):
+        return ciphertext
+    if os.name != "nt":
+        return ciphertext[6:]
+    try:
+        import ctypes
+        from ctypes import wintypes
+        import base64
+
+        class DATA_BLOB(ctypes.Structure):
+            _fields_ = [
+                ("cbData", wintypes.DWORD),
+                ("pbData", ctypes.POINTER(ctypes.c_char)),
+            ]
+
+        crypt32 = ctypes.windll.crypt32
+        kernel32 = ctypes.windll.kernel32
+
+        b64_str = ciphertext[6:]
+        raw = base64.b64decode(b64_str.encode("ascii"))
+        in_blob = DATA_BLOB(len(raw), ctypes.cast(ctypes.create_string_buffer(raw), ctypes.POINTER(ctypes.c_char)))
+        out_blob = DATA_BLOB()
+        if not crypt32.CryptUnprotectData(ctypes.byref(in_blob), None, None, None, None, 0, ctypes.byref(out_blob)):
+            return ""
+        decrypted_bytes = ctypes.string_at(out_blob.pbData, out_blob.cbData)
+        kernel32.LocalFree(out_blob.pbData)
+        return decrypted_bytes.decode("utf-8")
+    except Exception:
+        return ""
+
+
+def mask_secret(secret: str) -> str:
+    """Mask a secret token for API responses (e.g. 'chim***1234' or '***')."""
+    if not secret or not isinstance(secret, str):
+        return ""
+    if "***" in secret:
+        return secret
+    if len(secret) <= 8:
+        return "***"
+    return f"{secret[:4]}***{secret[-4:]}"
 
 def sanitize_settings(data: Any) -> Dict[str, Any]:
     """

@@ -258,6 +258,78 @@ def check_github_release(
         }
 
 
+
+def verify_authenticode_signature(file_path: str) -> Dict[str, Any]:
+    """
+    Verify Authenticode digital signature on Windows using WinVerifyTrust.
+    Returns: {"signed": bool, "valid": bool, "status_code": int, "error": str}
+    """
+    if os.name != "nt":
+        return {"signed": False, "valid": False, "status_code": -1, "error": "Not Windows"}
+    if not os.path.isfile(file_path):
+        return {"signed": False, "valid": False, "status_code": -1, "error": "File not found"}
+
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        class GUID(ctypes.Structure):
+            _fields_ = [
+                ("Data1", wintypes.DWORD),
+                ("Data2", wintypes.WORD),
+                ("Data3", wintypes.WORD),
+                ("Data4", ctypes.c_byte * 8),
+            ]
+
+        action = GUID(
+            0x00AAC56B, 0xCD44, 0x11D0,
+            (ctypes.c_byte * 8)(0x8C, 0xC2, 0x00, 0xC0, 0x4F, 0xC2, 0x95, 0xEE)
+        )
+
+        class WINTRUST_FILE_INFO(ctypes.Structure):
+            _fields_ = [
+                ("cbStruct", wintypes.DWORD),
+                ("pcwszFilePath", wintypes.LPCWSTR),
+                ("hFile", wintypes.HANDLE),
+                ("pgKnownSubject", ctypes.c_void_p),
+            ]
+
+        class WINTRUST_DATA(ctypes.Structure):
+            _fields_ = [
+                ("cbStruct", wintypes.DWORD),
+                ("pPolicyCallbackData", ctypes.c_void_p),
+                ("pSIPClientData", ctypes.c_void_p),
+                ("dwUIChoice", wintypes.DWORD),
+                ("fdwRevocationChecks", wintypes.DWORD),
+                ("dwUnionChoice", wintypes.DWORD),
+                ("pFile", ctypes.POINTER(WINTRUST_FILE_INFO)),
+                ("dwStateAction", wintypes.DWORD),
+                ("hWVTStateData", wintypes.HANDLE),
+                ("pwszURLReference", wintypes.LPCWSTR),
+                ("dwProvFlags", wintypes.DWORD),
+                ("dwUIContext", wintypes.DWORD),
+                ("pSignatureSettings", ctypes.c_void_p),
+            ]
+
+        fi = WINTRUST_FILE_INFO(ctypes.sizeof(WINTRUST_FILE_INFO), file_path, None, None)
+        td = WINTRUST_DATA(
+            ctypes.sizeof(WINTRUST_DATA), None, None, 2, 0, 1, ctypes.pointer(fi),
+            0, None, None, 0x00000040, 0, None
+        )
+        status = ctypes.windll.wintrust.WinVerifyTrust(0, ctypes.byref(action), ctypes.byref(td))
+        # 0 = ERROR_SUCCESS
+        # 0x800b0100 = TRUST_E_NOSIGNATURE
+        is_valid = (status == 0)
+        is_signed = (status != 0x800B0100 and status != -2146762496)
+        return {
+            "signed": is_signed,
+            "valid": is_valid,
+            "status_code": status,
+            "error": "" if is_valid else f"WinVerifyTrust code: {hex(status & 0xFFFFFFFF)}"
+        }
+    except Exception as e:
+        return {"signed": False, "valid": False, "status_code": -1, "error": str(e)}
+
 def download_and_verify_installer(
     download_url: str,
     expected_sha256: str,
