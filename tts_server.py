@@ -4935,6 +4935,21 @@ except Exception as e:
 
 
 if __name__ == "__main__":
+    if "--diagnose" in sys.argv:
+        try:
+            import diagnose_flowbar
+            out_arg = None
+            if "--output" in sys.argv:
+                idx = sys.argv.index("--output")
+                if idx + 1 < len(sys.argv):
+                    out_arg = sys.argv[idx + 1]
+            no_gui_arg = "--no-gui" in sys.argv or os.environ.get("VOICE_DIAGNOSE_NO_GUI") == "1"
+            diagnose_flowbar.run_diagnostics(no_gui=no_gui_arg, output_file=out_arg)
+        except Exception as diag_err:
+            print(f"[!] Error running diagnostics: {diag_err}")
+            sys.exit(1)
+        sys.exit(0)
+
     if not check_single_instance(SERVER_PORT):
         sys.exit(0)
 

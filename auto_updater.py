@@ -155,11 +155,26 @@ def fetch_checksums_map(checksums_url: str, timeout_sec: float = 4.0) -> Dict[st
         return {}
 
 
+def _get_default_version() -> str:
+    v_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "VERSION")
+    if os.path.isfile(v_file):
+        try:
+            with open(v_file, "r", encoding="utf-8") as f:
+                v = f.read().strip()
+                if v:
+                    return v
+        except Exception:
+            pass
+    return "1.4.3"
+
+
 def check_github_release(
     repo: str = "AriukagiinTuvshoo/voice-app",
-    current_version: str = "1.4.1",
+    current_version: Optional[str] = None,
     timeout_sec: float = 4.0,
 ) -> Dict[str, Any]:
+    if current_version is None:
+        current_version = _get_default_version()
     """
     Query GitHub API for latest release metadata.
     Extracts assets, parses SHA256SUMS.txt, and sets expected_sha256.

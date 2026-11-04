@@ -13,7 +13,19 @@ import subprocess
 from typing import Any, Optional, Tuple, Dict, Set
 
 # Version
-CORE_VERSION = "1.4.3"
+def _load_core_version() -> str:
+    v_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "VERSION")
+    if os.path.isfile(v_file):
+        try:
+            with open(v_file, "r", encoding="utf-8") as f:
+                v = f.read().strip()
+                if v:
+                    return v
+        except Exception:
+            pass
+    return "1.4.3"
+
+CORE_VERSION = _load_core_version()
 
 # Canonical Windows Paths
 CANONICAL_APP_DIR = os.path.expandvars(r"%LOCALAPPDATA%\Programs\VOICE") if os.name == "nt" else os.path.expanduser("~/.local/share/voice")

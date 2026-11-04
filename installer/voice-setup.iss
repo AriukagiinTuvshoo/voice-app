@@ -2,7 +2,9 @@
 ; Stage 5 Production Installer
 
 #define MyAppName "VOICE"
+#ifndef MyAppVersion
 #define MyAppVersion "1.4.3"
+#endif
 #define MyAppPublisher "AriukagiinTuvshoo"
 #define MyAppURL "https://github.com/AriukagiinTuvshoo/voice-app"
 #define MyAppExeName "Start-VOICE.bat"
@@ -61,6 +63,7 @@ Source: "..\Start-VOICE.bat"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\Install-VOICE.bat"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\Uninstall-VOICE.bat"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\Diagnose-VOICE.bat"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\diagnose_flowbar.py"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\make-shortcut.ps1"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\README.md"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\LICENSE"; DestDir: "{app}"; Flags: ignoreversion

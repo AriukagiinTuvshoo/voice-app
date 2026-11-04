@@ -64,7 +64,8 @@ jobs:
               $iscc = (Get-Command iscc.exe -ErrorAction SilentlyContinue).Source
           }
           Write-Host "Using Inno Setup compiler: $iscc"
-          & $iscc installer\voice-setup.iss
+          $version = (Get-Content VERSION).Trim()
+          & $iscc /DMyAppVersion=$version installer\voice-setup.iss
           Get-ChildItem -Path "dist"
 
       - name: Prepare Portable Zip Release Package
@@ -80,6 +81,7 @@ jobs:
             "Install-VOICE.bat", "Start-VOICE.bat", "Uninstall-VOICE.bat", "Diagnose-VOICE.bat",
             "make-shortcut.ps1", "tts_server.py", "voice_core.py", "mongolian_grammar.py",
             "voice_cloning.py", "audio_separator.py", "karaoke_ass.py", "auto_updater.py",
+            "diagnose_flowbar.py",
             "requirements.txt", "requirements-tray.txt", "requirements-offline.txt",
             "VERSION", "README.md", "LICENSE"
           )
@@ -92,12 +94,11 @@ jobs:
           if (Test-Path "tools") { Copy-Item -Path "tools" -Destination $distDir -Recurse }
           if (Test-Path "runtime") { Copy-Item -Path "runtime" -Destination $distDir -Recurse }
 
-          # Compress to zip using .NET ZipFile
+          # Compress to zip using Python zipfile to guarantee standard forward slashes '/'
           if (Test-Path $zipName) { Remove-Item $zipName -Force }
-          Add-Type -AssemblyName System.IO.Compression.FileSystem
           $resolvedDist = (Resolve-Path $distDir).Path
           $resolvedZip = [System.IO.Path]::GetFullPath($zipName)
-          [System.IO.Compression.ZipFile]::CreateFromDirectory($resolvedDist, $resolvedZip, [System.IO.Compression.CompressionLevel]::Optimal, $false)
+          python -c "import zipfile, os; zf = zipfile.ZipFile(r'$resolvedZip', 'w', zipfile.ZIP_DEFLATED); [zf.write(os.path.join(root, f), os.path.relpath(os.path.join(root, f), r'$resolvedDist').replace(chr(92), '/')) for root, _, files in os.walk(r'$resolvedDist') for f in files]; zf.close()"
           Remove-Item -Path $distDir -Recurse -Force
           Write-Host "Created portable release package: $zipName"
           Get-Item $zipName | Select-Object Name, Length
