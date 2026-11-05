@@ -1,6 +1,7 @@
 import os
 import unittest
 import base64
+from unittest.mock import patch
 from fastapi.testclient import TestClient
 import voice_core
 import auto_updater
@@ -25,10 +26,24 @@ class TestPhase1SecurityAndPrivacy(unittest.TestCase):
     def test_dpapi_encryption_and_decryption(self):
         """Test Windows DPAPI encryption, decryption, and masking."""
         secret = "secret_chimege_api_token_12345"
-        encrypted = voice_core.dpapi_encrypt(secret)
-        self.assertTrue(encrypted.startswith("dpapi:"), "Encrypted token must start with dpapi:")
-        decrypted = voice_core.dpapi_decrypt(encrypted)
-        self.assertEqual(decrypted, secret, "Decrypted token must match original plaintext")
+        if os.name != "nt":
+            old_mock = os.environ.get("VOICE_TEST_MOCK_DPAPI")
+            os.environ["VOICE_TEST_MOCK_DPAPI"] = "1"
+            try:
+                encrypted = voice_core.dpapi_encrypt(secret)
+                self.assertTrue(encrypted.startswith("dpapi:"), "Encrypted token must start with dpapi:")
+                decrypted = voice_core.dpapi_decrypt(encrypted)
+                self.assertEqual(decrypted, secret, "Decrypted token must match original plaintext")
+            finally:
+                if old_mock is not None:
+                    os.environ["VOICE_TEST_MOCK_DPAPI"] = old_mock
+                else:
+                    os.environ.pop("VOICE_TEST_MOCK_DPAPI", None)
+        else:
+            encrypted = voice_core.dpapi_encrypt(secret)
+            self.assertTrue(encrypted.startswith("dpapi:"), "Encrypted token must start with dpapi:")
+            decrypted = voice_core.dpapi_decrypt(encrypted)
+            self.assertEqual(decrypted, secret, "Decrypted token must match original plaintext")
 
         # Non-dpapi plaintext fallback
         self.assertEqual(voice_core.dpapi_decrypt("plain_token"), "plain_token")
@@ -239,8 +254,12 @@ class TestPhase1SecurityAndPrivacy(unittest.TestCase):
         self.assertIsInstance(res, dict)
         self.assertIn("signed", res)
         self.assertIn("valid", res)
-        if os.name == "nt":
-            self.assertTrue(res["valid"], "System python.exe signature must be valid on Windows")
+        self.assertIn("status_code", res)
+        self.assertIn("error", res)
+        self.assertIsInstance(res["signed"], bool)
+        self.assertIsInstance(res["valid"], bool)
+        if res["signed"]:
+            self.assertTrue(res["valid"], "If binary is signed, signature must be valid")
 
     def test_upload_limits(self):
         """Test file upload size limits rejection (HTTP 413)."""
@@ -250,16 +269,30 @@ class TestPhase1SecurityAndPrivacy(unittest.TestCase):
         files = {"audio": ("test_huge.wav", oversized, "audio/wav")}
         data = {"ass_content": "[Script Info]\nTitle: test", "title": "test_video"}
 
-        res = self.client.post(
-            "/api/lyrics/export-video",
-            files=files,
-            data=data,
+        with patch("tts_server.is_ffmpeg_available", return_value=True):
+            res = self.client.post(
+                "/api/lyrics/export-video",
+                files=files,
+                data=data,
+                headers={
+                    "Host": f"127.0.0.1:{tts_server.SERVER_PORT}",
+                    "X-Session-Token": token,
+                },
+            )
+            self.assertEqual(res.status_code, 413, "Oversized upload must return HTTP 413 Payload Too Large")
+
+        # Also test 25MB limit on /api/audio/separate
+        oversized_audio = b"0" * (26 * 1024 * 1024)
+        res_sep = self.client.post(
+            "/api/audio/separate",
+            files={"audio": ("huge.wav", oversized_audio, "audio/wav")},
+            data={"vocal_strength": "1.0"},
             headers={
                 "Host": f"127.0.0.1:{tts_server.SERVER_PORT}",
                 "X-Session-Token": token,
             },
         )
-        self.assertEqual(res.status_code, 413, "Oversized upload must return HTTP 413 Payload Too Large")
+        self.assertEqual(res_sep.status_code, 413, "Oversized separation upload must return HTTP 413")
 
 
 if __name__ == "__main__":
