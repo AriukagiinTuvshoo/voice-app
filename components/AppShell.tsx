@@ -138,7 +138,9 @@ function Provider({ children }: { children: ReactNode }) {
             if (srv.offline_only !== undefined) {
               merged.offlineOnly = Boolean(srv.offline_only);
             }
-            if (srv.allow_cloud_stt !== undefined) {
+            if (srv.opt_in_google_stt !== undefined) {
+              merged.allowCloudStt = Boolean(srv.opt_in_google_stt);
+            } else if (srv.allow_cloud_stt !== undefined) {
               merged.allowCloudStt = Boolean(srv.allow_cloud_stt);
             }
           }
@@ -304,7 +306,7 @@ function Provider({ children }: { children: ReactNode }) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         hotkey: settings.desktopHotkey || "f8",
-        stt_engine: settings.sttEngine === "auto" ? "whisper" : settings.sttEngine,
+        stt_engine: settings.sttEngine === "auto" ? "google" : settings.sttEngine,
         whisper_model: settings.whisperModel || "small",
         chimege_token: settings.chimegeToken || "",
         language: settings.language || "auto",
@@ -323,6 +325,7 @@ function Provider({ children }: { children: ReactNode }) {
         custom_vocabulary: settings.customVocabulary || [],
         mongolian_grammar: settings.mongolianGrammar !== undefined ? Boolean(settings.mongolianGrammar) : true,
         offline_only: Boolean(settings.offlineOnly),
+        opt_in_google_stt: Boolean(settings.allowCloudStt),
         allow_cloud_stt: Boolean(settings.allowCloudStt),
       }),
     }).catch(() => {});

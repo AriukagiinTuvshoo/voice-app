@@ -678,31 +678,35 @@ def apply_voice_clone_timbre(
         return src_samples
 
     target_env_list = clone_profile.get("envelope")
-    if not target_env_list or len(target_env_list) != (STFT_NPERSEG // 2 + 1):
-        c_dir = clones_dir or os.path.join(os.path.dirname(os.path.abspath(__file__)), "clones")
-        ref_wav = os.path.join(c_dir, f"{clone_profile.get('id', '')}.wav")
-        if os.path.exists(ref_wav):
-            with open(ref_wav, "rb") as f:
-                ref_samples = decode_audio_bytes(f.read(), sample_rate)
-            target_env = extract_cepstral_envelope(ref_samples, sample_rate)
-            clone_profile["envelope"] = [round(float(x), 4) for x in target_env]
-        else:
-            return src_samples
-    else:
+    c_dir = clones_dir or os.path.join(os.path.dirname(os.path.abspath(__file__)), "clones")
+    ref_wav = os.path.join(c_dir, f"{clone_profile.get('id', '')}.wav")
+    if os.path.exists(ref_wav) and (not target_env_list or len(target_env_list) != (STFT_NPERSEG // 2 + 1)):
+        with open(ref_wav, "rb") as f:
+            ref_samples = decode_audio_bytes(f.read(), sample_rate)
+        target_env = extract_cepstral_envelope(ref_samples, sample_rate)
+        clone_profile["envelope"] = [round(float(x), 4) for x in target_env]
+    elif target_env_list and len(target_env_list) == (STFT_NPERSEG // 2 + 1):
         target_env = np.array(target_env_list, dtype=np.float32)
+    else:
+        return src_samples
 
     src_env = extract_cepstral_envelope(src_samples, sample_rate)
     if base_voice_id not in BASE_ENVELOPES_CACHE:
         BASE_ENVELOPES_CACHE[base_voice_id] = src_env.copy()
     else:
         BASE_ENVELOPES_CACHE[base_voice_id] = (
-            0.7 * BASE_ENVELOPES_CACHE[base_voice_id] + 0.3 * src_env
+            0.5 * BASE_ENVELOPES_CACHE[base_voice_id] + 0.5 * src_env
         )
-    base_env = BASE_ENVELOPES_CACHE[base_voice_id]
+    base_env = 0.65 * src_env + 0.35 * BASE_ENVELOPES_CACHE[base_voice_id]
 
-    target_centroid = float(clone_profile.get("formant_centroid", 1450.0))
-    base_centroid = 1320.0 if "bataa" in base_voice_id.lower() else 1620.0
-    warp_ratio = float(np.clip(target_centroid / base_centroid, 0.88, 1.14))
+    freqs = np.linspace(0.0, sample_rate / 2.0, target_env.size, dtype=np.float32)
+    band = (freqs >= 250.0) & (freqs <= 3800.0)
+    t_weights = np.exp(target_env[band] - np.max(target_env[band]))
+    measured_target_centroid = float(np.sum(freqs[band] * t_weights) / (np.sum(t_weights) + 1e-9))
+    s_weights = np.exp(base_env[band] - np.max(base_env[band]))
+    measured_src_centroid = float(np.sum(freqs[band] * s_weights) / (np.sum(s_weights) + 1e-9))
+
+    warp_ratio = float(np.clip(measured_target_centroid / max(measured_src_centroid, 300.0), 0.84, 1.18))
 
     _, _, Zxx = sp_signal.stft(
         src_samples, fs=sample_rate, nperseg=STFT_NPERSEG, noverlap=STFT_NOVERLAP
@@ -712,17 +716,16 @@ def apply_voice_clone_timbre(
     n_bins, n_frames = mag.shape
 
     bins = np.arange(n_bins, dtype=np.float32)
-    freqs = np.linspace(0.0, sample_rate / 2.0, n_bins, dtype=np.float32)
 
-    low_taper = np.clip((freqs - 140.0) / 140.0, 0.0, 1.0)
-    high_taper = np.clip((5200.0 - freqs) / 1200.0, 0.0, 1.0)
+    low_taper = np.clip((freqs - 85.0) / 95.0, 0.0, 1.0)
+    high_taper = np.clip((7400.0 - freqs) / 1400.0, 0.0, 1.0)
     formant_mask = (low_taper * high_taper).astype(np.float32)
 
-    warped_target_env = np.interp(bins / warp_ratio, bins, target_env)
-
-    max_transfer_nepers = 10.0 / 8.6858896
+    # Target envelope is ALREADY at the cloned speaker's true formant frequencies!
+    # Do NOT warp target_env away from its true frequencies.
+    max_transfer_nepers = 14.5 / 8.6858896
     diff_log_env = np.clip(
-        timbre_strength * (warped_target_env - base_env) * formant_mask,
+        timbre_strength * (target_env - base_env) * formant_mask,
         -max_transfer_nepers,
         max_transfer_nepers,
     )[:, None]
@@ -748,14 +751,17 @@ def apply_voice_clone_timbre(
     else:
         inst_env_smooth = inst_env
 
-    eff_warp = 1.0 + 0.55 * (warp_ratio - 1.0) * formant_mask
+    # Warp only the zero-mean dynamic phoneme variations (inst_env_smooth - base_env)
+    # so vowel transitions track the speaker's vocal tract scale while mean envelope = target_env
+    eff_warp = 1.0 + 0.65 * (warp_ratio - 1.0) * formant_mask
     warped_bins = bins / eff_warp
+    dyn_variation = inst_env_smooth - base_env[:, None]
     inst_delta = np.zeros_like(inst_env_smooth)
     for t in range(n_frames):
-        w_env = np.interp(warped_bins, bins, inst_env_smooth[:, t])
-        inst_delta[:, t] = (w_env - inst_env_smooth[:, t]) * formant_mask
+        w_var = np.interp(warped_bins, bins, dyn_variation[:, t])
+        inst_delta[:, t] = timbre_strength * (w_var - dyn_variation[:, t]) * formant_mask
 
-    total_delta = np.clip(inst_delta + diff_log_env, -max_transfer_nepers, max_transfer_nepers)
+    total_delta = np.clip(diff_log_env + inst_delta, -max_transfer_nepers, max_transfer_nepers)
     new_mag = mag * np.exp(total_delta)
 
     Zxx_mod = new_mag * np.exp(1j * phase)
@@ -765,12 +771,12 @@ def apply_voice_clone_timbre(
     y_out = y_out[: src_samples.size].astype(np.float32)
 
     target_f0 = float(clone_profile.get("f0", 140.0))
-    if target_f0 < 130.0:
+    if target_f0 < 155.0:
         sos_sub = sp_signal.butter(
-            2, [85.0 / (sample_rate / 2.0), 220.0 / (sample_rate / 2.0)], btype="bandpass", output="sos"
+            2, [80.0 / (sample_rate / 2.0), 250.0 / (sample_rate / 2.0)], btype="bandpass", output="sos"
         )
         sub_band = sp_signal.sosfiltfilt(sos_sub, y_out)
-        chest_gain = min(0.22, (130.0 - target_f0) / 140.0) * timbre_strength
+        chest_gain = min(0.28, max(0.06, (160.0 - target_f0) / 160.0)) * timbre_strength
         y_out = y_out + chest_gain * sub_band.astype(np.float32)
 
     return y_out

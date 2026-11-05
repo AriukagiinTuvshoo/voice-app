@@ -85,8 +85,13 @@ def validate_reference_audio(
 
     try:
         data, sr = sf.read(io.BytesIO(audio_bytes), dtype="float32")
-    except Exception as e:
-        raise ValueError(f"Дэмжигдэхгүй аудио формат (WAV, MP3, FLAC дэмжинэ): {e}")
+    except Exception:
+        try:
+            import voice_dsp
+            samples_decoded = voice_dsp.decode_audio_bytes(audio_bytes, target_sr=24000)
+            data, sr = samples_decoded, 24000
+        except Exception as e:
+            raise ValueError(f"Дэмжигдэхгүй аудио формат (WAV, MP3, M4A, FLAC, OGG, MP4 дэмжинэ): {e}")
 
     # Convert to mono if needed
     if data.ndim > 1:

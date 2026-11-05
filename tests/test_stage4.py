@@ -200,7 +200,27 @@ class TestAudioSeparator(unittest.TestCase):
 
 class TestStage4Api(unittest.TestCase):
     def setUp(self):
+        self.tmp_dir = tempfile.mkdtemp(prefix="voice_stage4_api_")
+        self._orig_clones_dir = voice_cloning.CLONES_DIR
+        self._orig_db_path = voice_cloning.VOICES_DB_PATH
+        self._orig_srv_clones_dir = tts_server.CLONES_DIR
+        self._orig_srv_db_path = tts_server.CLONES_JSON
+        self._orig_srv_db = dict(tts_server.CLONED_VOICES_DB)
+        voice_cloning.CLONES_DIR = self.tmp_dir
+        voice_cloning.VOICES_DB_PATH = os.path.join(self.tmp_dir, "voices.json")
+        tts_server.CLONES_DIR = self.tmp_dir
+        tts_server.CLONES_JSON = os.path.join(self.tmp_dir, "voices.json")
+        tts_server.CLONED_VOICES_DB.clear()
         self.client = TestClient(tts_server.app)
+
+    def tearDown(self):
+        voice_cloning.CLONES_DIR = self._orig_clones_dir
+        voice_cloning.VOICES_DB_PATH = self._orig_db_path
+        tts_server.CLONES_DIR = self._orig_srv_clones_dir
+        tts_server.CLONES_JSON = self._orig_srv_db_path
+        tts_server.CLONED_VOICES_DB.clear()
+        tts_server.CLONED_VOICES_DB.update(self._orig_srv_db)
+        shutil.rmtree(self.tmp_dir, ignore_errors=True)
 
     def test_voice_profiles_crud(self):
         wav = make_test_wav_bytes(duration_s=4.0)

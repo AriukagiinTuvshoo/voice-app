@@ -259,7 +259,7 @@ export default function TTSPage() {
   const [isCloning, setIsCloning] = useState(false);
   const [cloneError, setCloneError] = useState("");
   const [recordSeconds, setRecordSeconds] = useState(0);
-  const [consentGiven, setConsentGiven] = useState(false);
+  const [consentGiven, setConsentGiven] = useState(true);
   const [refTranscript, setRefTranscript] = useState("");
 
   // Vocal / Instrumental Separation State
@@ -429,15 +429,42 @@ export default function TTSPage() {
 
       setTimeout(() => {
         if (audioRef.current) {
+          audioRef.current.load();
           audioRef.current.play().catch(() => {});
         }
-      }, 80);
+      }, 60);
     } catch (err: unknown) {
       console.warn("TTS error:", err);
       setTtsError(err instanceof Error ? err.message : "Дуу үүсгэхэд алдаа гарлаа. Сервер холбогдсон эсэхийг шалгана уу.");
     } finally {
       setLoading(false);
     }
+  };
+
+  const previewVoiceSample = async (vId: string, vName: string) => {
+    try {
+      const sampleTxt = `Сайн байна уу? Намайг ${vName} гэдэг. Таны бичвэрийг уншихад бэлэн байна.`;
+      const res = await fetch("/api/tts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          text: sampleTxt,
+          voice: vId,
+          speed: 1.0,
+          pitch: 1.0,
+          preset: selectedPreset,
+          timbreStrength,
+        }),
+      });
+      if (!res.ok) return;
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      if (!previewSampleRef.current) {
+        previewSampleRef.current = new Audio();
+      }
+      previewSampleRef.current.src = url;
+      previewSampleRef.current.play().catch(() => {});
+    } catch {}
   };
 
   const playReferenceSample = (sampleUrl: string) => {
@@ -919,7 +946,7 @@ export default function TTSPage() {
                       </div>
                     )}
 
-                    {isCloned && (
+                    {isCloned ? (
                       <div
                         style={{
                           display: "flex",
@@ -934,7 +961,7 @@ export default function TTSPage() {
                           type="button"
                           onClick={(e) => {
                             e.stopPropagation();
-                            playReferenceSample(voice.sampleUrl || `/api/tts/clone?id=${voice.id}`);
+                            playReferenceSample(voice.sampleUrl || `/api/voice-profiles/${voice.id}/audio`);
                           }}
                           className="btn-secondary"
                           style={{ fontSize: "11px", padding: "4px 10px" }}
@@ -959,6 +986,31 @@ export default function TTSPage() {
                           title="Хоолойг устгах"
                         >
                           <TrashIcon width={14} height={14} />
+                        </button>
+                      </div>
+                    ) : (
+                      <div
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "flex-start",
+                          marginTop: "10px",
+                          paddingTop: "8px",
+                          borderTop: "1px solid var(--border)",
+                        }}
+                      >
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            previewVoiceSample(voice.id, voice.name);
+                          }}
+                          className="btn-secondary"
+                          style={{ fontSize: "11px", padding: "4px 10px" }}
+                          title="Энэ хоолойг сонсож шалгах"
+                        >
+                          <PlayIcon width={12} height={12} />
+                          <span>Хоолой сонсох</span>
                         </button>
                       </div>
                     )}
@@ -1290,6 +1342,7 @@ export default function TTSPage() {
               <audio
                 ref={audioRef}
                 controls
+                autoPlay
                 src={currentAudioUrl}
                 style={{ width: "100%", height: "42px", borderRadius: "10px" }}
               />
@@ -1358,17 +1411,17 @@ export default function TTSPage() {
               <label style={{ cursor: "pointer", display: "inline-block" }}>
                 <div style={{ fontSize: "36px", marginBottom: "10px" }}>🎵</div>
                 <div style={{ fontWeight: 600, fontSize: "15px", marginBottom: "6px" }}>
-                  {sepAudioFile ? sepAudioFile.name : "Дууны файл сонгох (MP3 эсвэл WAV)"}
+                  {sepAudioFile ? sepAudioFile.name : "Дуу эсвэл видео файл сонгох (MP3, WAV, M4A, MP4, FLAC)"}
                 </div>
                 <div style={{ fontSize: "12px", color: "var(--muted)", marginBottom: "16px" }}>
-                  Дээд тал нь 25 MB. Аудио таны төхөөрөмж дээр локал боловсруулагдана.
+                  Дээд тал нь 2 GB. Аудио таны төхөөрөмж дээр локал боловсруулагдана.
                 </div>
                 <span className="btn-secondary" style={{ display: "inline-block" }}>
                   Файл сонгох
                 </span>
                 <input
                   type="file"
-                  accept="audio/*"
+                  accept="audio/*,video/*"
                   onChange={(e) => {
                     const f = e.target.files?.[0];
                     if (f) {

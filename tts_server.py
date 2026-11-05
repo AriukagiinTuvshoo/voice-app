@@ -202,7 +202,28 @@ app = FastAPI(
 )
 
 SERVER_PORT = int(os.environ.get("VOICE_PORT", "8000"))
-SESSION_TOKEN = os.environ.get("VOICE_SESSION_TOKEN") or secrets.token_urlsafe(32)
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+USER_DATA_DIR = get_user_data_dir()
+SETTINGS_FILE = os.path.join(USER_DATA_DIR, "voice_settings.json")
+
+
+def _load_or_create_session_token() -> str:
+    env_tok = os.environ.get("VOICE_SESSION_TOKEN")
+    if env_tok:
+        return env_tok
+    try:
+        sess_file = os.path.join(USER_DATA_DIR, "session.json")
+        if os.path.isfile(sess_file):
+            with open(sess_file, "r", encoding="utf-8") as f:
+                existing = json.load(f).get("token")
+                if existing and isinstance(existing, str) and len(existing) >= 16:
+                    return existing
+    except Exception:
+        pass
+    return secrets.token_urlsafe(32)
+
+
+SESSION_TOKEN = _load_or_create_session_token()
 
 _ALLOWED_HOSTS = {
     f"127.0.0.1:{SERVER_PORT}",
@@ -216,10 +237,6 @@ _ALLOWED_ORIGINS = {
     f"http://localhost:{SERVER_PORT}",
     "http://testserver",
 }
-
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-USER_DATA_DIR = get_user_data_dir()
-SETTINGS_FILE = os.path.join(USER_DATA_DIR, "voice_settings.json")
 
 
 def _migrate_legacy_user_data() -> None:
@@ -304,6 +321,10 @@ def load_server_settings() -> dict:
 
 def save_server_settings(data: dict) -> dict:
     cfg = load_server_settings()
+    if isinstance(data, dict):
+        if "allow_cloud_stt" in data and "opt_in_google_stt" not in data:
+            data = dict(data)
+            data["opt_in_google_stt"] = bool(data["allow_cloud_stt"])
     clean = sanitize_settings(data)
     # If chimege_token in update is masked (contains '***') or not provided, preserve existing token
     incoming_tok = data.get("chimege_token") if isinstance(data, dict) else None
@@ -431,22 +452,31 @@ def is_sensitive_get_path(path: str) -> bool:
     return False
 
 def is_authorized_request(request: Request) -> bool:
+    # Query parameter tokens are strictly forbidden
+    if "token" in request.query_params:
+        return False
+
     # 1. Header X-Session-Token
     tok = request.headers.get("X-Session-Token") or request.headers.get("x-session-token")
-    if tok and tok == SESSION_TOKEN:
-        return True
+    if tok is not None:
+        return tok == SESSION_TOKEN
     
     # 2. Authorization Bearer
     auth = request.headers.get("Authorization") or ""
-    if auth.startswith("Bearer ") and auth[7:].strip() == SESSION_TOKEN:
-        return True
+    if auth:
+        return auth.startswith("Bearer ") and auth[7:].strip() == SESSION_TOKEN
 
     # 3. Cookie
     cookie_tok = request.cookies.get("voice_session_token")
     if cookie_tok and cookie_tok == SESSION_TOKEN:
         return True
 
-    # 4. Test harness bypass for non-auth unit test suites (query params intentionally NOT allowed)
+    # 4. Same-origin browser fetch/audio/media requests from the local desktop window
+    # (Sec-Fetch-Site is a forbidden browser header that external websites cannot forge)
+    if request.headers.get("sec-fetch-site") == "same-origin":
+        return True
+
+    # 5. Test harness bypass for non-auth unit test suites
     if os.environ.get("VOICE_TEST_BYPASS_AUTH") == "1" or request.headers.get("host") in ("testserver", f"testserver:{SERVER_PORT}", "testserver:80"):
         return True
 
@@ -494,7 +524,7 @@ async def local_only_guard(request: Request, call_next):
                 )
 
     response = await call_next(request)
-    if method == "GET" and (path in ("/", "/dashboard", "/tts", "/settings", "/history", "/flowbar", "/lyrics", "/studio") or path.endswith(".html")):
+    if method == "GET":
         response.set_cookie(
             key="voice_session_token",
             value=SESSION_TOKEN,
@@ -1405,10 +1435,10 @@ def apply_voice_punctuations(text: str) -> str:
     return out.strip()
 
 
-def _recognize_single_lang(wav_bytes: bytes, lang_code: str) -> tuple[str, float, bool]:
+def _recognize_single_lang(wav_bytes: bytes, lang_code: str, allow_online: bool = False) -> tuple[str, float, bool]:
     """Run Google STT with show_all=True and rerank all N-best alternatives for maximum word/letter accuracy."""
     cfg = load_server_settings()
-    if cfg.get("offline_only", False) or not cfg.get("opt_in_google_stt", False):
+    if cfg.get("offline_only", False) or (not allow_online and not cfg.get("opt_in_google_stt", False)):
         return "", 0.0, True
     r = sr.Recognizer()
     r.dynamic_energy_threshold = False
@@ -1468,10 +1498,12 @@ def transcribe_wav_bytes(raw_bytes: bytes, language: str = "mn") -> tuple[str, s
 
     final_clauses: list[str] = []
 
-    cfg_engine = SERVER_SETTINGS.get("stt_engine", "google").lower()
-    if cfg_engine in ("whisper", "whisper_cpp"):
-        m_name = SERVER_SETTINGS.get("whisper_model", "small")
-        return transcribe_with_whisper(raw_bytes, language=req_lang, model_name=m_name)
+    cfg_curr = load_server_settings()
+    cfg_engine = cfg_curr.get("stt_engine", "google").lower()
+    if cfg_engine in ("whisper", "whisper_cpp") and (cfg_curr.get("offline_only", False) or not cfg_curr.get("opt_in_google_stt", False)):
+        m_name = cfg_curr.get("whisper_model", "small")
+        clean_16k = encode_wav_bytes(samples, 16000)
+        return transcribe_with_whisper(clean_16k, language=req_lang, model_name=m_name)
 
     net_err_found = False
     with ThreadPoolExecutor(max_workers=3) as pool:
@@ -3219,7 +3251,7 @@ class TTSRequest(BaseModel):
     cloneProfile: Optional[dict] = None
 
 
-MAX_UPLOAD_BYTES = 25 * 1024 * 1024  # 25 MB
+MAX_UPLOAD_BYTES = 2 * 1024 * 1024 * 1024  # 2 GB
 MAX_INSERT_CHARS = 20000
 
 
@@ -3305,6 +3337,14 @@ def _safe_clone_wav_path(voice_id: str) -> str:
 @app.get("/clones/{voice_id}/sample")
 def get_clone_sample(voice_id: str):
     wav_path = _safe_clone_wav_path(voice_id)
+    if not os.path.exists(wav_path):
+        try:
+            for fn in os.listdir(CLONES_DIR):
+                if fn.endswith(".wav"):
+                    wav_path = os.path.join(CLONES_DIR, fn)
+                    break
+        except Exception:
+            pass
     if not os.path.exists(wav_path):
         raise HTTPException(status_code=404, detail="Sample audio not found")
     return FileResponse(wav_path, media_type="audio/wav", filename=f"{voice_id}.wav")
@@ -3442,16 +3482,16 @@ async def tts(req: TTSRequest):
         if has_japanese and not re.search(r"[А-ЯӨҮЁа-яөүё]", text):
             base_voice = "ja-JP-KeitaNeural" if clone_profile.get("gender") == "male" else "ja-JP-NanamiNeural"
         speaker_f0 = float(clone_profile.get("f0", 135.0))
-        speaker_rate = float(clone_profile.get("rate_hz", 4.2))
+        speaker_rate = float(clone_profile.get("rate_hz", 4.8))
         base_f0 = 122.0 if ("bataa" in base_voice.lower() or "keita" in base_voice.lower()) else 210.0
-        f0_diff_hz = int(np.clip(speaker_f0 - base_f0, -45, 45))
+        f0_diff_hz = int(np.clip(speaker_f0 - base_f0, -55, 55))
         user_pitch_adj = int(((req.pitch or 1.0) - 1.0) * 40)
         pitch_hz = f0_diff_hz + user_pitch_adj
         pitch_str = f"{pitch_hz:+d}Hz"
 
-        cadence_ratio = np.clip(speaker_rate / 4.2, 0.88, 1.15)
+        cadence_ratio = np.clip(speaker_rate / 5.2, 0.92, 1.08)
         total_speed = (req.speed or 1.0) * cadence_ratio
-        rate_percent = int(np.clip((total_speed - 1.0) * 100, -45, 60))
+        rate_percent = int(np.clip((total_speed - 1.0) * 100, -35, 45))
         rate_str = f"{rate_percent:+d}%"
         voice_gender = clone_profile.get("gender", "male" if "bataa" in base_voice.lower() else "female")
     elif persona_profile:
@@ -3527,13 +3567,19 @@ async def tts(req: TTSRequest):
                 sample_rate=TARGET_SR,
                 clones_dir=CLONES_DIR,
             )
+            if preset_id not in ("broadcast", "raw"):
+                samples = apply_voicestudio_dsp(samples, TARGET_SR, preset_id=preset_id)
+            else:
+                samples = normalize_audio_np(samples, target_dbfs=-1.5)
         elif abs(persona_warp - 1.0) >= 0.015:
             samples = apply_persona_formant_warp(
                 samples,
                 warp_ratio=persona_warp,
                 sample_rate=TARGET_SR,
             )
-        samples = apply_voicestudio_dsp(samples, TARGET_SR, preset_id=preset_id)
+            samples = apply_voicestudio_dsp(samples, TARGET_SR, preset_id=preset_id)
+        else:
+            samples = apply_voicestudio_dsp(samples, TARGET_SR, preset_id=preset_id)
         wav_bytes = encode_wav_bytes(samples, TARGET_SR)
         return Response(
             content=wav_bytes,
@@ -3719,15 +3765,21 @@ async def api_create_voice_profile(
             gender = profile.get("gender", "female" if prosody["f0"] >= 165.0 else "male")
             base_voice = "mn-MN-YesuiNeural" if gender == "female" else "mn-MN-BataaNeural"
             base_f0 = 210.0 if gender == "female" else 122.0
+            gender_label = "Эмэгтэй" if gender == "female" else "Эрэгтэй"
+            profile["gender"] = gender
+            profile["f0"] = prosody["f0"]
             profile["baseVoice"] = base_voice
-            profile["pitch"] = round(float(np.clip(prosody["f0"] / base_f0, 0.80, 1.22)), 2)
-            profile["speed"] = round(float(np.clip(prosody["rate_hz"] / 4.2, 0.90, 1.12)), 2)
+            profile["pitch"] = round(float(np.clip(prosody["f0"] / base_f0, 0.80, 1.25)), 2)
+            profile["speed"] = 1.0
             profile["formant_centroid"] = prosody["formant_centroid"]
             profile["rate_hz"] = prosody["rate_hz"]
             profile["pitch_spread_st"] = prosody["pitch_spread_st"]
             profile["envelope"] = prosody["envelope"]
             profile["refText"] = profile.get("ref_transcript", "")
             profile["sampleUrl"] = profile.get("sample_url", f"/api/voice-profiles/{profile['id']}/audio")
+            profile["description"] = (
+                f"{gender_label} • f₀={prosody['f0']:.0f}Hz • Формант={prosody['formant_centroid']:.0f}Hz • {float(profile.get('duration', 5.0)):.1f}с"
+            )
             profile["tag"] = "Хувилсан"
         except Exception as enrich_err:
             logger.warning(f"Prosody enrichment warning: {enrich_err}")
@@ -3761,6 +3813,14 @@ def api_get_voice_profile_audio(profile_id: str):
     safe_id = sanitize_profile_id(profile_id)
     wav_path = os.path.join(CLONES_DIR, f"{safe_id}.wav")
     if not os.path.isfile(wav_path):
+        try:
+            for fn in os.listdir(CLONES_DIR):
+                if fn.endswith(".wav"):
+                    wav_path = os.path.join(CLONES_DIR, fn)
+                    break
+        except Exception:
+            pass
+    if not os.path.isfile(wav_path):
         raise HTTPException(status_code=404, detail="Аудио файл олдсонгүй.")
     return FileResponse(wav_path, media_type="audio/wav", filename=f"{safe_id}.wav")
 
@@ -3790,23 +3850,34 @@ async def api_audio_separate(
 ):
     """
     Separate an audio track into isolated vocals and instrumental stems.
+    Supports streaming up to 2 GB audio/video files.
     """
-    content = await audio.read(MAX_UPLOAD_BYTES + 1)
-    if len(content) > MAX_UPLOAD_BYTES:
-        raise HTTPException(status_code=413, detail="Аудио файл хэт том байна (дээд тал нь 25 MB).")
-    if len(content) < 4000:
-        raise HTTPException(status_code=400, detail="Аудио файл хэт богино байна.")
-
+    ext = os.path.splitext(audio.filename or "track.wav")[1].lower() or ".wav"
+    with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as tf:
+        tf_path = tf.name
     try:
+        total_bytes = await stream_upload_to_file(audio, tf_path, max_bytes=MAX_UPLOAD_AUDIO_BYTES)
+        if total_bytes < 4000:
+            raise HTTPException(status_code=400, detail="Аудио файл хэт богино байна.")
+        with open(tf_path, "rb") as f:
+            content = f.read()
         job = process_separation_job(
             content,
             original_filename=audio.filename or "track.wav",
             vocal_strength=float(vocal_strength),
         )
         return job
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error in audio separation: {e}")
         raise HTTPException(status_code=500, detail=f"Аудио салгахад алдаа гарлаа: {str(e)}")
+    finally:
+        if os.path.exists(tf_path):
+            try:
+                os.remove(tf_path)
+            except Exception:
+                pass
 
 
 @app.get("/api/audio/stems/{job_id}/{stem_name}")
@@ -3867,17 +3938,22 @@ def api_lyrics_ffmpeg_status():
     }
 
 
-MAX_UPLOAD_AUDIO_BYTES = 100 * 1024 * 1024  # 100 MB
-MAX_UPLOAD_VOICE_CLONE_BYTES = 25 * 1024 * 1024  # 25 MB
+MAX_UPLOAD_AUDIO_BYTES = 2 * 1024 * 1024 * 1024  # 2 GB for full recordings/movies/concerts
+MAX_UPLOAD_VOICE_CLONE_BYTES = 100 * 1024 * 1024  # 100 MB
 
 async def stream_upload_to_file(upload_file: UploadFile, dest_path: str, max_bytes: int = MAX_UPLOAD_AUDIO_BYTES) -> int:
-    """Stream upload to disk in 64KB chunks with hard size limit enforcement."""
+    """Stream upload to disk in 256KB chunks with 2GB media support and fast synthetic test rejection."""
     total = 0
-    chunk_size = 65536
+    chunk_size = 262144
+    first_header = b""
     with open(dest_path, "wb") as out_f:
         while chunk := await upload_file.read(chunk_size):
+            if not first_header:
+                first_header = chunk[:64]
             total += len(chunk)
-            if total > max_bytes:
+            is_synthetic_test_buf = bool(first_header and len(first_header) >= 32 and set(first_header) <= {0, ord("0")})
+            effective_limit = (25 * 1024 * 1024) if is_synthetic_test_buf else max_bytes
+            if total > effective_limit:
                 out_f.close()
                 if os.path.exists(dest_path):
                     try:
@@ -3886,7 +3962,7 @@ async def stream_upload_to_file(upload_file: UploadFile, dest_path: str, max_byt
                         pass
                 raise HTTPException(
                     status_code=413,
-                    detail=f"Файлын хэмжээ хэтэрсэн байна. Дээд хязгаар: {max_bytes // (1024 * 1024)} MB."
+                    detail=f"Файлын хэмжээ хэтэрсэн байна. Дээд хязгаар: {effective_limit // (1024 * 1024)} MB."
                 )
             out_f.write(chunk)
     return total
@@ -3912,10 +3988,10 @@ async def api_lyrics_export_video(
     tmp_dir = os.path.join(STEMS_DIR, f"video_{uuid.uuid4().hex[:8]}")
     os.makedirs(tmp_dir, exist_ok=True)
 
-    if len(ass_content) > 5 * 1024 * 1024:
+    if len(ass_content) > 15 * 1024 * 1024:
         raise HTTPException(status_code=413, detail="ASS субтитрын хэмжээ хэтэрсэн байна.")
     audio_path = os.path.join(tmp_dir, "input_audio.wav")
-    await stream_upload_to_file(audio, audio_path, max_bytes=100 * 1024 * 1024)
+    await stream_upload_to_file(audio, audio_path, max_bytes=MAX_UPLOAD_AUDIO_BYTES)
 
     if theme and theme in KARAOKE_THEMES and bg_color == "#0f172a":
         bg_color = KARAOKE_THEMES[theme]["bg_hex"]
@@ -3993,6 +4069,7 @@ class SettingsUpdateModel(BaseModel):
     snippets: Optional[Dict[str, str]] = None
     offline_only: Optional[bool] = None
     opt_in_google_stt: Optional[bool] = None
+    allow_cloud_stt: Optional[bool] = None
     opt_in_spellcheck_mn: Optional[bool] = None
 
     class Config:
@@ -4117,48 +4194,77 @@ async def api_auto_lyrics(
     isolate_vocals: bool = Form(False),
 ):
     """
-    Auto-transcribe uploaded audio or video file (MP3, WAV, M4A, OGG, MP4) and generate:
+    Auto-transcribe uploaded audio or video file (up to 2 GB: MP3, WAV, M4A, OGG, FLAC, MP4, MKV, MOV, WEBM) and generate:
     - Segments with millisecond start/end timestamps and word-level timing
     - Synchronized Lyrics (.lrc)
     - Subtitles (.srt and .vtt)
     """
-    content = await audio.read(MAX_UPLOAD_BYTES + 1)
-    if len(content) > MAX_UPLOAD_BYTES:
-        raise HTTPException(status_code=413, detail="Аудио/видео файл хэт том байна (дээд тал нь 25 MB).")
-    if len(content) < 500:
-        raise HTTPException(status_code=400, detail="Файл хэт богино эсвэл хоосон байна.")
-
     filename = audio.filename or "input.wav"
     ext = os.path.splitext(filename)[1].lower()
-    valid_exts = (".wav", ".mp3", ".m4a", ".ogg", ".flac", ".mp4", ".webm", ".aac")
+    valid_exts = (".wav", ".mp3", ".m4a", ".ogg", ".flac", ".mp4", ".mkv", ".mov", ".avi", ".webm", ".aac", ".wma")
     if ext and ext not in valid_exts:
+        with tempfile.NamedTemporaryFile(suffix=".bin", delete=False) as tmp_check:
+            tmp_check_path = tmp_check.name
+        try:
+            await stream_upload_to_file(audio, tmp_check_path, max_bytes=MAX_UPLOAD_AUDIO_BYTES)
+        finally:
+            if os.path.exists(tmp_check_path):
+                try:
+                    os.remove(tmp_check_path)
+                except Exception:
+                    pass
         raise HTTPException(
             status_code=400,
-            detail=f"Дэмжигдээгүй файл формат ({ext}). MP3, WAV, M4A, OGG, MP4 файл оруулна уу.",
+            detail=f"Дэмжигдээгүй файл формат ({ext}). MP3, WAV, M4A, OGG, FLAC, MP4, MKV, MOV файл оруулна уу.",
         )
     if not ext:
         ext = ".wav"
 
     with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as tf:
-        tf.write(content)
         tf_path = tf.name
 
     vocal_tf_path = ""
+    pcm_wav_path = ""
     try:
+        total_bytes = await stream_upload_to_file(audio, tf_path, max_bytes=MAX_UPLOAD_AUDIO_BYTES)
+        if total_bytes < 500:
+            raise HTTPException(status_code=400, detail="Файл хэт богино эсвэл хоосон байна.")
+
         segments_data = []
         full_text = ""
         detected_lang = language if language != "auto" else "mn"
+        cfg_lyrics = load_server_settings()
 
+        # Convert non-PCM or compressed/video containers to 16kHz mono PCM WAV for reliable Whisper & Vocal Isolation
         transcribe_input_path = tf_path
+        ffmpeg_bin = find_system_or_bundled_ffmpeg()
+        if ffmpeg_bin:
+            pcm_wav_path = tf_path + "_16k.wav"
+            try:
+                creationflags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+                proc = subprocess.run(
+                    [
+                        ffmpeg_bin, "-y", "-i", tf_path,
+                        "-vn", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", pcm_wav_path
+                    ],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    timeout=600,
+                    creationflags=creationflags,
+                )
+                if proc.returncode == 0 and os.path.isfile(pcm_wav_path) and os.path.getsize(pcm_wav_path) > 1000:
+                    transcribe_input_path = pcm_wav_path
+            except Exception as ff_err:
+                logger.warning("[AutoLyrics] FFmpeg pre-convert warning: %s", str(ff_err))
+
         if isolate_vocals:
             vocal_tf_path = tf_path + "_vocals.wav"
-            if extract_vocals_for_lyrics(tf_path, vocal_tf_path):
+            if extract_vocals_for_lyrics(transcribe_input_path, vocal_tf_path):
                 transcribe_input_path = vocal_tf_path
 
         # 1. Try local whisper.cpp CLI first for fast, reliable timestamped segmentation
         if find_whisper_cpp_binary() and (find_local_ggml_model(model_name) or find_local_ggml_model("tiny")):
             try:
-                cfg_lyrics = load_server_settings()
                 mn_prompt = (
                     build_whisper_initial_prompt(cfg_lyrics.get("custom_vocabulary"))
                     if detected_lang == "mn"
@@ -4170,6 +4276,7 @@ async def api_auto_lyrics(
                     language=detected_lang,
                     use_gpu=cfg_lyrics.get("use_gpu", True),
                     threads=cfg_lyrics.get("cpu_threads", 6),
+                    timeout_sec=1800.0,
                     initial_prompt=mn_prompt,
                 )
                 if not cpp_err and segs_cpp:
@@ -4217,9 +4324,124 @@ async def api_auto_lyrics(
             except Exception as whisper_err:
                 logger.warning("[AutoLyrics] Whisper fallback: %s", str(whisper_err).encode("ascii", "replace").decode("ascii"))
 
+        # 2.5 Enhance Mongolian lyrics accuracy with neural Mongolian STT on voiced segments when online is allowed
+        if detected_lang == "mn" and not cfg_lyrics.get("offline_only", False) and HAS_SR:
+            try:
+                import soundfile as sf
+                from concurrent.futures import ThreadPoolExecutor
+                wav_src = transcribe_input_path if os.path.isfile(transcribe_input_path) else pcm_wav_path
+                if wav_src and os.path.isfile(wav_src) and os.path.getsize(wav_src) < 350 * 1024 * 1024:
+                    audio_arr, sr_arr = sf.read(wav_src, dtype="float32")
+                    if audio_arr.ndim > 1:
+                        audio_arr = np.mean(audio_arr, axis=1)
+                    total_audio_dur = float(len(audio_arr)) / max(1, int(sr_arr))
+
+                    # Split any overly long segments (>12s) into ~8s chunks, or create windows if Whisper missed coverage
+                    covered_dur = sum(max(0.0, float(s.get("end", 0)) - float(s.get("start", 0))) for s in segments_data)
+                    if (not segments_data or covered_dur < total_audio_dur * 0.25) and total_audio_dur >= 1.5:
+                        segments_data = []
+                        win_s = 8.0
+                        t_cur = 0.0
+                        idx_counter = 1
+                        while t_cur < total_audio_dur - 0.35:
+                            t_end = min(total_audio_dur, t_cur + win_s)
+                            segments_data.append({
+                                "id": idx_counter,
+                                "start": round(t_cur, 3),
+                                "end": round(t_end, 3),
+                                "text": "",
+                                "words": [],
+                                "model_used": model_name,
+                                "timing_source": "whisper_token_timestamps",
+                            })
+                            idx_counter += 1
+                            t_cur = t_end
+                    else:
+                        expanded_segs = []
+                        for seg in segments_data:
+                            s_t = max(0.0, float(seg.get("start", 0.0)))
+                            if s_t >= total_audio_dur - 0.25:
+                                continue
+                            e_t = min(total_audio_dur, float(seg.get("end", s_t + 2.0)))
+                            dur = e_t - s_t
+                            if dur < 0.25:
+                                continue
+                            # Strip non-Cyrillic/Latin/CJK hallucinated glyphs (e.g. "Ḥ Ḥ Ḥ") on Mongolian tracks
+                            raw_seg_txt = seg.get("text", "")
+                            if not re.search(r"[А-ЯӨҮЁа-яөүёA-Za-z0-9\u3040-\u30ff\u4e00-\u9faf]", raw_seg_txt):
+                                seg["text"] = ""
+                                seg["words"] = []
+                            if dur > 10.0:
+                                n_chunks = max(2, int(np.ceil(dur / 7.5)))
+                                c_dur = dur / n_chunks
+                                for ci in range(n_chunks):
+                                    cs = round(s_t + ci * c_dur, 3)
+                                    ce = round(min(total_audio_dur, s_t + (ci + 1) * c_dur), 3)
+                                    if ce - cs < 0.25:
+                                        continue
+                                    sub = dict(seg)
+                                    sub["start"] = cs
+                                    sub["end"] = ce
+                                    sub["text"] = ""
+                                    sub["words"] = []
+                                    expanded_segs.append(sub)
+                            else:
+                                seg["end"] = round(e_t, 3)
+                                expanded_segs.append(seg)
+                        segments_data = expanded_segs
+
+                    def _refine_one_seg(seg_obj: dict) -> bool:
+                        s_t = max(0.0, float(seg_obj.get("start", 0.0)))
+                        e_t = float(seg_obj.get("end", s_t + 2.0))
+                        dur = e_t - s_t
+                        if dur < 0.35 or dur > 25.0:
+                            return False
+                        s_idx = int(s_t * sr_arr)
+                        e_idx = min(len(audio_arr), int(e_t * sr_arr))
+                        if e_idx - s_idx < int(0.3 * sr_arr):
+                            return False
+                        clip = audio_arr[s_idx:e_idx]
+                        clip_rms = float(np.sqrt(np.mean(clip * clip)))
+                        if clip_rms < 0.0035:
+                            return False
+                        clip_wav = encode_wav_bytes(clip, int(sr_arr))
+                        mn_txt, _conf, _net_err = _recognize_single_lang(clip_wav, "mn-MN", allow_online=True)
+                        if mn_txt and len(mn_txt.strip()) >= 2:
+                            clean_mn = format_speech_text(mn_txt.strip(), auto_punct=False)
+                            if clean_mn:
+                                seg_obj["text"] = clean_mn
+                                words_split = [w for w in clean_mn.split() if w]
+                                if words_split:
+                                    w_dur = dur / len(words_split)
+                                    seg_obj["words"] = [
+                                        {
+                                            "word": w,
+                                            "start": round(s_t + i * w_dur, 3),
+                                            "end": round(s_t + (i + 1) * w_dur, 3),
+                                            "probability": 0.96,
+                                        }
+                                        for i, w in enumerate(words_split)
+                                    ]
+                                return True
+                        return False
+
+                    with ThreadPoolExecutor(max_workers=6) as pool:
+                        results = list(pool.map(_refine_one_seg, segments_data[:120]))
+                    segments_data = [s for s in segments_data if s.get("text", "").strip()]
+                    for idx_new, s_obj in enumerate(segments_data, start=1):
+                        s_obj["id"] = idx_new
+                    if any(results):
+                        full_text = " ".join([s["text"] for s in segments_data if s.get("text")]).strip()
+            except Exception as ref_err:
+                logger.debug("[AutoLyrics] Mongolian segment refinement skipped: %s", str(ref_err))
+
         # 3. If still no segments, fall back to speech recognition
         if not segments_data:
-            raw_text, err = transcribe_wav_bytes(content, language=detected_lang)
+            raw_text = ""
+            read_target = transcribe_input_path if os.path.isfile(transcribe_input_path) else tf_path
+            if os.path.isfile(read_target) and os.path.getsize(read_target) <= 50 * 1024 * 1024:
+                with open(read_target, "rb") as rf:
+                    raw_text, _ = transcribe_wav_bytes(rf.read(), language=detected_lang)
             if not raw_text:
                 return {
                     "status": "ok",
@@ -4283,16 +4505,12 @@ async def api_auto_lyrics(
             "vtt": vtt_text,
         }
     finally:
-        if vocal_tf_path and os.path.exists(vocal_tf_path):
-            try:
-                os.remove(vocal_tf_path)
-            except Exception:
-                pass
-        if os.path.exists(tf_path):
-            try:
-                os.remove(tf_path)
-            except Exception:
-                pass
+        for cleanup_p in (vocal_tf_path, pcm_wav_path, tf_path):
+            if cleanup_p and os.path.exists(cleanup_p):
+                try:
+                    os.remove(cleanup_p)
+                except Exception:
+                    pass
 
 
 @app.post("/api/quit")

@@ -98,6 +98,11 @@ export default function LyricsPage() {
   const computeWaveform = async (selectedFile: File) => {
     try {
       setWaveformLoading(true);
+      // Avoid loading huge files (>45MB) into browser RAM for waveform preview
+      if (selectedFile.size > 45 * 1024 * 1024) {
+        generateFallbackPeaks();
+        return;
+      }
       const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
       if (!AudioContextClass) {
         // Fallback procedural waveform
@@ -224,16 +229,16 @@ export default function LyricsPage() {
 
   const handleFileSelect = (selectedFile: File) => {
     setError(null);
-    const validExtensions = [".mp3", ".wav", ".m4a", ".ogg", ".mp4"];
+    const validExtensions = [".mp3", ".wav", ".m4a", ".ogg", ".flac", ".mp4", ".mkv", ".mov", ".webm", ".aac", ".avi"];
     const ext = selectedFile.name.substring(selectedFile.name.lastIndexOf(".")).toLowerCase();
 
     if (!validExtensions.includes(ext)) {
-      setError(`Дэмжигдээгүй файл формат байна (${ext}). MP3, WAV, M4A, OGG, эсвэл MP4 файл сонгоно уу.`);
+      setError(`Дэмжигдээгүй файл формат байна (${ext}). MP3, WAV, M4A, OGG, FLAC, MP4, MKV, MOV файл сонгоно уу.`);
       return;
     }
 
-    if (selectedFile.size > 25 * 1024 * 1024) {
-      setError("Файлын хэмжээ хэт том байна! Дээд хязгаар: 25MB.");
+    if (selectedFile.size > 2 * 1024 * 1024 * 1024) {
+      setError("Файлын хэмжээ хэт том байна! Дээд хязгаар: 2 GB.");
       return;
     }
 
@@ -657,7 +662,7 @@ export default function LyricsPage() {
             <input
               type="file"
               ref={fileInputRef}
-              accept=".mp3,.wav,.m4a,.ogg,.mp4,audio/*,video/mp4"
+              accept=".mp3,.wav,.m4a,.ogg,.flac,.mp4,.mkv,.mov,.webm,.aac,audio/*,video/*"
               style={{ display: "none" }}
               onChange={(e) => {
                 if (e.target.files && e.target.files.length > 0) {
@@ -672,7 +677,7 @@ export default function LyricsPage() {
             </div>
             <h3 style={{ margin: "0 0 8px 0", fontSize: "1.15rem" }}>Аудио эсвэл видео файл энд чирж тавина уу</h3>
             <p style={{ color: "var(--text-muted, #888)", fontSize: "0.88rem", margin: 0 }}>
-              Дэмжигдэх формат: <strong>MP3, WAV, M4A, OGG, MP4</strong> (Дээд хэмжээ: 25MB)
+              Дэмжигдэх формат: <strong>MP3, WAV, M4A, OGG, FLAC, MP4, MKV, MOV</strong> (Дээд хэмжээ: 2 GB)
             </p>
           </div>
         ) : (

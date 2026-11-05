@@ -25,6 +25,52 @@ STEMS_DIR = os.path.join(os.path.dirname(__file__), "stems")
 os.makedirs(STEMS_DIR, exist_ok=True)
 
 
+def _read_audio_any_format(audio_path_or_bytes: str | bytes) -> Tuple[np.ndarray, int]:
+    """Read audio from WAV/MP3/FLAC/OGG via soundfile, falling back to FFmpeg for MP4/M4A/MKV/WEBM."""
+    try:
+        if isinstance(audio_path_or_bytes, bytes):
+            return sf.read(io.BytesIO(audio_path_or_bytes), dtype="float32")
+        return sf.read(audio_path_or_bytes, dtype="float32")
+    except Exception:
+        import subprocess
+        import tempfile
+        import karaoke_ass
+
+        ffmpeg_bin = karaoke_ass.find_system_or_bundled_ffmpeg()
+        if not ffmpeg_bin:
+            raise
+        in_tmp = None
+        out_tmp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False).name
+        try:
+            if isinstance(audio_path_or_bytes, bytes):
+                with tempfile.NamedTemporaryFile(suffix=".bin", delete=False) as tf:
+                    tf.write(audio_path_or_bytes)
+                    in_tmp = tf.name
+                in_path = in_tmp
+            else:
+                in_path = audio_path_or_bytes
+            subprocess.run(
+                [ffmpeg_bin, "-y", "-i", in_path, "-vn", "-ac", "2", "-ar", "44100", "-c:a", "pcm_s16le", out_tmp],
+                stdout=subprocess.DEVLPULL if hasattr(subprocess, "DEVLPULL") else subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=600,
+                check=True,
+                creationflags=0x08000000 if os.name == "nt" else 0,
+            )
+            return sf.read(out_tmp, dtype="float32")
+        finally:
+            if in_tmp and os.path.exists(in_tmp):
+                try:
+                    os.remove(in_tmp)
+                except Exception:
+                    pass
+            if os.path.exists(out_tmp):
+                try:
+                    os.remove(out_tmp)
+                except Exception:
+                    pass
+
+
 def separate_audio_stems(
     audio_path_or_bytes: str | bytes,
     target_sr: int = 44100,
@@ -36,10 +82,7 @@ def separate_audio_stems(
     2. 2D Harmonic-Percussive Source Separation (HPSS) to suppress drums/hi-hats
     3. Smooth vocal frequency-band masking (95 Hz - 7600 Hz)
     """
-    if isinstance(audio_path_or_bytes, bytes):
-        data, sr = sf.read(io.BytesIO(audio_path_or_bytes), dtype="float32")
-    else:
-        data, sr = sf.read(audio_path_or_bytes, dtype="float32")
+    data, sr = _read_audio_any_format(audio_path_or_bytes)
 
     if data.ndim == 1:
         is_mono = True
@@ -141,10 +184,15 @@ def extract_vocals_for_lyrics(input_audio_path: str, output_wav_path: str, stren
         else:
             vocals_mono = vocals
         # Mix 78% isolated vocal + 22% original center so consonants stay crisp for Whisper
-        orig, _ = sf.read(input_audio_path, dtype="float32")
+        orig, _ = _read_audio_any_format(input_audio_path)
         orig_mono = orig.mean(axis=1) if orig.ndim > 1 else orig
         min_len = min(len(vocals_mono), len(orig_mono))
         blended = 0.78 * vocals_mono[:min_len] + 0.22 * orig_mono[:min_len]
+        if sr != 16000 and len(blended) > 0:
+            from math import gcd
+            g = gcd(int(sr), 16000)
+            blended = sps.resample_poly(blended, 16000 // g, int(sr) // g).astype(np.float32)
+            sr = 16000
         peak = float(np.max(np.abs(blended)))
         if peak > 1e-5:
             blended = (blended / peak) * 0.92
@@ -155,7 +203,7 @@ def extract_vocals_for_lyrics(input_audio_path: str, output_wav_path: str, stren
 
 
 def process_separation_job(
-    audio_bytes: bytes,
+    audio_bytes: str | bytes,
     original_filename: str = "track.mp3",
     vocal_strength: float = 1.3,
 ) -> Dict[str, str | float | int]:

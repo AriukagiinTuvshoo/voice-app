@@ -1580,13 +1580,15 @@ def find_local_ggml_model(model_name: str = "base", custom_dirs: Optional[list[s
     """
     info = WHISPER_MODELS_INFO.get(model_name, {})
     ggml_filename = info.get("ggml_filename", f"ggml-{model_name}.bin")
+    base_m = re.sub(r"-q[0-9]_[0-9]$", "", model_name or "base")
     candidate_names = [
         ggml_filename,
         f"ggml-{model_name}.bin",
         f"ggml-{model_name}.gguf",
-        f"ggml-{model_name}-q5_1.bin",
-        f"ggml-{model_name}-q5_0.bin",
-        f"ggml-{model_name}-q8_0.bin",
+        f"ggml-{base_m}-q5_1.bin",
+        f"ggml-{base_m}-q5_0.bin",
+        f"ggml-{base_m}-q8_0.bin",
+        f"ggml-{base_m}.bin",
     ]
 
     search_dirs: list[str] = []
@@ -1597,6 +1599,9 @@ def find_local_ggml_model(model_name: str = "base", custom_dirs: Optional[list[s
     search_dirs.extend([
         os.path.join(cwd, "models"),
         os.path.join(cwd, "models", "whisper"),
+        os.path.join(CANONICAL_APP_DIR, "models"),
+        os.path.join(CANONICAL_APP_DIR, "models", "whisper"),
+        os.path.join(CANONICAL_USER_DATA_DIR, "models"),
         os.path.join(os.environ.get("LOCALAPPDATA", ""), "VOICE-App", "models"),
         os.path.join(os.environ.get("USERPROFILE", ""), ".cache", "whisper"),
     ])
