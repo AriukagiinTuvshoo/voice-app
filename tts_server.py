@@ -308,7 +308,11 @@ def save_server_settings(data: dict) -> dict:
     disk_cfg = dict(cfg)
     raw_token = disk_cfg.get("chimege_token", "")
     if raw_token and not raw_token.startswith("dpapi:"):
-        disk_cfg["chimege_token"] = dpapi_encrypt(raw_token)
+        try:
+            disk_cfg["chimege_token"] = dpapi_encrypt(raw_token)
+        except Exception as e:
+            logger.error("[Settings] DPAPI encryption failed: %s; omitting token to prevent plaintext storage", e)
+            disk_cfg.pop("chimege_token", None)
     try:
         with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
             json.dump(disk_cfg, f, indent=2, ensure_ascii=False)
@@ -339,10 +343,20 @@ def check_single_instance(port: int = 8000) -> bool:
             print(f"[!] VOICE engine already running on port {port}. Bringing FlowBar to front and exiting cleanly.")
             try:
                 import urllib.request
+                headers = {"Content-Type": "application/json"}
+                sess_file = os.path.join(USER_DATA_DIR, "session.json")
+                if os.path.isfile(sess_file):
+                    try:
+                        with open(sess_file, "r", encoding="utf-8") as sf:
+                            t = json.load(sf).get("token")
+                            if t:
+                                headers["X-Session-Token"] = t
+                    except Exception:
+                        pass
                 req = urllib.request.Request(
                     f"http://127.0.0.1:{port}/flowbar/action",
                     data=json.dumps({"action": "show"}).encode("utf-8"),
-                    headers={"Content-Type": "application/json"},
+                    headers=headers,
                     method="POST",
                 )
                 urllib.request.urlopen(req, timeout=1.5)
@@ -386,6 +400,14 @@ SENSITIVE_GET_PATHS = {
     "/api/voice-profiles",
 }
 
+def is_sensitive_get_path(path: str) -> bool:
+    """Check if a GET request path accesses sensitive private data or operations."""
+    if path in SENSITIVE_GET_PATHS:
+        return True
+    if path.startswith(("/api/voice-profiles", "/clones", "/api/audio/stems", "/api/update/", "/api/tts/clone")):
+        return True
+    return False
+
 def is_authorized_request(request: Request) -> bool:
     # 1. Header X-Session-Token
     tok = request.headers.get("X-Session-Token") or request.headers.get("x-session-token")
@@ -402,12 +424,7 @@ def is_authorized_request(request: Request) -> bool:
     if cookie_tok and cookie_tok == SESSION_TOKEN:
         return True
 
-    # 4. Query param
-    query_tok = request.query_params.get("token")
-    if query_tok and query_tok == SESSION_TOKEN:
-        return True
-
-    # 5. Test bypass: if running in unittest / testserver and unauth is allowed
+    # 4. Test harness bypass for non-auth unit test suites (query params intentionally NOT allowed)
     if os.environ.get("VOICE_TEST_BYPASS_AUTH") == "1" or request.headers.get("host") in ("testserver", f"testserver:{SERVER_PORT}", "testserver:80"):
         return True
 
@@ -433,9 +450,19 @@ async def local_only_guard(request: Request, call_next):
     # Auth token check for POST, DELETE, PUT and sensitive GETs
     method = request.method.upper()
     path = request.url.path
-    if method in ("POST", "DELETE", "PUT", "PATCH") or path in SENSITIVE_GET_PATHS or path.startswith("/api/update/"):
+    if method in ("POST", "DELETE", "PUT", "PATCH") or is_sensitive_get_path(path):
         if path not in ("/api/session",):
-            if not is_authorized_request(request):
+            # Special exemption for local single-instance wake
+            is_wake = False
+            if path == "/flowbar/action" and host_name in ("127.0.0.1", "localhost"):
+                try:
+                    body_bytes = await request.body()
+                    action_data = json.loads(body_bytes.decode("utf-8")) if body_bytes else {}
+                    if action_data.get("action") == "show":
+                        is_wake = True
+                except Exception:
+                    pass
+            if not is_wake and not is_authorized_request(request):
                 return Response(
                     json.dumps({"detail": "Unauthorized: valid session token required."}),
                     status_code=401,
@@ -447,7 +474,7 @@ async def local_only_guard(request: Request, call_next):
         response.set_cookie(
             key="voice_session_token",
             value=SESSION_TOKEN,
-            httponly=False,
+            httponly=True,
             samesite="strict",
             path="/"
         )
@@ -5151,7 +5178,7 @@ async def api_spellcheck(req: dict):
 # ---------------------------------------------------------------------------
 # Static Web App Mount (Single Port 8000 Desktop Architecture)
 # ---------------------------------------------------------------------------
-from fastapi.responses import FileResponse, RedirectResponse
+from fastapi.responses import FileResponse, RedirectResponse, HTMLResponse
 
 OUT_DIR = os.path.join(BASE_DIR, "out")
 
@@ -5177,7 +5204,31 @@ def serve_app_page(request: Request):
     idx_file = os.path.join(OUT_DIR, "index.html")
     if os.path.isfile(idx_file):
         return FileResponse(idx_file, media_type="text/html")
-    raise HTTPException(status_code=404, detail="Page not found")
+    fallback_html = f"""<!DOCTYPE html>
+<html lang="mn">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>VOICE Dashboard</title>
+<style>
+body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0b0f19; color: #f1f5f9; display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; }}
+.card {{ background: #1e293b; border: 1px solid #334155; border-radius: 16px; padding: 40px; max-width: 540px; text-align: center; box-shadow: 0 20px 40px rgba(0,0,0,0.5); }}
+h1 {{ font-size: 22px; color: #818cf8; margin: 0 0 16px; }}
+p {{ font-size: 14px; line-height: 1.6; color: #94a3b8; margin: 0 0 20px; }}
+.pill {{ display: inline-block; padding: 6px 14px; border-radius: 9999px; background: #312e81; color: #c7d2fe; font-size: 12px; font-weight: 600; margin-bottom: 20px; }}
+.code {{ background: #0f172a; padding: 8px 14px; border-radius: 8px; font-family: monospace; color: #38bdf8; font-size: 13px; display: inline-block; }}
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="pill">VOICE v{APP_VERSION}</div>
+  <h1>VOICE Dashboard бэлтгэгдэж байна</h1>
+  <p>Статик интерфейсийн файлууд ({page}.html) олдсонгүй.<br>VOICE FlowBar (F8) ажиллаж байгаа ба та шууд ярьж бичих боломжтой.</p>
+  <div class="code">npm run build</div>
+</div>
+</body>
+</html>"""
+    return HTMLResponse(content=fallback_html, status_code=200)
 
 @app.get("/api/check-update")
 @app.get("/api/update/check")

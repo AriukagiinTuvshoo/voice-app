@@ -127,12 +127,24 @@ MN_PHONE_PREFIXES: Set[str] = {
 
 
 
+class DPAPIError(RuntimeError):
+    """Raised when Windows DPAPI encryption fails."""
+    pass
+
+
 def dpapi_encrypt(plaintext: str) -> str:
-    """Encrypt a string using Windows DPAPI (CryptProtectData). Returns 'dpapi:<base64>'."""
+    """Encrypt a string using Windows DPAPI (CryptProtectData). Returns 'dpapi:<base64>'.
+    
+    Raises DPAPIError on Windows if encryption fails. Never silently returns plaintext.
+    On non-Windows, raises NotImplementedError unless VOICE_TEST_MOCK_DPAPI=1 is set.
+    """
     if not plaintext:
         return ""
     if os.name != "nt":
-        return plaintext
+        if os.environ.get("VOICE_TEST_MOCK_DPAPI") == "1":
+            import base64
+            return "dpapi:mock:" + base64.b64encode(plaintext.encode("utf-8")).decode("ascii")
+        raise NotImplementedError("DPAPI encryption is only supported on Windows")
     try:
         import ctypes
         from ctypes import wintypes
@@ -151,22 +163,33 @@ def dpapi_encrypt(plaintext: str) -> str:
         in_blob = DATA_BLOB(len(data), ctypes.cast(ctypes.create_string_buffer(data), ctypes.POINTER(ctypes.c_char)))
         out_blob = DATA_BLOB()
         if not crypt32.CryptProtectData(ctypes.byref(in_blob), "voice_secret", None, None, None, 0, ctypes.byref(out_blob)):
-            return plaintext
+            raise DPAPIError("CryptProtectData returned false")
         encrypted_bytes = ctypes.string_at(out_blob.pbData, out_blob.cbData)
         kernel32.LocalFree(out_blob.pbData)
         return "dpapi:" + base64.b64encode(encrypted_bytes).decode("ascii")
-    except Exception:
-        return plaintext
+    except DPAPIError:
+        raise
+    except Exception as e:
+        raise DPAPIError(f"DPAPI encryption failed: {e}") from e
 
 
 def dpapi_decrypt(ciphertext: str) -> str:
-    """Decrypt a string encrypted with dpapi_encrypt. If not starting with 'dpapi:', returns as-is."""
+    """Decrypt a string encrypted with dpapi_encrypt. If not starting with 'dpapi:', returns as-is.
+    
+    Decryption errors return '' gracefully without raising or crashing the application.
+    """
     if not ciphertext or not isinstance(ciphertext, str):
         return ""
     if not ciphertext.startswith("dpapi:"):
         return ciphertext
+    if ciphertext.startswith("dpapi:mock:"):
+        try:
+            import base64
+            return base64.b64decode(ciphertext[11:].encode("ascii")).decode("utf-8")
+        except Exception:
+            return ""
     if os.name != "nt":
-        return ciphertext[6:]
+        return ""
     try:
         import ctypes
         from ctypes import wintypes

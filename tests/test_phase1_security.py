@@ -6,10 +6,11 @@ import voice_core
 import auto_updater
 import tts_server
 
-client = TestClient(tts_server.app)
-
 
 class TestPhase1SecurityAndPrivacy(unittest.TestCase):
+    def setUp(self):
+        self.client = TestClient(tts_server.app)
+
     def tearDown(self):
         # Restore default settings so subsequent test suites aren't mutated
         tts_server.save_server_settings({
@@ -38,20 +39,37 @@ class TestPhase1SecurityAndPrivacy(unittest.TestCase):
         self.assertTrue(masked.startswith("secr"))
         self.assertTrue(masked.endswith("2345"))
 
+    def test_dpapi_error_handling(self):
+        """Test DPAPI failure raising DPAPIError instead of silently returning plaintext."""
+        self.assertTrue(issubclass(voice_core.DPAPIError, RuntimeError))
+        # Test mock non-windows behavior
+        old_env = os.environ.get("VOICE_TEST_MOCK_DPAPI")
+        try:
+            os.environ["VOICE_TEST_MOCK_DPAPI"] = "1"
+            # Decrypt of mock string works gracefully
+            self.assertEqual(voice_core.dpapi_decrypt("dpapi:mock:" + base64.b64encode(b"hello").decode()), "hello")
+            # Invalid decrypt string returns "" gracefully
+            self.assertEqual(voice_core.dpapi_decrypt("dpapi:corrupt_base64_%%%"), "")
+        finally:
+            if old_env is not None:
+                os.environ["VOICE_TEST_MOCK_DPAPI"] = old_env
+            else:
+                os.environ.pop("VOICE_TEST_MOCK_DPAPI", None)
+
     def test_session_token_and_auth_middleware(self):
         """Test that per-session auth token is required on protected routes and rejected without it."""
         session_token = tts_server.SESSION_TOKEN
         self.assertTrue(bool(session_token), "SESSION_TOKEN must be generated at startup")
 
         # 1. Unauthenticated request to sensitive GET route with custom non-test host
-        res = client.get(
+        res = self.client.get(
             "/api/settings",
             headers={"Host": f"127.0.0.1:{tts_server.SERVER_PORT}"},
         )
         self.assertEqual(res.status_code, 401, "Protected GET without token must return 401 Unauthorized")
 
         # 2. Authenticated request with header X-Session-Token
-        res_auth = client.get(
+        res_auth = self.client.get(
             "/api/settings",
             headers={
                 "Host": f"127.0.0.1:{tts_server.SERVER_PORT}",
@@ -64,7 +82,7 @@ class TestPhase1SecurityAndPrivacy(unittest.TestCase):
         self.assertIn("disable_ctrl_alt", data)
 
         # 3. Authenticated request with Authorization Bearer
-        res_bearer = client.get(
+        res_bearer = self.client.get(
             "/api/settings",
             headers={
                 "Host": f"127.0.0.1:{tts_server.SERVER_PORT}",
@@ -74,15 +92,22 @@ class TestPhase1SecurityAndPrivacy(unittest.TestCase):
         self.assertEqual(res_bearer.status_code, 200)
 
         # 4. Authenticated request with Cookie
-        res_cookie = client.get(
+        res_cookie = self.client.get(
             "/api/settings",
             headers={"Host": f"127.0.0.1:{tts_server.SERVER_PORT}"},
             cookies={"voice_session_token": session_token},
         )
         self.assertEqual(res_cookie.status_code, 200)
 
-        # 5. Invalid token rejected
-        res_bad = client.get(
+        # 5. Query param token MUST BE REJECTED (no token in query string allowed)
+        res_query = self.client.get(
+            f"/api/settings?token={session_token}",
+            headers={"Host": f"127.0.0.1:{tts_server.SERVER_PORT}"},
+        )
+        self.assertEqual(res_query.status_code, 401, "Query parameter tokens must be rejected with 401")
+
+        # 6. Invalid token rejected
+        res_bad = self.client.get(
             "/api/settings",
             headers={
                 "Host": f"127.0.0.1:{tts_server.SERVER_PORT}",
@@ -91,12 +116,49 @@ class TestPhase1SecurityAndPrivacy(unittest.TestCase):
         )
         self.assertEqual(res_bad.status_code, 401)
 
+    def test_voice_profiles_and_clones_route_protection(self):
+        """Test private voice profiles endpoints are protected against unauthenticated access."""
+        # Unauthenticated access to /clones must be blocked
+        res_clones = self.client.get(
+            "/clones",
+            headers={"Host": f"127.0.0.1:{tts_server.SERVER_PORT}"},
+        )
+        self.assertEqual(res_clones.status_code, 401)
+
+        # Unauthenticated access to /api/voice-profiles must be blocked
+        res_profiles = self.client.get(
+            "/api/voice-profiles",
+            headers={"Host": f"127.0.0.1:{tts_server.SERVER_PORT}"},
+        )
+        self.assertEqual(res_profiles.status_code, 401)
+
+    def test_single_instance_wake_exemption(self):
+        """Test that POST /flowbar/action with action='show' from 127.0.0.1 is allowed without auth token."""
+        res = self.client.post(
+            "/flowbar/action",
+            json={"action": "show"},
+            headers={"Host": f"127.0.0.1:{tts_server.SERVER_PORT}"},
+        )
+        self.assertEqual(res.status_code, 200)
+
+    def test_httponly_session_cookie(self):
+        """Test that session cookie returned on HTML pages has HttpOnly and SameSite=Strict."""
+        res = self.client.get(
+            "/dashboard",
+            headers={"Host": f"127.0.0.1:{tts_server.SERVER_PORT}"},
+        )
+        self.assertEqual(res.status_code, 200)
+        cookie_header = res.headers.get("set-cookie", "")
+        self.assertIn("voice_session_token", cookie_header)
+        self.assertIn("HttpOnly", cookie_header)
+        self.assertIn("samesite=strict", cookie_header.lower())
+
     def test_strict_origin_check(self):
         """Test that requests from disallowed origins (different ports or domains) are blocked with 403."""
         token = tts_server.SESSION_TOKEN
 
         # Allowed origin
-        allowed_res = client.post(
+        allowed_res = self.client.post(
             "/api/settings",
             json={"hotkey": "f8"},
             headers={
@@ -108,7 +170,7 @@ class TestPhase1SecurityAndPrivacy(unittest.TestCase):
         self.assertEqual(allowed_res.status_code, 200)
 
         # Disallowed origin (different port on localhost: attacker on localhost:3000)
-        forbidden_res = client.post(
+        forbidden_res = self.client.post(
             "/api/settings",
             json={"hotkey": "f8"},
             headers={
@@ -124,7 +186,7 @@ class TestPhase1SecurityAndPrivacy(unittest.TestCase):
         token = tts_server.SESSION_TOKEN
 
         # Valid update
-        res = client.post(
+        res = self.client.post(
             "/api/settings",
             json={
                 "hotkey": "f9",
@@ -147,7 +209,7 @@ class TestPhase1SecurityAndPrivacy(unittest.TestCase):
         self.assertTrue(saved.get("offline_only"))
 
         # Verify chimege_token is never returned in plaintext in GET
-        get_res = client.get(
+        get_res = self.client.get(
             "/api/settings",
             headers={
                 "Host": f"127.0.0.1:{tts_server.SERVER_PORT}",
@@ -188,7 +250,7 @@ class TestPhase1SecurityAndPrivacy(unittest.TestCase):
         files = {"audio": ("test_huge.wav", oversized, "audio/wav")}
         data = {"ass_content": "[Script Info]\nTitle: test", "title": "test_video"}
 
-        res = client.post(
+        res = self.client.post(
             "/api/lyrics/export-video",
             files=files,
             data=data,
