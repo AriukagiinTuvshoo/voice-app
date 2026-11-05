@@ -209,6 +209,8 @@ def dpapi_decrypt(ciphertext: str) -> str:
         in_blob = DATA_BLOB(len(raw), ctypes.cast(ctypes.create_string_buffer(raw), ctypes.POINTER(ctypes.c_char)))
         out_blob = DATA_BLOB()
         if not crypt32.CryptUnprotectData(ctypes.byref(in_blob), None, None, None, None, 0, ctypes.byref(out_blob)):
+            err_code = kernel32.GetLastError()
+            logger.warning("[DPAPI] CryptUnprotectData failed (system error code: 0x%08X)", err_code)
             return ""
         decrypted_bytes = ctypes.string_at(out_blob.pbData, out_blob.cbData)
         kernel32.LocalFree(out_blob.pbData)

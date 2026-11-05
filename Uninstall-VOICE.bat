@@ -31,7 +31,7 @@ if not "%~1"=="--silent" (
 echo.
 
 echo [1/4] Stopping running VOICE background engine...
-powershell -NoProfile -Command "try { Invoke-RestMethod -Uri 'http://127.0.0.1:8000/api/quit' -Method Post -TimeoutSec 2 } catch { }" >nul 2>&1
+powershell -NoProfile -Command "$sf = Join-Path $env:APPDATA 'VOICE\session.json'; $tk = if (Test-Path $sf) { try { (Get-Content $sf | ConvertFrom-Json).token } catch { '' } } else { '' }; $qh = if ($tk) { @{ 'X-Session-Token' = $tk } } else { @{} }; try { Invoke-RestMethod -Uri 'http://127.0.0.1:8000/api/quit' -Method Post -Headers $qh -TimeoutSec 2 } catch { }" >nul 2>&1
 powershell -NoProfile -Command "Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object { $_.CommandLine -like '*VOICE*tts_server.py*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }" >nul 2>&1
 
 echo [2/4] Removing Desktop and Start Menu shortcuts...

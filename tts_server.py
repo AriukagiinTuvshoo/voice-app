@@ -299,20 +299,36 @@ def load_server_settings() -> dict:
 def save_server_settings(data: dict) -> dict:
     cfg = load_server_settings()
     clean = sanitize_settings(data)
-    # If chimege_token in update is masked (contains '***'), keep existing token
-    if "***" in clean.get("chimege_token", ""):
+    # If chimege_token in update is masked (contains '***') or not provided, preserve existing token
+    incoming_tok = data.get("chimege_token") if isinstance(data, dict) else None
+    if incoming_tok is None or "***" in clean.get("chimege_token", ""):
         clean["chimege_token"] = cfg.get("chimege_token", "")
     cfg.update(clean)
+
+    # Read existing disk configuration to preserve existing encrypted DPAPI secret if not modified
+    disk_chimege = ""
+    if os.path.isfile(SETTINGS_FILE):
+        try:
+            with open(SETTINGS_FILE, "r", encoding="utf-8") as sf:
+                disk_chimege = json.load(sf).get("chimege_token", "")
+        except Exception:
+            pass
 
     # Save to disk with chimege_token encrypted via DPAPI
     disk_cfg = dict(cfg)
     raw_token = disk_cfg.get("chimege_token", "")
-    if raw_token and not raw_token.startswith("dpapi:"):
-        try:
-            disk_cfg["chimege_token"] = dpapi_encrypt(raw_token)
-        except Exception as e:
-            logger.error("[Settings] DPAPI encryption failed: %s; omitting token to prevent plaintext storage", e)
-            disk_cfg.pop("chimege_token", None)
+    if raw_token:
+        if raw_token.startswith("dpapi:"):
+            pass  # Already encrypted
+        else:
+            try:
+                disk_cfg["chimege_token"] = dpapi_encrypt(raw_token)
+            except Exception as e:
+                logger.error("[Settings] DPAPI encryption failed: %s; omitting token to prevent plaintext storage", e)
+                disk_cfg.pop("chimege_token", None)
+    elif disk_chimege.startswith("dpapi:") and (incoming_tok is None or "***" in str(incoming_tok)):
+        # Decryption may have failed in load_server_settings; do NOT erase the existing valid disk secret
+        disk_cfg["chimege_token"] = disk_chimege
     try:
         with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
             json.dump(disk_cfg, f, indent=2, ensure_ascii=False)
@@ -454,7 +470,9 @@ async def local_only_guard(request: Request, call_next):
         if path not in ("/api/session",):
             # Special exemption for local single-instance wake
             is_wake = False
-            if path == "/flowbar/action" and host_name in ("127.0.0.1", "localhost"):
+            client_ip = request.client.host if request.client else ""
+            is_loopback = client_ip in ("127.0.0.1", "::1", "localhost", "testclient")
+            if path == "/flowbar/action" and (is_loopback or host_name in ("127.0.0.1", "localhost", "::1", "[::1]")):
                 try:
                     body_bytes = await request.body()
                     action_data = json.loads(body_bytes.decode("utf-8")) if body_bytes else {}
@@ -3892,6 +3910,7 @@ def health():
     fg = user32.GetForegroundWindow() if os.name == "nt" else 0
     st_info = compute_flowbar_status(FLOWBAR_STATE, now=time.time())
     return {
+        "app": "VOICE",
         "status": "ok",
         "has_edge": HAS_EDGE_TTS,
         "has_stt": HAS_SR,
