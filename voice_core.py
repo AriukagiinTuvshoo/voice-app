@@ -102,15 +102,29 @@ HOTKEY_NAMES: Dict[str, str] = {
     "f4": "F4",
 }
 
+MN_ORDINALS_DIGITS: Dict[str, int] = {
+    "нэгдүгээр": 1, "хоёрдугаар": 2, "гуравдугаар": 3, "гутгаар": 3,
+    "дөрөвдүгээр": 4, "дөтгөөр": 4, "тавдугаар": 5, "зургаадугаар": 6,
+    "зургадугаар": 6, "долоодугаар": 7, "долодугаар": 7, "наймдугаар": 8,
+    "есдүгээр": 9,
+}
+MN_ORDINALS_TENS: Dict[str, int] = {
+    "аравдугаар": 10, "хорьдугаар": 20, "гучдугаар": 30, "дөчдүгээр": 40,
+    "тавьдугаар": 50, "жардугаар": 60, "далдугаар": 70, "наядугаар": 80,
+    "ердүгээр": 90,
+}
+MN_ORDINAL_WORDS: Set[str] = set(MN_ORDINALS_DIGITS.keys()) | set(MN_ORDINALS_TENS.keys())
 MN_DIGITS: Dict[str, int] = {
     "тэг": 0, "нэг": 1, "нэгэн": 1, "хоёр": 2, "гурав": 3, "гурван": 3,
     "дөрөв": 4, "дөрвөн": 4, "тав": 5, "таван": 5, "зургаа": 6, "зургаан": 6,
     "долоо": 7, "долоон": 7, "найм": 8, "найман": 8, "ес": 9, "есөн": 9,
+    **MN_ORDINALS_DIGITS,
 }
 MN_TENS: Dict[str, int] = {
     "арав": 10, "арван": 10, "хорь": 20, "хорин": 20, "гуч": 30, "гучин": 30,
     "дөч": 40, "дөчин": 40, "тавь": 50, "тавин": 50, "жар": 60, "жаран": 60,
     "дал": 70, "далан": 70, "ная": 80, "наян": 80, "ер": 90, "ерэн": 90,
+    **MN_ORDINALS_TENS,
 }
 MN_SCALES: Dict[str, int] = {
     "зуу": 100, "зуун": 100,
@@ -484,7 +498,10 @@ def split_number_token_groups(tokens: list[str]) -> list[list[str]]:
             cur_type = "scale"
 
         if current_group:
-            if cur_type == "ten" and last_type in ("digit", "ten"):
+            if last_type == "ordinal":
+                groups.append(current_group)
+                current_group = []
+            elif cur_type == "ten" and last_type in ("digit", "ten"):
                 groups.append(current_group)
                 current_group = []
             elif cur_type == "digit" and last_type == "digit":
@@ -492,7 +509,7 @@ def split_number_token_groups(tokens: list[str]) -> list[list[str]]:
                 current_group = []
 
         current_group.append(t)
-        last_type = cur_type
+        last_type = "ordinal" if t in MN_ORDINAL_WORDS else cur_type
 
     if current_group:
         groups.append(current_group)
@@ -637,13 +654,21 @@ def normalize_mongolian_numbers(text: str) -> str:
             for g in groups:
                 v = convert_mn_number_tokens(g)
                 if v is not None:
-                    parsed_vals.append(str(v))
+                    if g[-1] in MN_ORDINAL_WORDS:
+                        parsed_vals.append(f"{v}-р")
+                    else:
+                        parsed_vals.append(str(v))
 
             if parsed_vals:
-                # Check if followed by "хувь"
-                if j < n and re.sub(r"[^\w\s]", "", words[j].lower()) == "хувь":
-                    parsed_vals[-1] = f"{parsed_vals[-1]}%"
-                    j += 1
+                # Check if followed by "хувь" or standalone ordinal suffix ("дүгээр", "дугаар")
+                if j < n:
+                    next_clean = re.sub(r"[^\w\s]", "", words[j].lower())
+                    if next_clean == "хувь":
+                        parsed_vals[-1] = f"{parsed_vals[-1]}%"
+                        j += 1
+                    elif next_clean in ("дүгээр", "дугаар") and not parsed_vals[-1].endswith("-р"):
+                        parsed_vals[-1] = f"{parsed_vals[-1]}-р"
+                        j += 1
                 result.extend(parsed_vals)
                 i = j
                 continue
@@ -1790,3 +1815,84 @@ def transcribe_with_whisper_cpp_cli(
         return "", [], f"whisper.cpp тооцоолол хугацаа хэтэрлээ ({timeout_sec} сек)."
     except Exception as e:
         return "", [], f"whisper.cpp ажиллуулахад алдаа: {e}"
+
+
+_WHISPER_HALLUCINATION_PATTERNS = [
+    re.compile(r"(?:subtitles?\s+by|amara\.org|thank\s+you\s+for\s+watching|please\s+subscribe)", re.IGNORECASE),
+    re.compile(r"^\s*[\[\(].*(?:music|хөгжим|алга\s+ташилт|applause|silence).*[\]\)]\s*$", re.IGNORECASE),
+    re.compile(r"^(?:анхаарал\s+тавьсанд\s+баярлалаа|дараагийн\s+бичлэгээр\s+уулзацгаая)\.?$", re.IGNORECASE),
+]
+
+
+def clean_lyrics_segments(segments: list[Dict[str, Any]], language: str = "mn") -> list[Dict[str, Any]]:
+    """
+    Post-process Auto-Lyrics segments to:
+    1. Filter out known Whisper silence/music-outro hallucinations.
+    2. Collapse runaway token repetitions (>4 identical consecutive words).
+    3. Normalize spacing & capitalize lyric lines cleanly.
+    4. Repair word-level timestamps so start < end and words are monotonic within [seg.start, seg.end].
+    """
+    if not segments:
+        return []
+
+    cleaned: list[Dict[str, Any]] = []
+    for seg in segments:
+        raw_text = str(seg.get("text", "")).strip()
+        if not raw_text:
+            continue
+
+        if any(pat.search(raw_text) for pat in _WHISPER_HALLUCINATION_PATTERNS):
+            continue
+
+        # Collapse >4 consecutive identical words (Whisper loop artifact on sustained musical notes)
+        tokens = raw_text.split()
+        dedup_tokens: list[str] = []
+        rep_count = 0
+        for tok in tokens:
+            if dedup_tokens and tok.lower().strip(".,!?") == dedup_tokens[-1].lower().strip(".,!?"):
+                rep_count += 1
+                if rep_count < 3:
+                    dedup_tokens.append(tok)
+            else:
+                rep_count = 0
+                dedup_tokens.append(tok)
+
+        text_norm = " ".join(dedup_tokens).strip()
+        if not text_norm:
+            continue
+        text_norm = text_norm[0].upper() + text_norm[1:] if len(text_norm) > 1 else text_norm.upper()
+
+        s_start = round(max(0.0, float(seg.get("start", 0.0))), 3)
+        s_end = round(max(s_start + 0.15, float(seg.get("end", s_start + 1.5))), 3)
+
+        raw_words = seg.get("words") or []
+        fixed_words: list[Dict[str, Any]] = []
+        cursor = s_start
+        for w in raw_words:
+            w_txt = str(w.get("word", "")).strip()
+            if not w_txt:
+                continue
+            w_s = max(cursor, float(w.get("start", cursor)))
+            w_e = max(w_s + 0.05, min(s_end, float(w.get("end", w_s + 0.18))))
+            if w_s >= s_end:
+                w_s = max(s_start, s_end - 0.12)
+                w_e = s_end
+            fixed_words.append({
+                **w,
+                "word": w_txt,
+                "start": round(w_s, 3),
+                "end": round(w_e, 3),
+            })
+            cursor = w_e
+
+        cleaned.append({
+            **seg,
+            "id": len(cleaned) + 1,
+            "start": s_start,
+            "end": s_end,
+            "text": text_norm,
+            "words": fixed_words,
+        })
+
+    return cleaned
+

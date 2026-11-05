@@ -154,19 +154,29 @@ def create_voice_profile(
 
     gender = "female" if f0 >= 165.0 else "male"
     gender_label = "Эмэгтэй" if gender == "female" else "Эрэгтэй"
+    base_voice = "mn-MN-YesuiNeural" if gender == "female" else "mn-MN-BataaNeural"
+    base_f0 = 210.0 if gender == "female" else 122.0
+    pitch_ratio = round(float(np.clip(f0 / base_f0, 0.80, 1.22)), 2)
+    clean_transcript = (ref_transcript or "").strip()[:500]
 
     profile = {
         "id": voice_id,
         "name": (name or "Миний хоолой").strip()[:48],
         "gender": gender,
         "gender_label": gender_label,
+        "baseVoice": base_voice,
+        "pitch": pitch_ratio,
+        "speed": 1.0,
         "f0": round(f0, 1),
         "duration": round(duration_s, 2),
         "sample_rate": sr,
         "consent_given": True,
-        "ref_transcript": (ref_transcript or "").strip()[:500],
+        "ref_transcript": clean_transcript,
+        "refText": clean_transcript,
         "sample_url": f"/api/voice-profiles/{voice_id}/audio",
+        "sampleUrl": f"/api/voice-profiles/{voice_id}/audio",
         "description": f"{gender_label} • f₀={f0:.0f}Hz • {duration_s:.1f}с",
+        "tag": "Хувилсан",
         "createdAt": int(time.time() * 1000),
     }
 

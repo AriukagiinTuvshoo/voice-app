@@ -86,6 +86,8 @@ export const defaultSettings: Settings = {
   useGpu: true,
   cpuThreads: 6,
   mongolianGrammar: true,
+  offlineOnly: false,
+  allowCloudStt: false,
   customVocabulary: [
     "Улаанбаатар",
     "Оюутолгой",

@@ -53,6 +53,8 @@ export interface Settings {
   snippets?: Record<string, string>;
   customVocabulary?: string[];
   mongolianGrammar?: boolean;
+  offlineOnly?: boolean;
+  allowCloudStt?: boolean;
 }
 
 export interface TranscriptionRecord {

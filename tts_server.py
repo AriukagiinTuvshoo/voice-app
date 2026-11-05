@@ -75,12 +75,14 @@ import json
 import math
 import os
 import re
+import shutil
 import subprocess
 import queue
 import threading
 import time
 import tempfile
 import unicodedata
+import urllib.parse
 import uuid
 from typing import Optional, List, Dict, Union, Any
 
@@ -147,6 +149,7 @@ from voice_core import (
     get_user_data_dir,
     CANONICAL_APP_DIR,
     CANONICAL_USER_DATA_DIR,
+    clean_lyrics_segments,
 )
 
 # Standard Windows Clipboard Format ID (defined at module level for cross-platform imports)
@@ -162,9 +165,12 @@ from karaoke_ass import (
     export_karaoke_video,
     is_ffmpeg_available,
     find_system_or_bundled_ffmpeg,
+    KARAOKE_THEMES,
+    ALLOWED_RESOLUTIONS,
 )
 from audio_separator import (
     separate_audio_stems,
+    extract_vocals_for_lyrics,
     process_separation_job,
     cleanup_stems,
     STEMS_DIR,
@@ -586,230 +592,28 @@ try:
 except Exception:
     pass
 
-# VoiceStudio Audio DSP Presets (ported from debpalash/VoiceStudio audio_dsp.py)
-VOICESTUDIO_PRESETS = {
-    "broadcast": {
-        "label": "Broadcast (Радио/Подкаст)",
-        "icon": "📻",
-        "description": "Жигд дуугаралттай, дулаан, тод студийн стандарт.",
-        "low_db": 1.8,
-        "mid_db": 0.5,
-        "high_db": 2.2,
-        "leveler": True,
-        "reverb": 0.0,
-    },
-    "podcast": {
-        "label": "Podcast (Ойрын микрофон)",
-        "icon": "🎙️",
-        "description": "Гүн баргил, цуурайгүй, ойроос ярьж буй мэт.",
-        "low_db": 2.5,
-        "mid_db": 1.8,
-        "high_db": 1.2,
-        "leveler": True,
-        "reverb": 0.0,
-    },
-    "warm": {
-        "label": "Warm (Дулаан зөөлөн)",
-        "icon": "☀️",
-        "description": "Зөөлөн нам давтамжтай, чихэнд эвтэйхэн өнгө.",
-        "low_db": 3.2,
-        "mid_db": 1.0,
-        "high_db": -1.2,
-        "leveler": True,
-        "reverb": 0.06,
-    },
-    "bright": {
-        "label": "Bright (Тод цэвэр)",
-        "icon": "✨",
-        "description": "Өндөр давтамж тодорсон, маш цэвэрхэн дуудлага.",
-        "low_db": -1.0,
-        "mid_db": 0.8,
-        "high_db": 3.8,
-        "leveler": True,
-        "reverb": 0.0,
-    },
-    "cinematic": {
-        "label": "Cinematic (Кино студи)",
-        "icon": "🎬",
-        "description": "Бага зэргийн орон зайн цуурайтай, сүрлэг өнгө.",
-        "low_db": 2.0,
-        "mid_db": 0.0,
-        "high_db": 1.8,
-        "leveler": True,
-        "reverb": 0.14,
-    },
-    "raw": {
-        "label": "Raw (Эффектгүй)",
-        "icon": "🔇",
-        "description": "Нэмэлт эффектгүй цэвэр гаралт.",
-        "low_db": 0.0,
-        "mid_db": 0.0,
-        "high_db": 0.0,
-        "leveler": False,
-        "reverb": 0.0,
-    },
-}
-
-VOICES = [
-    {
-        "id": "mn-MN-YesuiNeural",
-        "name": "Есүй",
-        "gender": "female",
-        "engine": "edge-neural",
-        "baseVoice": "mn-MN-YesuiNeural",
-        "pitch": 1.0,
-        "speed": 1.0,
-        "formantWarp": 1.0,
-        "defaultPreset": "broadcast",
-        "description": "Эелдэг, уян зөөлөн, байгалийн тод өнгө аяс (Эмэгтэй)",
-        "tag": "Үндсэн • Эмэгтэй",
-    },
-    {
-        "id": "mn-MN-BataaNeural",
-        "name": "Батаа",
-        "gender": "male",
-        "engine": "edge-neural",
-        "baseVoice": "mn-MN-BataaNeural",
-        "pitch": 1.0,
-        "speed": 1.0,
-        "formantWarp": 1.0,
-        "defaultPreset": "broadcast",
-        "description": "Цэвэр тод, өөртөө итгэлтэй, баргил (Эрэгтэй)",
-        "tag": "Үндсэн • Эрэгтэй",
-    },
-    {
-        "id": "mn-studio-narrator",
-        "name": "Тэмүүлэн",
-        "gender": "male",
-        "engine": "voicestudio-persona",
-        "baseVoice": "mn-MN-BataaNeural",
-        "pitch": 0.86,
-        "speed": 0.94,
-        "formantWarp": 0.91,
-        "defaultPreset": "cinematic",
-        "description": "Гүн баргил, кино тайлбар болон аудио номд зориулсан өгүүлэгч",
-        "tag": "Студи • Өгүүлэгч",
-    },
-    {
-        "id": "mn-studio-news",
-        "name": "Ану",
-        "gender": "female",
-        "engine": "voicestudio-persona",
-        "baseVoice": "mn-MN-YesuiNeural",
-        "pitch": 1.05,
-        "speed": 1.08,
-        "formantWarp": 1.03,
-        "defaultPreset": "bright",
-        "description": "Телевиз, мэдээний студийн тод цэвэр, хурц хэмнэлтэй хөтлөгч",
-        "tag": "Студи • Мэдээ",
-    },
-    {
-        "id": "mn-studio-podcast",
-        "name": "Ананд",
-        "gender": "male",
-        "engine": "voicestudio-persona",
-        "baseVoice": "mn-MN-BataaNeural",
-        "pitch": 0.94,
-        "speed": 1.04,
-        "formantWarp": 0.96,
-        "defaultPreset": "podcast",
-        "description": "Ойрын микрофоны дулаан, энгийн чөлөөт ярианы подкаст хоолой",
-        "tag": "Студи • Подкаст",
-    },
-    {
-        "id": "mn-studio-maral",
-        "name": "Марал",
-        "gender": "female",
-        "engine": "voicestudio-persona",
-        "baseVoice": "mn-MN-YesuiNeural",
-        "pitch": 0.92,
-        "speed": 0.91,
-        "formantWarp": 0.95,
-        "defaultPreset": "warm",
-        "description": "Тайвшруулах, зөөлөн дулаан, уран зохиол ба бясалгалын хоолой",
-        "tag": "Студи • Уянгалаг",
-    },
-    {
-        "id": "mn-studio-elder",
-        "name": "Тулга",
-        "gender": "male",
-        "engine": "voicestudio-persona",
-        "baseVoice": "mn-MN-BataaNeural",
-        "pitch": 0.78,
-        "speed": 0.88,
-        "formantWarp": 0.86,
-        "defaultPreset": "warm",
-        "description": "Намбалаг, цээжний гүн резонанстай, жинтэй эрэгтэй хоолой",
-        "tag": "Студи • Гүн баргил",
-    },
-    {
-        "id": "mn-studio-kid",
-        "name": "Мишээл",
-        "gender": "female",
-        "engine": "voicestudio-persona",
-        "baseVoice": "mn-MN-YesuiNeural",
-        "pitch": 1.24,
-        "speed": 1.06,
-        "formantWarp": 1.14,
-        "defaultPreset": "bright",
-        "description": "Үлгэр, хүүхдийн контентод зориулсан цовоо сэргэлэн хоолой",
-        "tag": "Студи • Хүүхэд",
-    },
-    {
-        "id": "en-US-AvaMultilingualNeural",
-        "name": "Ava (Multilingual)",
-        "gender": "female",
-        "engine": "edge-multilingual",
-        "baseVoice": "en-US-AvaMultilingualNeural",
-        "pitch": 1.0,
-        "speed": 1.0,
-        "formantWarp": 1.0,
-        "defaultPreset": "broadcast",
-        "description": "Англи болон олон улсын холимог текстийг унших студийн эмэгтэй хоолой",
-        "tag": "Олон хэл • Эмэгтэй",
-    },
-    {
-        "id": "en-US-AndrewMultilingualNeural",
-        "name": "Andrew (Multilingual)",
-        "gender": "male",
-        "engine": "edge-multilingual",
-        "baseVoice": "en-US-AndrewMultilingualNeural",
-        "pitch": 1.0,
-        "speed": 1.0,
-        "formantWarp": 1.0,
-        "defaultPreset": "podcast",
-        "description": "Англи болон олон улсын холимог текстийг унших гүн эрэгтэй хоолой",
-        "tag": "Олон хэл • Эрэгтэй",
-    },
-    {
-        "id": "ja-JP-NanamiNeural",
-        "name": "Nanami • 七海",
-        "gender": "female",
-        "engine": "edge-neural",
-        "baseVoice": "ja-JP-NanamiNeural",
-        "pitch": 1.0,
-        "speed": 1.0,
-        "formantWarp": 1.0,
-        "defaultPreset": "broadcast",
-        "description": "Япон хэлний байгалийн, маш тод цэвэр эмэгтэй хоолой (Japanese)",
-        "tag": "Япон • Эмэгтэй",
-    },
-    {
-        "id": "ja-JP-KeitaNeural",
-        "name": "Keita • 圭太",
-        "gender": "male",
-        "engine": "edge-neural",
-        "baseVoice": "ja-JP-KeitaNeural",
-        "pitch": 1.0,
-        "speed": 1.0,
-        "formantWarp": 1.0,
-        "defaultPreset": "broadcast",
-        "description": "Япон хэлний тод, итгэлтэй эрэгтэй хоолой (Japanese)",
-        "tag": "Япон • Эрэгтэй",
-    },
-]
-
-VOICES_BY_ID = {v["id"]: v for v in VOICES}
+from voice_dsp import (
+    TARGET_SR,
+    STFT_NPERSEG,
+    STFT_NOVERLAP,
+    CEPSTRAL_LIFTER,
+    BASE_ENVELOPES_CACHE,
+    VOICESTUDIO_PRESETS,
+    VOICES,
+    VOICES_BY_ID,
+    decode_audio_bytes,
+    encode_wav_bytes,
+    trim_silence,
+    normalize_audio_np,
+    level_speech_np,
+    apply_voicestudio_dsp,
+    extract_cepstral_envelope,
+    analyze_speaker_prosody,
+    apply_voice_clone_timbre,
+    apply_persona_formant_warp,
+    prepare_tts_text_for_voice,
+    synthesize_offline_fallback,
+)
 
 # ---------------------------------------------------------------------------
 # Cloned Voices Persistence
@@ -836,470 +640,6 @@ def save_cloned_voices_db(db: dict[str, dict]) -> None:
 
 
 CLONED_VOICES_DB: dict[str, dict] = load_cloned_voices()
-
-
-# ---------------------------------------------------------------------------
-# Audio Decode & VoiceStudio DSP / Cepstral Vocal Tract Timbre Transfer
-# ---------------------------------------------------------------------------
-
-TARGET_SR = 24000
-STFT_NPERSEG = 1024
-STFT_NOVERLAP = 768
-CEPSTRAL_LIFTER = 30  # Quefrency cutoff capturing vocal tract formants F1..F4
-
-
-def decode_audio_bytes(raw_bytes: bytes, target_sr: int = TARGET_SR) -> np.ndarray:
-    """Decode WAV, MP3, M4A, WEBM, FLAC, OGG into mono float32 numpy array at target_sr."""
-    if HAS_MINIAUDIO:
-        try:
-            decoded = miniaudio.decode(
-                raw_bytes,
-                output_format=miniaudio.SampleFormat.FLOAT32,
-                nchannels=1,
-                sample_rate=target_sr,
-            )
-            samples = np.frombuffer(decoded.samples, dtype=np.float32).copy()
-            if samples.size > 0:
-                return samples
-        except Exception as e:
-            print("miniaudio decode fallback:", e)
-
-    if HAS_SOUNDFILE:
-        try:
-            data, sr_in = sf.read(io.BytesIO(raw_bytes), dtype="float32", always_2d=False)
-            if data.ndim > 1:
-                data = data.mean(axis=1)
-            if sr_in != target_sr and data.size > 0:
-                data = sp_signal.resample_poly(data, target_sr, sr_in).astype(np.float32)
-            if data.size > 0:
-                return data
-        except Exception:
-            pass
-
-    # Universal ffmpeg pipe fallback (handles MP3 from edge-tts and M4A/WEBM/OGG from iPhone/Android on Linux & Windows)
-    try:
-        proc = subprocess.run(
-            [
-                "ffmpeg",
-                "-nostdin",
-                "-hide_banner",
-                "-loglevel",
-                "error",
-                "-i",
-                "pipe:0",
-                "-f",
-                "f32le",
-                "-acodec",
-                "pcm_f32le",
-                "-ac",
-                "1",
-                "-ar",
-                str(target_sr),
-                "pipe:1",
-            ],
-            input=raw_bytes,
-            capture_output=True,
-            timeout=15,
-        )
-        if proc.returncode == 0 and len(proc.stdout) >= 4:
-            samples = np.frombuffer(proc.stdout, dtype=np.float32).copy()
-            if samples.size > 0:
-                return samples
-    except Exception:
-        pass
-
-    # Fallback scipy wavfile
-    sr_in, data = wavfile.read(io.BytesIO(raw_bytes))
-    if data.ndim > 1:
-        data = data.mean(axis=1)
-    if data.dtype == np.int16:
-        data = data.astype(np.float32) / 32768.0
-    elif data.dtype == np.int32:
-        data = data.astype(np.float32) / 2147483648.0
-    else:
-        data = data.astype(np.float32)
-    if sr_in != target_sr and data.size > 0:
-        data = sp_signal.resample_poly(data, target_sr, sr_in).astype(np.float32)
-    return data
-
-
-def encode_wav_bytes(samples: np.ndarray, sample_rate: int = TARGET_SR) -> bytes:
-    pcm = (np.clip(samples, -1.0, 1.0) * 32767.0).astype(np.int16)
-    buf = io.BytesIO()
-    wavfile.write(buf, sample_rate, pcm)
-    return buf.getvalue()
-
-
-def trim_silence(samples: np.ndarray, sample_rate: int, threshold_db: float = -45.0) -> np.ndarray:
-    """Ported from VoiceStudio audio_dsp.py trim_speech_padding."""
-    if samples.size == 0:
-        return samples
-    floor = 10.0 ** (threshold_db / 20.0)
-    voiced = np.flatnonzero(np.abs(samples) > floor)
-    if voiced.size == 0:
-        return samples
-    margin = int(sample_rate * 0.06)
-    start = max(0, int(voiced[0]) - margin)
-    end = min(samples.size, int(voiced[-1]) + 1 + margin)
-    return samples[start:end]
-
-
-def normalize_audio_np(samples: np.ndarray, target_dbfs: float = -2.0) -> np.ndarray:
-    """Ported from VoiceStudio audio_dsp.py normalize_audio."""
-    if samples.size == 0:
-        return samples
-    max_val = float(np.max(np.abs(samples)))
-    silence_floor = 10.0 ** (-50.0 / 20.0)
-    if max_val > silence_floor:
-        target_amp = 10.0 ** (target_dbfs / 20.0)
-        samples = samples * (target_amp / max_val)
-    return samples.astype(np.float32)
-
-
-def level_speech_np(
-    samples: np.ndarray,
-    sample_rate: int,
-    window_ms: float = 400.0,
-    amount: float = 0.65,
-    max_gain_db: float = 7.0,
-    smooth_ms: float = 180.0,
-) -> np.ndarray:
-    """Ported from VoiceStudio audio_dsp.py level_speech (EBU R128 phrase leveler)."""
-    if samples.size < sample_rate // 5:
-        return samples
-    hop = max(1, int(sample_rate * 0.01))
-    n = samples.size
-    frames = n // hop
-    if frames < 4:
-        return samples
-    trimmed = samples[: frames * hop].reshape(frames, hop)
-    frame_power = (trimmed.astype(np.float64) ** 2).mean(axis=1)
-
-    short_db = 10.0 * np.log10(frame_power + 1e-20)
-    if float(short_db.max()) <= -50.0:
-        return samples
-    floor_db = max(-68.0, float(short_db.max()) - 38.0)
-    active_mask = short_db > floor_db
-    if not np.any(active_mask):
-        return samples
-    avg_db = 10.0 * np.log10(float(frame_power[active_mask].mean()) + 1e-20)
-    speech = short_db > max(floor_db, avg_db - 24.0)
-    if not np.any(speech):
-        return samples
-    speech_db = 10.0 * np.log10(float(frame_power[speech].mean()) + 1e-20)
-
-    win = max(1, int(round(window_ms / 10.0)))
-    kernel = np.ones(win) / win
-    sp_pow = np.convolve(np.where(speech, frame_power, 0.0), kernel, mode="same")
-    sp_shr = np.convolve(speech.astype(np.float64), kernel, mode="same")
-    level_db = 10.0 * np.log10(sp_pow / np.maximum(sp_shr, 1e-12) + 1e-20)
-
-    gain_db = np.clip(amount * (speech_db - level_db), -max_gain_db, max_gain_db)
-    idx = np.where(speech, np.arange(frames), -1)
-    idx = np.maximum.accumulate(idx)
-    idx[idx < 0] = int(np.argmax(speech))
-    gain_db = gain_db[idx]
-
-    alpha = math.exp(-1.0 / max(1.0, smooth_ms / 10.0))
-    for order in (slice(None), slice(None, None, -1)):
-        g = gain_db[order].copy()
-        for i in range(1, frames):
-            g[i] = alpha * g[i - 1] + (1.0 - alpha) * g[i]
-        gain_db[order] = g
-
-    centers = np.arange(frames) * hop + hop / 2.0
-    sample_gain = 10.0 ** (np.interp(np.arange(n), centers, gain_db) / 20.0)
-    return (samples * sample_gain).astype(np.float32)
-
-
-def apply_voicestudio_dsp(
-    samples: np.ndarray,
-    sample_rate: int = TARGET_SR,
-    preset_id: str = "broadcast",
-) -> np.ndarray:
-    """Apply VoiceStudio broadcast mastering & EQ/Reverb preset."""
-    if samples.size == 0:
-        return samples
-
-    preset = VOICESTUDIO_PRESETS.get(preset_id, VOICESTUDIO_PRESETS["broadcast"])
-    if preset_id == "raw":
-        return normalize_audio_np(samples, -2.0)
-
-    y = samples.astype(np.float64)
-
-    # 1. Highpass at 65 Hz to remove DC / plosive rumble
-    sos_hp = sp_signal.butter(2, 65.0 / (sample_rate / 2.0), btype="highpass", output="sos")
-    y = sp_signal.sosfiltfilt(sos_hp, y)
-
-    # 1.1 Digital De-Esser (5.8 kHz - 8.5 kHz) to tame harsh sibilance ('с', 'ш', 'ц', 'з')
-    if y.size >= 1024 and sample_rate >= 16000:
-        try:
-            sos_sib = sp_signal.butter(2, [5800.0 / (sample_rate / 2.0), min(0.95, 8400.0 / (sample_rate / 2.0))], btype="bandpass", output="sos")
-            sib_band = sp_signal.sosfiltfilt(sos_sib, y)
-            sib_rms = np.sqrt(np.mean(sib_band ** 2) + 1e-10)
-            broad_rms = np.sqrt(np.mean(y ** 2) + 1e-10)
-            if sib_rms > 0.32 * broad_rms:
-                tame_factor = float(np.clip(1.0 - (sib_rms / broad_rms - 0.32) * 0.75, 0.60, 1.0))
-                y = y - (1.0 - tame_factor) * sib_band
-        except Exception:
-            pass
-
-    # 2. 3-band VoiceStudio EQ (Low < 260Hz, Mid ~1600Hz, High > 3800Hz)
-    low_db = float(preset.get("low_db", 0.0))
-    mid_db = float(preset.get("mid_db", 0.0))
-    high_db = float(preset.get("high_db", 0.0))
-
-    if abs(low_db) > 0.1 or abs(mid_db) > 0.1 or abs(high_db) > 0.1:
-        _, _, Zxx = sp_signal.stft(y, fs=sample_rate, nperseg=1024, noverlap=768)
-        freqs = np.linspace(0, sample_rate / 2.0, Zxx.shape[0])
-        eq_curve_db = (
-            low_db * np.exp(-((freqs / 260.0) ** 2))
-            + mid_db * np.exp(-(((freqs - 1600.0) / 900.0) ** 2))
-            + high_db * (1.0 / (1.0 + np.exp(-(freqs - 3600.0) / 600.0)))
-        )
-        eq_gain = (10.0 ** (eq_curve_db / 20.0))[:, None]
-        _, y_eq = sp_signal.istft(Zxx * eq_gain, fs=sample_rate, nperseg=1024, noverlap=768)
-        y = y_eq[: y.size]
-
-    # 3. Subtle studio room ambience if preset specifies reverb
-    reverb_wet = float(preset.get("reverb", 0.0))
-    if reverb_wet > 0.01:
-        ir_len = int(sample_rate * 0.22)
-        rng = np.random.default_rng(42)
-        t_ir = np.linspace(0.0, 1.0, ir_len)
-        ir = rng.standard_normal(ir_len) * np.exp(-6.5 * t_ir)
-        ir[0] = 1.0
-        sos_lp = sp_signal.butter(2, 3500.0 / (sample_rate / 2.0), btype="lowpass", output="sos")
-        ir = sp_signal.sosfilt(sos_lp, ir)
-        wet = sp_signal.fftconvolve(y, ir, mode="full")[: y.size]
-        max_w = np.max(np.abs(wet)) + 1e-9
-        max_y = np.max(np.abs(y)) + 1e-9
-        wet = wet * (max_y / max_w)
-        y = (1.0 - reverb_wet) * y + reverb_wet * wet
-
-    # 4. EBU R128 phrase leveler
-    y_f32 = y.astype(np.float32)
-    if preset.get("leveler", True):
-        y_f32 = level_speech_np(y_f32, sample_rate)
-
-    # 5. Soft knee limiter & -2 dBFS peak normalization
-    y_f32 = np.tanh(y_f32 * 1.15).astype(np.float32)
-    return normalize_audio_np(y_f32, -2.0)
-
-
-def extract_cepstral_envelope(samples: np.ndarray, sample_rate: int = TARGET_SR) -> np.ndarray:
-    """
-    Extract smooth vocal tract spectral envelope (formants F1..F4 + throat/chest timbre)
-    from voiced frames using Cepstral Liftering in the STFT domain.
-    Returns a 1D array of shape (STFT_NPERSEG // 2 + 1,) in log-magnitude space.
-    """
-    if samples.size < STFT_NPERSEG * 2:
-        return np.zeros(STFT_NPERSEG // 2 + 1, dtype=np.float32)
-
-    _, _, Zxx = sp_signal.stft(
-        samples, fs=sample_rate, nperseg=STFT_NPERSEG, noverlap=STFT_NOVERLAP
-    )
-    mag = np.abs(Zxx) + 1e-7
-    frame_energy = np.mean(mag ** 2, axis=0)
-    threshold = np.percentile(frame_energy, 35)
-    voiced_cols = frame_energy >= threshold
-    if np.sum(voiced_cols) < 3:
-        voiced_cols = np.ones(mag.shape[1], dtype=bool)
-
-    log_mag = np.log(mag[:, voiced_cols])  # shape: (n_bins, n_voiced)
-    mean_log_mag = np.mean(log_mag, axis=1)
-
-    # Cepstral liftering to isolate vocal tract envelope (smooth formants) from pitch harmonics
-    cepstrum = np.fft.irfft(mean_log_mag)
-    lifter = np.zeros_like(cepstrum)
-    lifter[:CEPSTRAL_LIFTER] = 1.0
-    lifter[-CEPSTRAL_LIFTER + 1 :] = 1.0
-    # Smooth cosine taper at lifter boundary
-    taper = 8
-    for k in range(taper):
-        w = 0.5 * (1.0 + math.cos(math.pi * k / taper))
-        lifter[CEPSTRAL_LIFTER - taper + k] = w
-        lifter[-(CEPSTRAL_LIFTER - taper + k)] = w
-
-    smooth_env_log = np.real(np.fft.rfft(cepstrum * lifter))
-    # Remove global gain offset (keep zero-mean spectral shape)
-    smooth_env_log = smooth_env_log - np.mean(smooth_env_log)
-    return smooth_env_log.astype(np.float32)
-
-
-def analyze_speaker_prosody(samples: np.ndarray, sample_rate: int = TARGET_SR) -> dict:
-    """
-    Ported from VoiceStudio prosody_mirror.py:
-    Measures median F0 (Hz), pitch spread (semitones), speaking rate (syllables/sec),
-    formant centroid (Hz), and vocal tract cepstral envelope.
-    """
-    # Downsample to 16kHz for F0 & syllable rate analysis
-    sr16 = 16000
-    sig16 = sp_signal.resample_poly(samples, sr16, sample_rate) if sample_rate != sr16 else samples
-    frame_len = int(0.040 * sr16)  # 640
-    hop_len = int(0.010 * sr16)    # 160
-
-    if sig16.size < frame_len * 2:
-        return {
-            "f0": 150.0,
-            "pitch_spread_st": 2.5,
-            "rate_hz": 4.2,
-            "formant_centroid": 1450.0,
-            "envelope": extract_cepstral_envelope(samples, sample_rate).tolist(),
-        }
-
-    n_frames = 1 + (sig16.size - frame_len) // hop_len
-    frames = np.lib.stride_tricks.sliding_window_view(sig16, frame_len)[::hop_len][:n_frames]
-    power = np.mean(frames.astype(np.float64) ** 2, axis=1)
-    level_db = 10.0 * np.log10(np.maximum(power, 1e-12))
-    thresh_db = max(-52.0, float(np.max(level_db)) - 28.0)
-    active = level_db > thresh_db
-
-    # Pitch tracking via FFT autocorrelation (VoiceStudio _block_pitch)
-    active_frames = frames[active] if np.sum(active) >= 4 else frames
-    win = np.hanning(frame_len)
-    y = (active_frames.astype(np.float64) - np.mean(active_frames, axis=1, keepdims=True)) * win
-    spec = np.fft.rfft(y, n=2048, axis=1)
-    corr = np.fft.irfft(spec * np.conj(spec), n=2048, axis=1)
-
-    lag_lo = int(sr16 / 360.0)
-    lag_hi = int(sr16 / 72.0)
-    energy0 = np.maximum(corr[:, 0:1], 1e-12)
-    norm_corr = corr[:, lag_lo:lag_hi] / energy0
-
-    peak_idx = np.argmax(norm_corr, axis=1)
-    peak_val = np.max(norm_corr, axis=1)
-    voiced_lags = (lag_lo + peak_idx)[peak_val >= 0.38]
-
-    if voiced_lags.size >= 3:
-        f0_vals = sr16 / voiced_lags.astype(np.float64)
-        f0_vals = f0_vals[(f0_vals >= 72.0) & (f0_vals <= 350.0)]
-        f0_median = float(np.median(f0_vals)) if f0_vals.size > 0 else 150.0
-        if f0_vals.size >= 4:
-            st = 12.0 * np.log2(f0_vals / 100.0)
-            pitch_spread = float(np.percentile(st, 85) - np.percentile(st, 15))
-        else:
-            pitch_spread = 2.5
-    else:
-        f0_median = 150.0
-        pitch_spread = 2.5
-
-    # Syllable nuclei rate (VoiceStudio _count_nuclei)
-    active_s = max(0.4, float(np.sum(active)) * 0.010)
-    smooth_lvl = np.convolve(level_db, np.ones(5) / 5.0, mode="same")
-    peaks, _ = sp_signal.find_peaks(smooth_lvl, height=thresh_db + 3.0, distance=8)
-    rate_hz = float(np.clip(len(peaks) / active_s, 2.5, 6.8))
-
-    # Spectral envelope & formant centroid
-    env_log = extract_cepstral_envelope(samples, sample_rate)
-    freqs = np.linspace(0, sample_rate / 2.0, env_log.size)
-    band = (freqs >= 250.0) & (freqs <= 3800.0)
-    weights = np.exp(env_log[band] - np.max(env_log[band]))
-    formant_centroid = float(np.sum(freqs[band] * weights) / (np.sum(weights) + 1e-9))
-
-    return {
-        "f0": round(f0_median, 1),
-        "pitch_spread_st": round(pitch_spread, 2),
-        "rate_hz": round(rate_hz, 2),
-        "formant_centroid": round(formant_centroid, 1),
-        "envelope": [round(float(x), 4) for x in env_log],
-    }
-
-
-def apply_voice_clone_timbre(
-    src_samples: np.ndarray,
-    base_voice_id: str,
-    clone_profile: dict,
-    timbre_strength: float = 0.92,
-    sample_rate: int = TARGET_SR,
-) -> np.ndarray:
-    """
-    Transform synthesized base speech so its vocal tract resonance (formants F1..F4),
-    spectral envelope, harmonic chestiness, and pitch contour match the cloned speaker's
-    reference recording instead of sounding like raw Bataa/Yesui.
-    """
-    if src_samples.size < STFT_NPERSEG * 2:
-        return src_samples
-
-    target_env_list = clone_profile.get("envelope")
-    if not target_env_list or len(target_env_list) != (STFT_NPERSEG // 2 + 1):
-        # Load from saved reference wav if envelope wasn't cached yet
-        ref_wav = os.path.join(CLONES_DIR, f"{clone_profile['id']}.wav")
-        if os.path.exists(ref_wav):
-            with open(ref_wav, "rb") as f:
-                ref_samples = decode_audio_bytes(f.read(), sample_rate)
-            target_env = extract_cepstral_envelope(ref_samples, sample_rate)
-            clone_profile["envelope"] = [round(float(x), 4) for x in target_env]
-        else:
-            return src_samples
-    else:
-        target_env = np.array(target_env_list, dtype=np.float32)
-
-    # Cache or compute the base neural voice's average spectral envelope
-    src_env = extract_cepstral_envelope(src_samples, sample_rate)
-    if base_voice_id not in BASE_ENVELOPES_CACHE:
-        BASE_ENVELOPES_CACHE[base_voice_id] = src_env.copy()
-    else:
-        BASE_ENVELOPES_CACHE[base_voice_id] = (
-            0.7 * BASE_ENVELOPES_CACHE[base_voice_id] + 0.3 * src_env
-        )
-    base_env = BASE_ENVELOPES_CACHE[base_voice_id]
-
-    # 1. Compute Formant Frequency Warp factor from speaker's formant centroid vs base
-    target_centroid = float(clone_profile.get("formant_centroid", 1450.0))
-    base_centroid = 1320.0 if "bataa" in base_voice_id.lower() else 1620.0
-    warp_ratio = float(np.clip(target_centroid / base_centroid, 0.84, 1.18))
-
-    # 2. STFT Source-Filter Decomposition per frame
-    _, _, Zxx = sp_signal.stft(
-        src_samples, fs=sample_rate, nperseg=STFT_NPERSEG, noverlap=STFT_NOVERLAP
-    )
-    mag = np.abs(Zxx) + 1e-8
-    phase = np.angle(Zxx)
-    n_bins, n_frames = mag.shape
-
-    # Warped target spectral envelope
-    bins = np.arange(n_bins, dtype=np.float32)
-    warped_target_env = np.interp(bins / warp_ratio, bins, target_env)
-
-    # Differential log-spectral transfer curve (clamped to +/- 14 dB for naturalness)
-    max_transfer_nepers = 14.0 / 8.6858896
-    diff_log_env = np.clip(
-        timbre_strength * (warped_target_env - base_env),
-        -max_transfer_nepers,
-        max_transfer_nepers,
-    )
-
-    #Also warp each frame's instantaneous formant peaks slightly toward the speaker's vocal tract length
-    new_mag = np.empty_like(mag)
-    lifter = np.zeros(STFT_NPERSEG, dtype=np.float64)
-    lifter[:CEPSTRAL_LIFTER] = 1.0
-    lifter[-CEPSTRAL_LIFTER + 1 :] = 1.0
-
-    for t in range(n_frames):
-        frame_log = np.log(mag[:, t])
-        cep = np.fft.irfft(frame_log)
-        inst_env = np.real(np.fft.rfft(cep * lifter))
-        fine_excitation = frame_log - inst_env  # Glottal harmonic comb structure
-        warped_inst_env = np.interp(bins / (1.0 + 0.65 * (warp_ratio - 1.0)), bins, inst_env)
-        blended_env = warped_inst_env + diff_log_env
-        new_mag[:, t] = np.exp(fine_excitation + blended_env)
-
-    Zxx_mod = new_mag * np.exp(1j * phase)
-    _, y_out = sp_signal.istft(
-        Zxx_mod, fs=sample_rate, nperseg=STFT_NPERSEG, noverlap=STFT_NOVERLAP
-    )
-    y_out = y_out[: src_samples.size].astype(np.float32)
-
-    # 3. Sub-harmonic chest warmth injection if speaker has lower F0 than base
-    target_f0 = float(clone_profile.get("f0", 140.0))
-    if target_f0 < 135.0:
-        sos_sub = sp_signal.butter(2, [80.0 / (sample_rate / 2.0), 240.0 / (sample_rate / 2.0)], btype="bandpass", output="sos")
-        sub_band = sp_signal.sosfiltfilt(sos_sub, y_out)
-        chest_gain = min(0.35, (135.0 - target_f0) / 120.0)
-        y_out = y_out + chest_gain * sub_band.astype(np.float32)
-
-    return y_out
 
 
 # ---------------------------------------------------------------------------
@@ -3428,7 +2768,7 @@ def _native_audio_hotkey_worker() -> None:
                 _suppress_alt_menu_activation()
 
             # Hotkey check with AltGr and disable_ctrl_alt protection
-            disable_ctrl_alt = cfg.get("disable_ctrl_alt", False)
+            disable_ctrl_alt = SERVER_SETTINGS.get("disable_ctrl_alt", False)
             is_altgr = bool(user32.GetAsyncKeyState(VK_RMENU) & 0x8000)
             if disable_ctrl_alt or (is_altgr and hk_mode != "ctrl_alt"):
                 is_ctrl_alt = False
@@ -4078,96 +3418,6 @@ def api_insert_text(req: InsertTextRequest):
     return {"inserted": ok, "text": req.text}
 
 
-def apply_persona_formant_warp(
-    src_samples: np.ndarray,
-    warp_ratio: float,
-    sample_rate: int = TARGET_SR,
-) -> np.ndarray:
-    """
-    VoiceStudio Persona Formant Warping:
-    Shifts vocal tract resonance formants (F1..F4) without altering glottal harmonic pitch,
-    giving each studio persona (Narrator, News, Podcast, Maral, Tulga, Misheel) a distinct vocal tract character.
-    """
-    if abs(warp_ratio - 1.0) < 0.015 or src_samples.size < 2048:
-        return src_samples
-
-    _, _, Zxx = sp_signal.stft(
-        src_samples, fs=sample_rate, nperseg=STFT_NPERSEG, noverlap=STFT_NOVERLAP
-    )
-    mag = np.abs(Zxx) + 1e-8
-    phase = np.angle(Zxx)
-    n_bins, n_frames = mag.shape
-    bins = np.arange(n_bins, dtype=np.float32)
-
-    lifter = np.zeros(STFT_NPERSEG, dtype=np.float64)
-    lifter[:CEPSTRAL_LIFTER] = 1.0
-    lifter[-CEPSTRAL_LIFTER + 1 :] = 1.0
-
-    new_mag = np.empty_like(mag)
-    for t in range(n_frames):
-        frame_log = np.log(mag[:, t])
-        cep = np.fft.irfft(frame_log)
-        inst_env = np.real(np.fft.rfft(cep * lifter))
-        fine_excitation = frame_log - inst_env
-        warped_env = np.interp(bins / warp_ratio, bins, inst_env)
-        new_mag[:, t] = np.exp(fine_excitation + warped_env)
-
-    Zxx_mod = new_mag * np.exp(1j * phase)
-    _, y_out = sp_signal.istft(
-        Zxx_mod, fs=sample_rate, nperseg=STFT_NPERSEG, noverlap=STFT_NOVERLAP
-    )
-    y_out = y_out[: src_samples.size].astype(np.float32)
-
-    # Add sub-harmonic chest resonance for deep personas (warp_ratio < 0.93)
-    if warp_ratio < 0.93:
-        sos_sub = sp_signal.butter(
-            2, [80.0 / (sample_rate / 2.0), 230.0 / (sample_rate / 2.0)], btype="bandpass", output="sos"
-        )
-        sub_band = sp_signal.sosfiltfilt(sos_sub, y_out)
-        y_out = y_out + float((0.95 - warp_ratio) * 1.8) * sub_band.astype(np.float32)
-
-    return y_out
-
-
-_ENG_TO_MN_TTS_MAP: list[tuple[str, str]] = [
-    (r"\bVoiceStudio\b", "Войс Студио"),
-    (r"\bDuudlaga\s*Flow\b", "Дуудлага Флоу"),
-    (r"\bFlowBar\b", "Флоу Бар"),
-    (r"\bCtrl\s*\+\s*Alt\b", "Контрол Альт"),
-    (r"\bFacebook\b", "Фэйсбүүк"),
-    (r"\bInstagram\b", "Инстаграм"),
-    (r"\bTelegram\b", "Телеграм"),
-    (r"\bYouTube\b", "Юүтүб"),
-    (r"\bMicrosoft\s+Word\b", "Майкрософт Ворд"),
-    (r"\bWord\b", "Ворд"),
-    (r"\bExcel\b", "Эксел"),
-    (r"\bGoogle\s+Chrome\b", "Гүүгл Хром"),
-    (r"\bChrome\b", "Хром"),
-    (r"\bPython\b", "Пайтон"),
-    (r"\bNext\.js\b", "Некст жи эс"),
-    (r"\bReact\b", "Реакт"),
-    (r"\bTypeScript\b", "Тайпскрипт"),
-    (r"\bJavaScript\b", "Жаваскрипт"),
-    (r"\bChatGPT\b", "Чат жи пи ти"),
-    (r"\bGemini\b", "Жемини"),
-    (r"\bClaude\b", "Клод"),
-    (r"\bAI\b", "Эй Ай"),
-    (r"\bAPI\b", "Эй Пи Ай"),
-    (r"\bTTS\b", "Ти Ти Эс"),
-    (r"\bSTT\b", "Эс Ти Ти"),
-]
-
-
-def prepare_tts_text_for_voice(text: str, base_voice: str) -> str:
-    """If a Mongolian neural voice is reading mixed text with English terms, adapt English loanwords for natural pronunciation."""
-    if not base_voice.startswith("mn-MN"):
-        return text
-    out = text
-    for pat, repl in _ENG_TO_MN_TTS_MAP:
-        out = re.sub(pat, repl, out, flags=re.IGNORECASE)
-    return out
-
-
 @app.post("/tts")
 async def tts(req: TTSRequest):
     text = (req.text or "").strip()
@@ -4185,10 +3435,8 @@ async def tts(req: TTSRequest):
     persona_profile = VOICES_BY_ID.get(voice_id)
     persona_warp = 1.0
 
-    # Check if text contains predominantly Japanese characters (Hiragana/Katakana/Kanji)
     has_japanese = bool(re.search(r"[\u3040-\u30ff\u4e00-\u9faf]", text))
 
-    # Determine base neural voice & prosody parameters
     if clone_profile:
         base_voice = clone_profile.get("baseVoice", "mn-MN-BataaNeural")
         if has_japanese and not re.search(r"[А-ЯӨҮЁа-яөүё]", text):
@@ -4196,16 +3444,16 @@ async def tts(req: TTSRequest):
         speaker_f0 = float(clone_profile.get("f0", 135.0))
         speaker_rate = float(clone_profile.get("rate_hz", 4.2))
         base_f0 = 122.0 if ("bataa" in base_voice.lower() or "keita" in base_voice.lower()) else 210.0
-        # Shift pitch in Hz directly toward speaker's measured F0
         f0_diff_hz = int(np.clip(speaker_f0 - base_f0, -45, 45))
         user_pitch_adj = int(((req.pitch or 1.0) - 1.0) * 40)
-        pitch_str = f"{f0_diff_hz + user_pitch_adj:+d}Hz"
+        pitch_hz = f0_diff_hz + user_pitch_adj
+        pitch_str = f"{pitch_hz:+d}Hz"
 
-        # Match speaking cadence + user speed slider
         cadence_ratio = np.clip(speaker_rate / 4.2, 0.88, 1.15)
         total_speed = (req.speed or 1.0) * cadence_ratio
         rate_percent = int(np.clip((total_speed - 1.0) * 100, -45, 60))
         rate_str = f"{rate_percent:+d}%"
+        voice_gender = clone_profile.get("gender", "male" if "bataa" in base_voice.lower() else "female")
     elif persona_profile:
         base_voice = persona_profile.get("baseVoice", "mn-MN-YesuiNeural")
         p_pitch = float(persona_profile.get("pitch", 1.0)) * float(req.pitch or 1.0)
@@ -4215,83 +3463,96 @@ async def tts(req: TTSRequest):
         rate_str = f"{rate_percent:+d}%"
         pitch_hz = int(np.clip((p_pitch - 1.0) * 55, -50, 50))
         pitch_str = f"{pitch_hz:+d}Hz"
+        voice_gender = persona_profile.get("gender", "female")
     else:
         base_voice = "mn-MN-BataaNeural" if ("bataa" in voice_id.lower() or "male" in voice_id.lower()) else "mn-MN-YesuiNeural"
         rate_percent = int(((req.speed or 1.0) - 1.0) * 100)
         rate_str = f"{rate_percent:+d}%"
         pitch_hz = int(((req.pitch or 1.0) - 1.0) * 45)
         pitch_str = f"{pitch_hz:+d}Hz"
-
-    if not HAS_EDGE_TTS:
-        raise HTTPException(status_code=503, detail="Edge-TTS engine not installed")
+        voice_gender = "male" if "bataa" in base_voice.lower() else "female"
 
     synth_text = prepare_tts_text_for_voice(text, base_voice)
-
-    # Strip any stray HTML/XML tags so Edge-TTS never speaks raw markup tags aloud
     clean_text = re.sub(r"<[^>]+>", "", synth_text)
     clean_text = re.sub(r"\s+", " ", clean_text).strip()
     if not clean_text:
         clean_text = synth_text.strip() or "Текст хоосон байна."
 
-    # Dynamic prosody: if text ends with '?', raise pitch slightly for questioning inflection
     actual_pitch = pitch_str
     if clean_text.endswith("?") and "+0Hz" in pitch_str:
         actual_pitch = "+8Hz"
 
-    try:
-        # Pass clean plain text with rate and pitch. Neural voices naturally breathe on commas and periods.
-        communicate = edge_tts.Communicate(
-            text=clean_text,
-            voice=base_voice,
-            rate=rate_str,
-            pitch=actual_pitch,
-        )
-        raw_mp3 = bytearray()
-        async for chunk in communicate.stream():
-            if chunk["type"] == "audio":
-                raw_mp3.extend(chunk["data"])
+    cfg = load_server_settings()
+    offline_mode = bool(cfg.get("offline_only", False)) or not HAS_EDGE_TTS
 
-        if not raw_mp3:
-            raise HTTPException(status_code=500, detail="Empty audio generated")
+    raw_mp3 = bytearray()
+    used_offline_fallback = False
 
-        # Decode to 24kHz float32 PCM so we can run VoiceStudio Timbre Transfer, Persona Warp & Mastering DSP
+    if not offline_mode:
         try:
-            samples = decode_audio_bytes(bytes(raw_mp3), TARGET_SR)
-            if clone_profile and timbre_strength > 0.05:
-                samples = apply_voice_clone_timbre(
-                    samples,
-                    base_voice_id=base_voice,
-                    clone_profile=clone_profile,
-                    timbre_strength=timbre_strength,
-                    sample_rate=TARGET_SR,
-                )
-            elif abs(persona_warp - 1.0) >= 0.015:
-                samples = apply_persona_formant_warp(
-                    samples,
-                    warp_ratio=persona_warp,
-                    sample_rate=TARGET_SR,
-                )
-            samples = apply_voicestudio_dsp(samples, TARGET_SR, preset_id=preset_id)
-            wav_bytes = encode_wav_bytes(samples, TARGET_SR)
-            return Response(
-                content=wav_bytes,
-                media_type="audio/wav",
-                headers={
-                    "Content-Disposition": f'inline; filename="{voice_id}.wav"',
-                    "X-TTS-Voice": voice_id,
-                    "X-TTS-Cloned": str(bool(clone_profile)),
-                    "X-TTS-Preset": preset_id,
-                },
+            communicate = edge_tts.Communicate(
+                text=clean_text,
+                voice=base_voice,
+                rate=rate_str,
+                pitch=actual_pitch,
             )
-        except Exception as dsp_err:
-            print("DSP fallback to raw mp3:", dsp_err)
+            async for chunk in communicate.stream():
+                if chunk["type"] == "audio":
+                    raw_mp3.extend(chunk["data"])
+        except Exception as edge_err:
+            logger.warning(f"[TTS] Edge-TTS unreachable, switching to local offline synthesis: {edge_err}")
+            used_offline_fallback = True
 
+    if not raw_mp3:
+        used_offline_fallback = True
+
+    try:
+        if used_offline_fallback:
+            samples = synthesize_offline_fallback(
+                clean_text,
+                gender=voice_gender,
+                rate_percent=rate_percent,
+                pitch_hz=pitch_hz,
+                target_sr=TARGET_SR,
+            )
+        else:
+            samples = decode_audio_bytes(bytes(raw_mp3), TARGET_SR)
+
+        if clone_profile and timbre_strength > 0.05:
+            samples = apply_voice_clone_timbre(
+                samples,
+                base_voice_id=base_voice,
+                clone_profile=clone_profile,
+                timbre_strength=timbre_strength,
+                sample_rate=TARGET_SR,
+                clones_dir=CLONES_DIR,
+            )
+        elif abs(persona_warp - 1.0) >= 0.015:
+            samples = apply_persona_formant_warp(
+                samples,
+                warp_ratio=persona_warp,
+                sample_rate=TARGET_SR,
+            )
+        samples = apply_voicestudio_dsp(samples, TARGET_SR, preset_id=preset_id)
+        wav_bytes = encode_wav_bytes(samples, TARGET_SR)
         return Response(
-            content=bytes(raw_mp3),
-            media_type="audio/mpeg",
-            headers={"Content-Disposition": f'inline; filename="{base_voice}.mp3"'},
+            content=wav_bytes,
+            media_type="audio/wav",
+            headers={
+                "Content-Disposition": f'inline; filename="{voice_id}.wav"',
+                "X-TTS-Voice": voice_id,
+                "X-TTS-Cloned": str(bool(clone_profile)),
+                "X-TTS-Preset": preset_id,
+                "X-TTS-Engine": "offline-sapi5-dsp" if used_offline_fallback else "edge-neural-dsp",
+            },
         )
     except Exception as e:
+        if raw_mp3:
+            return Response(
+                content=bytes(raw_mp3),
+                media_type="audio/mpeg",
+                headers={"Content-Disposition": f'inline; filename="{base_voice}.mp3"'},
+            )
         raise HTTPException(status_code=500, detail=f"TTS synthesis error: {str(e)}")
 
 
@@ -4450,8 +3711,29 @@ async def api_create_voice_profile(
             consent=consent,
             ref_transcript=transcript,
         )
-        # Register in in-memory dict as well
+        # Enrich with full Cepstral Vocal Tract Envelope & Prosody for VoiceStudio Timbre Transfer
+        try:
+            samples_24k = decode_audio_bytes(content, target_sr=TARGET_SR)
+            samples_24k = trim_silence(samples_24k, TARGET_SR)
+            prosody = analyze_speaker_prosody(samples_24k, TARGET_SR)
+            gender = profile.get("gender", "female" if prosody["f0"] >= 165.0 else "male")
+            base_voice = "mn-MN-YesuiNeural" if gender == "female" else "mn-MN-BataaNeural"
+            base_f0 = 210.0 if gender == "female" else 122.0
+            profile["baseVoice"] = base_voice
+            profile["pitch"] = round(float(np.clip(prosody["f0"] / base_f0, 0.80, 1.22)), 2)
+            profile["speed"] = round(float(np.clip(prosody["rate_hz"] / 4.2, 0.90, 1.12)), 2)
+            profile["formant_centroid"] = prosody["formant_centroid"]
+            profile["rate_hz"] = prosody["rate_hz"]
+            profile["pitch_spread_st"] = prosody["pitch_spread_st"]
+            profile["envelope"] = prosody["envelope"]
+            profile["refText"] = profile.get("ref_transcript", "")
+            profile["sampleUrl"] = profile.get("sample_url", f"/api/voice-profiles/{profile['id']}/audio")
+            profile["tag"] = "Хувилсан"
+        except Exception as enrich_err:
+            logger.warning(f"Prosody enrichment warning: {enrich_err}")
+        # Register in in-memory dict and persist
         CLONED_VOICES_DB[profile["id"]] = profile
+        save_cloned_voices_db(CLONED_VOICES_DB)
         return {"status": "ok", "profile": profile}
     except ValueError as ve:
         raise HTTPException(status_code=400, detail=str(ve))
@@ -4552,15 +3834,21 @@ def api_lyrics_export_ass(req: dict):
     primary_color = req.get("primary_color", "&H0000FFFF")
     secondary_color = req.get("secondary_color", "&H00FFFFFF")
     outline_color = req.get("outline_color", "&H00101010")
+    theme = req.get("theme")
+    resolution = req.get("resolution", "1920x1080")
+    play_res_x, play_res_y = ALLOWED_RESOLUTIONS.get(resolution, (1920, 1080))
 
     ass_text = generate_karaoke_ass(
         segments=segments,
         title=title,
+        play_res_x=play_res_x,
+        play_res_y=play_res_y,
         font_name=font_name,
         font_size=font_size,
         primary_color=primary_color,
         secondary_color=secondary_color,
         outline_color=outline_color,
+        theme=theme,
     )
     return {"status": "ok", "ass_content": ass_text}
 
@@ -4574,6 +3862,8 @@ def api_lyrics_ffmpeg_status():
         "available": avail,
         "path": bin_path or "",
         "version": "FFmpeg 8.1 (Gyan.dev full build with libass)" if avail else "Not found",
+        "themes": KARAOKE_THEMES,
+        "resolutions": list(ALLOWED_RESOLUTIONS.keys()),
     }
 
 
@@ -4608,9 +3898,13 @@ async def api_lyrics_export_video(
     title: str = Form("karaoke"),
     resolution: str = Form("1280x720"),
     bg_color: str = Form("#0f172a"),
+    theme: str = Form(""),
+    bg_image: Optional[UploadFile] = File(None),
 ):
     """
     Render video with hard-burned karaoke subtitles using FFmpeg.
+    Supports 1280x720 (HD), 1920x1080 (Full HD), 720x1280 (Reels/TikTok Vertical),
+    color themes, and optional custom background image upload.
     """
     if not is_ffmpeg_available():
         raise HTTPException(status_code=503, detail="FFmpeg суулгаагүй тул видео үүсгэх боломжгүй байна. Субтитр .ASS файлаар татаж авна уу.")
@@ -4622,6 +3916,16 @@ async def api_lyrics_export_video(
         raise HTTPException(status_code=413, detail="ASS субтитрын хэмжээ хэтэрсэн байна.")
     audio_path = os.path.join(tmp_dir, "input_audio.wav")
     await stream_upload_to_file(audio, audio_path, max_bytes=100 * 1024 * 1024)
+
+    if theme and theme in KARAOKE_THEMES and bg_color == "#0f172a":
+        bg_color = KARAOKE_THEMES[theme]["bg_hex"]
+
+    bg_image_path: Optional[str] = None
+    if bg_image is not None and bg_image.filename:
+        img_ext = os.path.splitext(bg_image.filename)[1].lower()
+        if img_ext in (".jpg", ".jpeg", ".png", ".webp", ".bmp"):
+            bg_image_path = os.path.join(tmp_dir, f"bg{img_ext}")
+            await stream_upload_to_file(bg_image, bg_image_path, max_bytes=15 * 1024 * 1024)
 
     ass_path = os.path.join(tmp_dir, "karaoke.ass")
     with open(ass_path, "w", encoding="utf-8") as f:
@@ -4636,19 +3940,22 @@ async def api_lyrics_export_video(
             output_mp4_path=out_mp4,
             background_color=bg_color,
             resolution=resolution,
+            background_image_path=bg_image_path,
         )
         if not ok or not os.path.isfile(out_mp4):
             raise RuntimeError("FFmpeg did not produce output video.")
 
-        # Read mp4 into memory to serve before cleaning up tmp_dir
         with open(out_mp4, "rb") as f:
             mp4_bytes = f.read()
 
+        safe_ascii = re.sub(r"[^a-zA-Z0-9_\-]", "_", title) or "video"
+        encoded_title = urllib.parse.quote(f"{title}.mp4")
+        cd_header = f'attachment; filename="{safe_ascii}.mp4"; filename*=UTF-8\'\'{encoded_title}'
         shutil.rmtree(tmp_dir, ignore_errors=True)
         return Response(
             content=mp4_bytes,
             media_type="video/mp4",
-            headers={"Content-Disposition": f'attachment; filename="{title}.mp4"'},
+            headers={"Content-Disposition": cd_header},
         )
     except Exception as e:
         shutil.rmtree(tmp_dir, ignore_errors=True)
@@ -4807,6 +4114,7 @@ async def api_auto_lyrics(
     model_name: str = Form("small"),
     title: str = Form(""),
     artist: str = Form(""),
+    isolate_vocals: bool = Form(False),
 ):
     """
     Auto-transcribe uploaded audio or video file (MP3, WAV, M4A, OGG, MP4) and generate:
@@ -4835,21 +4143,34 @@ async def api_auto_lyrics(
         tf.write(content)
         tf_path = tf.name
 
+    vocal_tf_path = ""
     try:
         segments_data = []
         full_text = ""
         detected_lang = language if language != "auto" else "mn"
 
+        transcribe_input_path = tf_path
+        if isolate_vocals:
+            vocal_tf_path = tf_path + "_vocals.wav"
+            if extract_vocals_for_lyrics(tf_path, vocal_tf_path):
+                transcribe_input_path = vocal_tf_path
+
         # 1. Try local whisper.cpp CLI first for fast, reliable timestamped segmentation
         if find_whisper_cpp_binary() and (find_local_ggml_model(model_name) or find_local_ggml_model("tiny")):
             try:
                 cfg_lyrics = load_server_settings()
+                mn_prompt = (
+                    build_whisper_initial_prompt(cfg_lyrics.get("custom_vocabulary"))
+                    if detected_lang == "mn"
+                    else None
+                )
                 txt_cpp, segs_cpp, cpp_err = transcribe_with_whisper_cpp_cli(
-                    tf_path,
+                    transcribe_input_path,
                     model_name=model_name,
                     language=detected_lang,
                     use_gpu=cfg_lyrics.get("use_gpu", True),
                     threads=cfg_lyrics.get("cpu_threads", 6),
+                    initial_prompt=mn_prompt,
                 )
                 if not cpp_err and segs_cpp:
                     segments_data = segs_cpp
@@ -4865,7 +4186,7 @@ async def api_auto_lyrics(
                 whisper_model = get_whisper_model(model_name)
                 lang_arg = None if language in ("auto", "") else language
                 segments, info = whisper_model.transcribe(
-                    tf_path,
+                    transcribe_input_path,
                     language=lang_arg,
                     beam_size=5,
                     word_timestamps=True,
@@ -4923,6 +4244,10 @@ async def api_auto_lyrics(
                 })
                 cur_t += dur + 0.5
 
+        if segments_data:
+            segments_data = clean_lyrics_segments(segments_data, language=detected_lang)
+            full_text = " ".join([s["text"] for s in segments_data if s.get("text")]).strip()
+
         lrc_text = generate_lrc(segments_data, title=title, artist=artist)
         srt_text = generate_srt(segments_data)
         vtt_text = generate_vtt(segments_data)
@@ -4951,12 +4276,18 @@ async def api_auto_lyrics(
             "model_used": actual_model,
             "fallback_notice": fallback_notice,
             "timing_source": timing_source,
+            "vocal_isolated": bool(vocal_tf_path and transcribe_input_path == vocal_tf_path),
             "segments": segments_data,
             "lrc": lrc_text,
             "srt": srt_text,
             "vtt": vtt_text,
         }
     finally:
+        if vocal_tf_path and os.path.exists(vocal_tf_path):
+            try:
+                os.remove(vocal_tf_path)
+            except Exception:
+                pass
         if os.path.exists(tf_path):
             try:
                 os.remove(tf_path)

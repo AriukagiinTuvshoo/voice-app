@@ -49,6 +49,7 @@ Source: "..\runtime\*"; DestDir: "{app}\runtime"; Flags: ignoreversion recursesu
 ; Application Core & Modules
 Source: "..\tts_server.py"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\voice_core.py"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\voice_dsp.py"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\mongolian_grammar.py"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\voice_cloning.py"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\audio_separator.py"; DestDir: "{app}"; Flags: ignoreversion

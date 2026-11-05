@@ -29,7 +29,7 @@ jobs:
 
       - name: Python Compile Check
         run: |
-          python -m py_compile voice_core.py tts_server.py diagnose_flowbar.py build_standalone_runtime.py prepare_tools.py
+          python -m py_compile voice_core.py voice_dsp.py tts_server.py diagnose_flowbar.py build_standalone_runtime.py prepare_tools.py
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -79,7 +79,7 @@ jobs:
           # Core scripts & modules
           $files = @(
             "Install-VOICE.bat", "Start-VOICE.bat", "Uninstall-VOICE.bat", "Diagnose-VOICE.bat",
-            "make-shortcut.ps1", "tts_server.py", "voice_core.py", "mongolian_grammar.py",
+            "make-shortcut.ps1", "tts_server.py", "voice_core.py", "voice_dsp.py", "mongolian_grammar.py",
             "voice_cloning.py", "audio_separator.py", "karaoke_ass.py", "auto_updater.py",
             "diagnose_flowbar.py",
             "requirements.txt", "requirements-tray.txt", "requirements-offline.txt",

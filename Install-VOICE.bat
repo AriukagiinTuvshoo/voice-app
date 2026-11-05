@@ -146,7 +146,7 @@ if exist "%~dp0public" xcopy /E /I /Y /Q "%~dp0public" "%TARGET%\public" >nul
 if exist "%~dp0tools" xcopy /E /I /Y /Q "%~dp0tools" "%TARGET%\tools" >nul
 if exist "%~dp0runtime" xcopy /E /I /Y /Q "%~dp0runtime" "%TARGET%\runtime" >nul
 
-for %%F in (tts_server.py voice_core.py mongolian_grammar.py voice_cloning.py audio_separator.py karaoke_ass.py auto_updater.py requirements.txt requirements-tray.txt requirements-offline.txt VERSION Start-VOICE.bat Uninstall-VOICE.bat make-shortcut.ps1 README.md LICENSE Diagnose-VOICE.bat diagnose_flowbar.py) do (
+for %%F in (tts_server.py voice_core.py voice_dsp.py mongolian_grammar.py voice_cloning.py audio_separator.py karaoke_ass.py auto_updater.py requirements.txt requirements-tray.txt requirements-offline.txt VERSION Start-VOICE.bat Uninstall-VOICE.bat make-shortcut.ps1 README.md LICENSE Diagnose-VOICE.bat diagnose_flowbar.py) do (
     if exist "%~dp0%%F" copy /Y "%~dp0%%F" "%TARGET%\" >nul
 )
 

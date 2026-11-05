@@ -135,6 +135,12 @@ function Provider({ children }: { children: ReactNode }) {
             if (srv.mongolian_grammar !== undefined) {
               merged.mongolianGrammar = Boolean(srv.mongolian_grammar);
             }
+            if (srv.offline_only !== undefined) {
+              merged.offlineOnly = Boolean(srv.offline_only);
+            }
+            if (srv.allow_cloud_stt !== undefined) {
+              merged.allowCloudStt = Boolean(srv.allow_cloud_stt);
+            }
           }
         }
       } catch {
@@ -316,6 +322,8 @@ function Provider({ children }: { children: ReactNode }) {
         snippets: settings.snippets || {},
         custom_vocabulary: settings.customVocabulary || [],
         mongolian_grammar: settings.mongolianGrammar !== undefined ? Boolean(settings.mongolianGrammar) : true,
+        offline_only: Boolean(settings.offlineOnly),
+        allow_cloud_stt: Boolean(settings.allowCloudStt),
       }),
     }).catch(() => {});
   }, [settings]);
@@ -2471,6 +2479,16 @@ export function SettingsPanel() {
           k="saveTranscripts"
           label="Save transcripts"
           description="Бүх хөрвүүлсэн текстийг Түүх (History) хэсэгт хадгалах."
+        />
+        <Toggle
+          k="offlineOnly"
+          label="🔒 100% Офлайн ба Нууцлалын горим (Offline-Only Mode)"
+          description="Гадагш интернэт рүү дуу хоолой, текст илгээхгүйгээр зөвхөн компьютер дээрх Local Whisper ба Offline SAPI5+DSP хөдөлгүүр ашиглах."
+        />
+        <Toggle
+          k="allowCloudStt"
+          label="🌐 Үүлэн STT нөөц хөдөлгүүр зөвшөөрөх (Cloud STT Fallback Opt-in)"
+          description="Орон нутгийн Whisper загвар таниагүй үед Google/Chimege үүлэн танилтыг нөөцөөр ашиглах зөвшөөрөл."
         />
 
         <div style={{ display: "flex", gap: "10px", marginTop: "16px", flexWrap: "wrap" }}>

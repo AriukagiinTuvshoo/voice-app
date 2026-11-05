@@ -1,10 +1,10 @@
 """
 AI Audio Vocal & Instrumental Separation Engine.
 
-Implements high-fidelity STFT-based center-channel vocal isolation,
-mid-side phase cancellation, and spectral harmonic filtering.
-Designed for 100% local-first, low-memory operation without crashing
-on limited RAM or triggering Windows Defender / Application Control policy blocks.
+Implements high-fidelity STFT-based Center-Channel Mid/Side Pan Masking combined with
+2D Harmonic-Percussive Source Separation (HPSS median filtering) and Vocal Formant Bandpass.
+Designed for 100% local-first, low-memory operation without crashing on limited RAM
+or triggering Windows Defender / Application Control policy blocks.
 """
 
 from __future__ import annotations
@@ -12,11 +12,11 @@ from __future__ import annotations
 import io
 import os
 import shutil
-import time
 import uuid
-from typing import Dict, Optional, Tuple
+from typing import Dict, Tuple
 
 import numpy as np
+import scipy.ndimage as ndimage
 import scipy.signal as sps
 import soundfile as sf
 
@@ -31,12 +31,10 @@ def separate_audio_stems(
     vocal_isolation_strength: float = 1.3,
 ) -> Tuple[np.ndarray, np.ndarray, int]:
     """
-    Separate an audio track into (vocals, instrumental, sample_rate).
-
-    Returns:
-        vocals_waveform: 2D array [channels, samples] or 1D [samples]
-        instrumental_waveform: 2D array [channels, samples] or 1D [samples]
-        sample_rate: sample rate of output waveforms
+    Separate an audio track into (vocals, instrumental, sample_rate) using:
+    1. Stereo Mid/Side center-channel pan masking
+    2. 2D Harmonic-Percussive Source Separation (HPSS) to suppress drums/hi-hats
+    3. Smooth vocal frequency-band masking (95 Hz - 7600 Hz)
     """
     if isinstance(audio_path_or_bytes, bytes):
         data, sr = sf.read(io.BytesIO(audio_path_or_bytes), dtype="float32")
@@ -44,19 +42,16 @@ def separate_audio_stems(
         data, sr = sf.read(audio_path_or_bytes, dtype="float32")
 
     if data.ndim == 1:
-        # Mono audio: duplicate to pseudo-stereo for consistent processing
         is_mono = True
         stereo_data = np.stack([data, data], axis=-1)
     else:
         is_mono = False
         stereo_data = data[:, :2] if data.shape[1] >= 2 else np.stack([data[:, 0], data[:, 0]], axis=-1)
 
-    # Work on stereo channels
     left = stereo_data[:, 0]
     right = stereo_data[:, 1]
     n_samples = len(left)
 
-    # Process in memory-safe chunks (max 60 seconds per chunk to keep RAM < 150MB)
     chunk_size = sr * 60
     hop_length = 512
     n_fft = 2048
@@ -69,35 +64,42 @@ def separate_audio_stems(
         chunk_l = left[start_idx:end_idx]
         chunk_r = right[start_idx:end_idx]
 
-        # STFT on left & right
         _, _, stft_l = sps.stft(chunk_l, fs=sr, nperseg=n_fft, noverlap=n_fft - hop_length)
         _, _, stft_r = sps.stft(chunk_r, fs=sr, nperseg=n_fft, noverlap=n_fft - hop_length)
 
-        # Mid (center) and Side
         mid = (stft_l + stft_r) * 0.5
         side = (stft_l - stft_r) * 0.5
 
         mag_mid = np.abs(mid)
         mag_side = np.abs(side)
-        eps = 1e-6
+        eps = 1e-7
 
-        # Vocal mask based on mid/side ratio and human voice frequency range (100Hz to 7500Hz)
-        freqs = np.linspace(0, sr / 2, mag_mid.shape[0])
-        freq_mask = ((freqs >= 100) & (freqs <= 7500)).astype(np.float32)[:, None]
+        # 1. Smooth vocal frequency band mask (95 Hz to 7600 Hz with cosine-like tapers)
+        freqs = np.linspace(0, sr / 2, mag_mid.shape[0], dtype=np.float32)
+        low_taper = np.clip((freqs - 75.0) / 55.0, 0.0, 1.0)
+        high_taper = np.clip((8200.0 - freqs) / 900.0, 0.0, 1.0)
+        freq_mask = (low_taper * high_taper)[:, None]
 
-        # Center pan mask (higher when mid dominates side)
+        # 2. 2D Harmonic-Percussive Source Separation (HPSS) on Mid channel magnitude
+        if mag_mid.shape[1] >= 9:
+            harm_mag = ndimage.median_filter(mag_mid, size=(1, 9))
+            perc_mag = ndimage.median_filter(mag_mid, size=(9, 1))
+            h2 = harm_mag ** 2
+            p2 = perc_mag ** 2
+            hpss_mask = (h2 + 0.25 * p2) / (h2 + p2 + eps)
+        else:
+            hpss_mask = np.ones_like(mag_mid)
+
+        # 3. Center pan mask (higher when mid dominates side)
         pan_ratio = mag_mid / (mag_mid + mag_side + eps)
-        # Emphasize center
-        vocal_mask = np.power(np.clip(pan_ratio, 0.0, 1.0), vocal_isolation_strength)
-        vocal_mask = vocal_mask * freq_mask + (vocal_mask * 0.15) * (1.0 - freq_mask)
+        pan_mask = np.power(np.clip(pan_ratio, 0.0, 1.0), vocal_isolation_strength)
+
+        vocal_mask = pan_mask * hpss_mask * freq_mask + (pan_mask * 0.10) * (1.0 - freq_mask)
         vocal_mask = np.clip(vocal_mask, 0.0, 1.0)
 
-        # Isolated vocal STFT
         vocal_stft = mid * vocal_mask
 
-        # Inverse STFT
         _, v_l = sps.istft(vocal_stft, fs=sr, nperseg=n_fft, noverlap=n_fft - hop_length)
-        # Pad or trim to chunk length
         v_l = v_l[: len(chunk_l)]
         if len(v_l) < len(chunk_l):
             v_l = np.pad(v_l, (0, len(chunk_l) - len(v_l)))
@@ -105,13 +107,11 @@ def separate_audio_stems(
         vocals_left_out[start_idx:end_idx] = v_l
         vocals_right_out[start_idx:end_idx] = v_l
 
-    # Instrumental is original minus vocals
     inst_left_out = left - vocals_left_out
     inst_right_out = right - vocals_right_out
 
-    # Normalize slight clipping
-    max_v = max(np.max(np.abs(vocals_left_out)), 1e-6)
-    max_i = max(np.max(np.abs(inst_left_out)), 1e-6)
+    max_v = max(float(np.max(np.abs(vocals_left_out))), 1e-6)
+    max_i = max(float(np.max(np.abs(inst_left_out))), 1e-6)
     if max_v > 0.98:
         vocals_left_out = (vocals_left_out / max_v) * 0.95
         vocals_right_out = (vocals_right_out / max_v) * 0.95
@@ -129,11 +129,36 @@ def separate_audio_stems(
     return vocals, instrumental, sr
 
 
+def extract_vocals_for_lyrics(input_audio_path: str, output_wav_path: str, strength: float = 1.25) -> bool:
+    """
+    Pre-isolate vocals into a mono 16kHz WAV file to boost Auto-Lyrics STT accuracy
+    on songs with loud drums, bass, or stereo accompaniment.
+    """
+    try:
+        vocals, _, sr = separate_audio_stems(input_audio_path, vocal_isolation_strength=strength)
+        if vocals.ndim > 1:
+            vocals_mono = vocals.mean(axis=1)
+        else:
+            vocals_mono = vocals
+        # Mix 78% isolated vocal + 22% original center so consonants stay crisp for Whisper
+        orig, _ = sf.read(input_audio_path, dtype="float32")
+        orig_mono = orig.mean(axis=1) if orig.ndim > 1 else orig
+        min_len = min(len(vocals_mono), len(orig_mono))
+        blended = 0.78 * vocals_mono[:min_len] + 0.22 * orig_mono[:min_len]
+        peak = float(np.max(np.abs(blended)))
+        if peak > 1e-5:
+            blended = (blended / peak) * 0.92
+        sf.write(output_wav_path, blended.astype(np.float32), sr, subtype="PCM_16")
+        return os.path.isfile(output_wav_path) and os.path.getsize(output_wav_path) > 500
+    except Exception:
+        return False
+
+
 def process_separation_job(
     audio_bytes: bytes,
     original_filename: str = "track.mp3",
     vocal_strength: float = 1.3,
-) -> Dict[str, str]:
+) -> Dict[str, str | float | int]:
     """
     Run separation on uploaded audio and save to stems directory.
     Returns dictionary with job metadata and stem URLs.
@@ -166,7 +191,6 @@ def cleanup_stems(job_id: str) -> bool:
     """Clean up temporary separated stem files."""
     if not job_id or not job_id.startswith("sep_"):
         return False
-    # Path traversal protection
     clean_id = os.path.basename(job_id)
     job_dir = os.path.join(STEMS_DIR, clean_id)
     if os.path.isdir(job_dir):

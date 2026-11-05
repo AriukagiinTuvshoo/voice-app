@@ -22,6 +22,8 @@ import audio_separator
 import karaoke_ass
 import tts_server
 import voice_cloning
+import voice_core
+import voice_dsp
 
 
 def make_test_wav_bytes(duration_s: float = 3.5, sr: int = 16000, freq: float = 440.0) -> bytes:
@@ -293,6 +295,82 @@ class TestStage4Api(unittest.TestCase):
 
         # Clean up
         audio_separator.cleanup_stems(job["job_id"])
+
+
+class TestVoiceStudioDspAndLyricsPolish(unittest.TestCase):
+    def test_prepare_tts_text_for_voice(self):
+        raw = "2026 оны 11-р сарын 5-нд ШУТИС дээр 95% амжилттай боллоо."
+        norm = voice_dsp.prepare_tts_text_for_voice(raw, "mn-MN-YesuiNeural")
+        self.assertIn("Шинжлэх Ухаан Технологийн Их Сургууль", norm)
+        self.assertIn("хувь", norm)
+        self.assertTrue(norm.endswith("."))
+
+    def test_all_13_persona_dsp_and_formant_warp(self):
+        wav = make_test_wav_bytes(duration_s=1.2, sr=24000, freq=220.0)
+        samples = voice_dsp.decode_audio_bytes(wav, 24000)
+        for cfg in tts_server.VOICES:
+            vid = cfg.get("id", "unknown")
+            warped = voice_dsp.apply_persona_formant_warp(
+                samples,
+                warp_ratio=float(cfg.get("formant_warp", 1.0)),
+                sample_rate=24000,
+            )
+            out_samples = voice_dsp.apply_voicestudio_dsp(
+                warped,
+                preset_id=cfg.get("style", "broadcast"),
+                sample_rate=24000,
+            )
+            self.assertGreater(len(out_samples), 1000, f"Voice {vid} produced too few samples")
+            self.assertFalse(np.isnan(out_samples).any())
+            self.assertLessEqual(float(np.max(np.abs(out_samples))), 1.0)
+
+    def test_offline_tts_fallback(self):
+        samples = voice_dsp.synthesize_offline_fallback(
+            text="Сайн байна уу, офлайн горим ажиллаж байна.",
+            gender="female",
+            rate_percent=0,
+            pitch_hz=0,
+        )
+        self.assertIsInstance(samples, np.ndarray)
+        self.assertGreater(len(samples), 1000)
+        self.assertFalse(np.isnan(samples).any())
+
+    def test_mongolian_ordinal_numbers(self):
+        raw = "хоёр мянга хорин зургаан оны арван нэгдүгээр сарын таван"
+        res = voice_core.normalize_mongolian_numbers(raw)
+        self.assertEqual(res, "2026 оны 11-р сарын 5")
+
+    def test_clean_lyrics_segments(self):
+        raw_segs = [
+            {"start": 0.0, "end": 2.0, "text": "Subtitles by Amara.org"},
+            {"start": 2.0, "end": 4.0, "text": "[Music]"},
+            {
+                "start": 4.0,
+                "end": 7.0,
+                "text": "мөнх тэнгэрийн доор доор доор доор",
+                "words": [
+                    {"word": "мөнх", "start": 4.0, "end": 3.8},
+                    {"word": "тэнгэрийн", "start": 4.5, "end": 5.2},
+                ],
+            },
+        ]
+        cleaned = voice_core.clean_lyrics_segments(raw_segs, language="mn")
+        self.assertEqual(len(cleaned), 1)
+        self.assertTrue(cleaned[0]["text"].startswith("Мөнх тэнгэрийн"))
+        self.assertGreater(cleaned[0]["words"][0]["end"], cleaned[0]["words"][0]["start"])
+
+    def test_karaoke_vertical_and_themes(self):
+        segs = [{"start": 0.5, "end": 2.5, "text": "Босоо видео тест"}]
+        ass = karaoke_ass.generate_karaoke_ass(
+            segs,
+            title="Vertical 9:16",
+            play_res_x=720,
+            play_res_y=1280,
+            theme="neon_cyan",
+        )
+        self.assertIn("PlayResX: 720", ass)
+        self.assertIn("PlayResY: 1280", ass)
+        self.assertIn("&H00D4F500", ass)
 
 
 if __name__ == "__main__":

@@ -38,7 +38,7 @@ jobs:
 
     - name: Python Compile Check
       run: |
-        python -m py_compile voice_core.py tts_server.py diagnose_flowbar.py
+        python -m py_compile voice_core.py voice_dsp.py tts_server.py diagnose_flowbar.py
 
     - name: Run Unit Tests
       env:

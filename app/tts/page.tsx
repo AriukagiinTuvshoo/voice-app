@@ -248,6 +248,7 @@ export default function TTSPage() {
   const [history, setHistory] = useState<GeneratedAudio[]>([]);
   const [serverOnline, setServerOnline] = useState<boolean | null>(null);
   const [checkingServer, setCheckingServer] = useState(false);
+  const [ttsError, setTtsError] = useState("");
 
   // Voice Cloning State (VoiceStudio)
   const [clonedVoices, setClonedVoices] = useState<ClonedVoice[]>([]);
@@ -284,27 +285,44 @@ export default function TTSPage() {
         if (saved) localList = JSON.parse(saved);
       } catch {}
 
+      const mergedMap = new Map<string, ClonedVoice>();
+
       try {
-        const res = await fetch("/api/tts/clone");
-        if (res.ok) {
-          const serverList: ClonedVoice[] = await res.json();
-          if (Array.isArray(serverList) && serverList.length > 0) {
-            const mergedMap = new Map<string, ClonedVoice>();
-            for (const item of serverList) mergedMap.set(item.id, item);
-            for (const item of localList) {
-              if (!mergedMap.has(item.id)) mergedMap.set(item.id, item);
-            }
-            const merged = Array.from(mergedMap.values()).sort(
-              (a, b) => (b.createdAt || 0) - (a.createdAt || 0)
-            );
-            setClonedVoices(merged);
-            localStorage.setItem("voice_clones", JSON.stringify(merged));
-            return;
+        const resProfiles = await fetch("/api/voice-profiles");
+        if (resProfiles.ok) {
+          const data = await resProfiles.json();
+          const profiles: ClonedVoice[] = data?.profiles || [];
+          for (const item of profiles) {
+            if (item && item.id) mergedMap.set(item.id, item);
           }
         }
       } catch {}
 
-      setClonedVoices(localList);
+      try {
+        const res = await fetch("/api/tts/clone");
+        if (res.ok) {
+          const serverList: ClonedVoice[] = await res.json();
+          if (Array.isArray(serverList)) {
+            for (const item of serverList) {
+              if (item && item.id) mergedMap.set(item.id, item);
+            }
+          }
+        }
+      } catch {}
+
+      for (const item of localList) {
+        if (item && item.id && !mergedMap.has(item.id)) {
+          mergedMap.set(item.id, item);
+        }
+      }
+
+      const merged = Array.from(mergedMap.values()).sort(
+        (a, b) => (b.createdAt || 0) - (a.createdAt || 0)
+      );
+      setClonedVoices(merged);
+      try {
+        localStorage.setItem("voice_clones", JSON.stringify(merged));
+      } catch {}
     };
     loadClones();
   }, []);
@@ -346,12 +364,13 @@ export default function TTSPage() {
       id: c.id,
       name: c.name,
       gender: c.gender,
+      category: "cloned" as const,
       description: c.description || "Хувилсан хоолой",
       tag: "Хувилсан (Voice Clone)",
       pitch: c.pitch || 1.0,
       speed: c.speed || 1.0,
-      baseVoice: c.baseVoice,
-      sampleUrl: c.sampleUrl || `/api/tts/clone?id=${c.id}`,
+      baseVoice: c.baseVoice || (c.gender === "female" ? "mn-MN-YesuiNeural" : "mn-MN-BataaNeural"),
+      sampleUrl: c.sampleUrl || `/api/voice-profiles/${c.id}/audio`,
       refText: c.refText || "",
     })),
   ];
@@ -359,10 +378,15 @@ export default function TTSPage() {
   const selectedVoice =
     allVoices.find((v) => v.id === selectedVoiceId) || allVoices[0];
 
-  const isSelectedCloned = selectedVoice.id.startsWith("cloned_");
+  const isSelectedCloned =
+    selectedVoice.id.startsWith("cloned_") || selectedVoice.id.startsWith("voice_");
 
   const handleSynthesize = async () => {
-    if (!text.trim()) return;
+    if (!text.trim()) {
+      setTtsError("Яриулах текстээ оруулна уу.");
+      return;
+    }
+    setTtsError("");
     setLoading(true);
 
     try {
@@ -410,6 +434,7 @@ export default function TTSPage() {
       }, 80);
     } catch (err: unknown) {
       console.warn("TTS error:", err);
+      setTtsError(err instanceof Error ? err.message : "Дуу үүсгэхэд алдаа гарлаа. Сервер холбогдсон эсэхийг шалгана уу.");
     } finally {
       setLoading(false);
     }
@@ -506,7 +531,8 @@ export default function TTSPage() {
         throw new Error(data.detail || data.error || "Хоолой хувилах хүсэлт амжилтгүй боллоо.");
       }
 
-      const clonedProfile: ClonedVoice = await res.json();
+      const resData = await res.json();
+      const clonedProfile: ClonedVoice = resData.profile || resData;
       const updated = [clonedProfile, ...clonedVoices];
       saveClonedVoices(updated);
 
@@ -531,6 +557,11 @@ export default function TTSPage() {
     if (selectedVoiceId === id) {
       setSelectedVoiceId("mn-MN-YesuiNeural");
     }
+    try {
+      await fetch(`/api/voice-profiles/${encodeURIComponent(id)}`, {
+        method: "DELETE",
+      });
+    } catch {}
     try {
       await fetch(`/api/tts/clone?id=${encodeURIComponent(id)}`, {
         method: "DELETE",
@@ -771,7 +802,7 @@ export default function TTSPage() {
             >
               {allVoices
                 .filter((v) => {
-                  const isCloned = v.id.startsWith("cloned_");
+                  const isCloned = v.id.startsWith("cloned_") || v.id.startsWith("voice_");
                   const cat = "category" in v ? (v as { category?: string }).category : "cloned";
                   if (voiceFilter === "cloned") return isCloned;
                   if (voiceFilter === "mn") return !isCloned && cat === "mn";
@@ -781,7 +812,7 @@ export default function TTSPage() {
                 .map((voice) => {
                 const isSelected = selectedVoiceId === voice.id;
                 const isFemale = voice.gender === "female";
-                const isCloned = voice.id.startsWith("cloned_");
+                const isCloned = voice.id.startsWith("cloned_") || voice.id.startsWith("voice_");
                 const customIcon = "icon" in voice ? (voice as { icon?: string }).icon : undefined;
                 const defPreset = "defaultPreset" in voice ? (voice as { defaultPreset?: string }).defaultPreset : undefined;
                 return (
@@ -1181,6 +1212,22 @@ export default function TTSPage() {
                   <PlayIcon width={16} height={16} />
                   <span>Дахин сонсох</span>
                 </button>
+              )}
+              {ttsError && (
+                <div
+                  style={{
+                    width: "100%",
+                    marginTop: "12px",
+                    padding: "10px 14px",
+                    borderRadius: "10px",
+                    background: "rgba(239, 68, 68, 0.12)",
+                    border: "1px solid rgba(239, 68, 68, 0.3)",
+                    color: "#fca5a5",
+                    fontSize: "14px",
+                  }}
+                >
+                  ⚠️ {ttsError}
+                </div>
               )}
             </div>
           </div>
